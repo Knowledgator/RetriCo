@@ -264,3 +264,189 @@ class BuildConfigBuilder:
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         with open(filepath, "w") as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+class QueryConfigBuilder:
+    """Declarative builder for query pipeline configs.
+
+    Usage::
+
+        builder = QueryConfigBuilder(name="my_query")
+        builder.query_parser(method="gliner", labels=["person", "location"])
+        builder.retriever(neo4j_uri="bolt://localhost:7687", max_hops=2)
+        builder.chunk_retriever()
+        builder.reasoner(api_key="...", model="gpt-4o-mini")  # optional
+
+        executor = builder.build()
+        result = executor.execute({"query": "Where was Einstein born?"})
+    """
+
+    def __init__(self, name: str = "query_pipeline", description: str = None):
+        self.name = name
+        self.description = description or f"{name} — auto-generated"
+        self._parser_config: Optional[Dict[str, Any]] = None
+        self._retriever_config: Optional[Dict[str, Any]] = None
+        self._chunk_config: Optional[Dict[str, Any]] = None
+        self._reasoner_config: Optional[Dict[str, Any]] = None
+
+    def query_parser(
+        self,
+        method: str = "gliner",
+        model: str = None,
+        labels: List[str] = None,
+        threshold: float = 0.3,
+        device: str = "cpu",
+        api_key: str = None,
+        base_url: str = None,
+        temperature: float = 0.1,
+    ) -> "QueryConfigBuilder":
+        self._parser_config = {
+            "method": method,
+            "labels": labels or [],
+            "threshold": threshold,
+            "device": device,
+            "temperature": temperature,
+        }
+        if model is not None:
+            self._parser_config["model"] = model
+        if api_key is not None:
+            self._parser_config["api_key"] = api_key
+        if base_url is not None:
+            self._parser_config["base_url"] = base_url
+        return self
+
+    def retriever(
+        self,
+        neo4j_uri: str = "bolt://localhost:7687",
+        neo4j_user: str = "neo4j",
+        neo4j_password: str = "password",
+        neo4j_database: str = "neo4j",
+        max_hops: int = 2,
+    ) -> "QueryConfigBuilder":
+        self._retriever_config = {
+            "neo4j_uri": neo4j_uri,
+            "neo4j_user": neo4j_user,
+            "neo4j_password": neo4j_password,
+            "neo4j_database": neo4j_database,
+            "max_hops": max_hops,
+        }
+        return self
+
+    def chunk_retriever(
+        self,
+        neo4j_uri: str = None,
+        neo4j_user: str = None,
+        neo4j_password: str = None,
+        neo4j_database: str = None,
+        max_chunks: int = 0,
+    ) -> "QueryConfigBuilder":
+        self._chunk_config = {"max_chunks": max_chunks}
+        # Inherit Neo4j config from retriever if not explicitly provided
+        if neo4j_uri is not None:
+            self._chunk_config["neo4j_uri"] = neo4j_uri
+        if neo4j_user is not None:
+            self._chunk_config["neo4j_user"] = neo4j_user
+        if neo4j_password is not None:
+            self._chunk_config["neo4j_password"] = neo4j_password
+        if neo4j_database is not None:
+            self._chunk_config["neo4j_database"] = neo4j_database
+        return self
+
+    def reasoner(
+        self,
+        method: str = "llm",
+        api_key: str = None,
+        base_url: str = None,
+        model: str = "gpt-4o-mini",
+        temperature: float = 0.1,
+        max_completion_tokens: int = 4096,
+        timeout: float = 60.0,
+    ) -> "QueryConfigBuilder":
+        self._reasoner_config = {
+            "method": method,
+            "model": model,
+            "temperature": temperature,
+            "max_completion_tokens": max_completion_tokens,
+            "timeout": timeout,
+        }
+        if api_key is not None:
+            self._reasoner_config["api_key"] = api_key
+        if base_url is not None:
+            self._reasoner_config["base_url"] = base_url
+        return self
+
+    def get_config(self) -> Dict[str, Any]:
+        """Build configuration dict."""
+        if not self._parser_config:
+            raise ValueError("Parser config required. Call .query_parser() first.")
+        if not self._retriever_config:
+            raise ValueError("Retriever config required. Call .retriever() first.")
+
+        # Default chunk retriever inherits Neo4j config from retriever
+        if self._chunk_config is None:
+            self._chunk_config = {}
+        for key in ("neo4j_uri", "neo4j_user", "neo4j_password", "neo4j_database"):
+            if key not in self._chunk_config and key in self._retriever_config:
+                self._chunk_config[key] = self._retriever_config[key]
+
+        nodes = [
+            {
+                "id": "query_parser",
+                "processor": "query_parser",
+                "inputs": {
+                    "query": {"source": "$input", "fields": "query"},
+                },
+                "output": {"key": "parser_result"},
+                "config": self._parser_config,
+            },
+            {
+                "id": "retriever",
+                "processor": "retriever",
+                "requires": ["query_parser"],
+                "inputs": {
+                    "entities": {"source": "parser_result", "fields": "entities"},
+                },
+                "output": {"key": "retriever_result"},
+                "config": self._retriever_config,
+            },
+            {
+                "id": "chunk_retriever",
+                "processor": "chunk_retriever",
+                "requires": ["retriever"],
+                "inputs": {
+                    "subgraph": {"source": "retriever_result", "fields": "subgraph"},
+                },
+                "output": {"key": "chunk_result"},
+                "config": self._chunk_config,
+            },
+        ]
+
+        if self._reasoner_config is not None:
+            nodes.append({
+                "id": "reasoner",
+                "processor": "reasoner",
+                "requires": ["chunk_retriever"],
+                "inputs": {
+                    "query": {"source": "$input", "fields": "query"},
+                    "subgraph": {"source": "chunk_result", "fields": "subgraph"},
+                },
+                "output": {"key": "reasoner_result"},
+                "config": self._reasoner_config,
+            })
+
+        return {
+            "name": self.name,
+            "description": self.description,
+            "nodes": nodes,
+        }
+
+    def build(self, verbose: bool = False) -> DAGExecutor:
+        """Build and return a DAGExecutor."""
+        return ProcessorFactory.create_from_dict(self.get_config(), verbose=verbose)
+
+    def save(self, filepath: str) -> None:
+        """Save config to YAML."""
+        config = self.get_config()
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
