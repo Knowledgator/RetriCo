@@ -1,7 +1,7 @@
 """grapsit — End-to-end Graph RAG using Knowledgator technologies."""
 
-# Register all build processors on import.
-from . import build as _build  # noqa: F401
+# Register all construct processors on import.
+from . import construct as _construct  # noqa: F401
 
 from .core.dag import DAGExecutor, PipeContext
 from .core.factory import ProcessorFactory
