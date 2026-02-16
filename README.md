@@ -4,10 +4,20 @@ End-to-end Graph RAG framework that turns unstructured text into a queryable kno
 
 **Pipeline**: `text chunking → entity recognition → relation extraction → Neo4j graph`
 
+Supports two extraction backends — mix and match freely:
+- **GLiNER** — fast local inference, no API keys needed
+- **LLM** — any OpenAI-compatible API (OpenAI, vLLM, Ollama, LM Studio, etc.)
+
 ## Installation
 
 ```bash
 pip install -e .
+```
+
+For LLM-based extraction, also install the OpenAI SDK:
+
+```bash
+pip install openai
 ```
 
 Requires Python 3.10+ and a running [Neo4j](https://neo4j.com/) instance.
@@ -37,13 +47,13 @@ print(f"Entities: {stats['entity_count']}, Relations: {stats['relation_count']}"
 ### What happens under the hood
 
 1. **Chunking** — splits texts into sentences (configurable: sentence/paragraph/fixed)
-2. **NER** — [GLiNER](https://github.com/urchade/GLiNER) extracts entities matching your labels
-3. **Relation extraction** — [GLiNER-relex](https://huggingface.co/knowledgator/gliner-relex-large-v0.5) finds relations between entities
+2. **NER** — [GLiNER](https://github.com/urchade/GLiNER) or LLM extracts entities matching your labels
+3. **Relation extraction** — [GLiNER-relex](https://huggingface.co/knowledgator/gliner-relex-large-v0.5) or LLM finds relations between entities
 4. **Graph writing** — deduplicates entities, writes nodes and edges to Neo4j
 
 ## Usage
 
-### Option 1: `build_graph()` convenience function
+### Option 1: `build_graph()` convenience function (GLiNER)
 
 Simplest way — pass texts and labels, get a graph:
 
@@ -74,7 +84,7 @@ result = grapsit.build_graph(
 
 Skip relation extraction by omitting `relation_labels` — only entities will be extracted and stored.
 
-### Option 2: Builder API
+### Option 2: Builder API (GLiNER)
 
 Fine-grained control over each pipeline stage:
 
@@ -112,7 +122,131 @@ result = executor.execute({"texts": ["Isaac Newton worked at Cambridge."]})
 builder.save("configs/my_pipeline.yaml")
 ```
 
-### Option 3: YAML pipeline
+### Option 3: LLM-based extraction
+
+Use any OpenAI-compatible API for entity and relation extraction. This works with OpenAI, local vLLM servers, Ollama, LM Studio, or any other compatible endpoint.
+
+#### Running a local LLM with vLLM
+
+```bash
+# Install vLLM
+pip install vllm
+
+# Start a local OpenAI-compatible server
+vllm serve nowledgator/instruct-it-base --port 8000
+
+# Or with GPU memory constraints
+vllm serve nowledgator/instruct-it-base --port 8000 --gpu-memory-utilization 0.8
+
+# Or using a quantized model for lower memory usage
+vllm serve knowledgator/instruct-it-base --port 8000 --quantization awq
+```
+
+Other local LLM servers work too:
+
+```bash
+# Ollama
+ollama serve
+ollama pull qwen2.5:7b
+# base_url = "http://localhost:11434/v1"
+
+# LM Studio — start from the GUI, enable server mode
+# base_url = "http://localhost:1234/v1"
+```
+
+#### All-LLM pipeline
+
+Both NER and relation extraction are performed by the LLM:
+
+```python
+from grapsit import BuildConfigBuilder
+
+builder = BuildConfigBuilder(name="llm_pipeline")
+builder.chunker(method="sentence")
+
+builder.ner_llm(
+    base_url="http://localhost:8000/v1",  # your vLLM server
+    api_key="dummy",                       # local servers don't need a real key
+    model="Qwen/Qwen2.5-7B-Instruct",
+    labels=["person", "organization", "location", "date"],
+    temperature=0.1,
+)
+
+builder.relex_llm(
+    base_url="http://localhost:8000/v1",
+    api_key="dummy",
+    model="Qwen/Qwen2.5-7B-Instruct",
+    entity_labels=["person", "organization", "location", "date"],
+    relation_labels=["works at", "born in", "located in"],
+    temperature=0.1,
+)
+
+builder.graph_writer(
+    neo4j_uri="bolt://localhost:7687",
+    neo4j_password="password",
+)
+
+executor = builder.build(verbose=True)
+result = executor.execute({"texts": ["Einstein was born in Ulm, Germany."]})
+```
+
+#### Using OpenAI
+
+```python
+builder.ner_llm(
+    api_key="sk-...",      # or set OPENAI_API_KEY env var
+    model="gpt-4o-mini",   # cost-effective for extraction
+    labels=["person", "organization", "location"],
+)
+```
+
+#### Mixed pipeline (GLiNER NER + LLM relation extraction)
+
+Combine GLiNER's fast local NER with LLM's higher-quality relation extraction:
+
+```python
+from grapsit import BuildConfigBuilder
+
+builder = BuildConfigBuilder(name="mixed_pipeline")
+builder.chunker(method="sentence")
+
+# Fast local NER with GLiNER
+builder.ner_gliner(
+    model="urchade/gliner_multi-v2.1",
+    labels=["person", "organization", "location"],
+    threshold=0.3,
+)
+
+# LLM for relation extraction (receives GLiNER entities)
+builder.relex_llm(
+    base_url="http://localhost:8000/v1",
+    api_key="dummy",
+    model="Qwen/Qwen2.5-7B-Instruct",
+    entity_labels=["person", "organization", "location"],
+    relation_labels=["works at", "born in", "located in", "founded"],
+)
+
+builder.graph_writer(
+    neo4j_uri="bolt://localhost:7687",
+    neo4j_password="password",
+)
+
+executor = builder.build(verbose=True)
+result = executor.execute({"texts": ["Einstein worked at Princeton."]})
+```
+
+All NER and relex processors are interchangeable — any combination works:
+
+| NER | Relex | Use case |
+|-----|-------|----------|
+| `ner_gliner` | `relex_gliner` | Fully local, fast, no API needed |
+| `ner_llm` | `relex_llm` | Best quality, needs LLM server |
+| `ner_gliner` | `relex_llm` | Fast NER + high-quality relations |
+| `ner_llm` | `relex_gliner` | LLM entities + fast local relex |
+| — | `relex_gliner` | Standalone: model does NER + relex |
+| — | `relex_llm` | Standalone: LLM does NER + relex |
+
+### Option 4: YAML pipeline
 
 Define your pipeline declaratively and load it:
 
@@ -285,7 +419,8 @@ $input (texts)
  chunker ──────────────────┐
     │                      │
     ▼                      ▼
- ner_gliner           relex_gliner
+ ner_gliner            relex_gliner
+ or ner_llm            or relex_llm
     │                      │
     └──────┐   ┌───────────┘
            ▼   ▼
@@ -310,7 +445,9 @@ Nodes at the same level run sequentially within a level, but levels are topologi
 |-----------|-------------|------------|
 | `chunker` | Split text into chunks | `method` (sentence/paragraph/fixed), `chunk_size`, `overlap` |
 | `ner_gliner` | Entity extraction with GLiNER | `model`, `labels`, `threshold`, `device` |
+| `ner_llm` | Entity extraction with LLM | `model`, `labels`, `api_key`, `base_url`, `temperature` |
 | `relex_gliner` | Relation extraction with GLiNER-relex | `model`, `entity_labels`, `relation_labels`, `threshold`, `relation_threshold` |
+| `relex_llm` | Relation extraction with LLM | `model`, `entity_labels`, `relation_labels`, `api_key`, `base_url`, `temperature` |
 | `graph_writer` | Deduplicate and write to Neo4j | `neo4j_uri`, `neo4j_user`, `neo4j_password`, `neo4j_database` |
 
 ## Development
@@ -326,7 +463,7 @@ python3 -m venv .venv
 
 ## Roadmap
 
-- **LLM extraction** — OpenAI-compatible NER and relation extraction as alternative to GLiNER
+- ~~**LLM extraction** — OpenAI-compatible NER and relation extraction as alternative to GLiNER~~ Done
 - **Entity linking** — GLinker integration for linking mentions to a knowledge base
 - **KG modeling** — node/edge embeddings, community detection (Leiden), path reasoning
 - **Query pipeline** — DAG-based retrieval: query parsing, subgraph retrieval, LLM reasoning

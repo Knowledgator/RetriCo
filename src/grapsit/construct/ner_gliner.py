@@ -70,9 +70,13 @@ class NERGLiNERProcessor(BaseProcessor):
             chunk_id = chunks[i].id if i < len(chunks) else ""
             mentions = []
             for ent in raw_entities:
+                entity_label = ent.get("label", "")
+                generated_label = ent.get("generated_label", None)
+                if generated_label is not None:
+                    entity_label = generated_label[0]
                 mentions.append(EntityMention(
                     text=ent["text"],
-                    label=ent["label"],
+                    label=entity_label,
                     start=ent.get("start", 0),
                     end=ent.get("end", 0),
                     score=ent.get("score", 0.0),

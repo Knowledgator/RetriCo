@@ -8,6 +8,7 @@ from .core.factory import ProcessorFactory
 from .core.builders import BuildConfigBuilder
 from .models import Document, Chunk, Entity, EntityMention, Relation, KGTriple, Subgraph, QueryResult
 from .store.neo4j_store import Neo4jGraphStore
+from .llm import BaseLLMClient, OpenAIClient
 
 from typing import Dict, List, Any, Optional
 import logging
@@ -33,6 +34,9 @@ __all__ = [
     "QueryResult",
     # Store
     "Neo4jGraphStore",
+    # LLM
+    "BaseLLMClient",
+    "OpenAIClient",
 ]
 
 

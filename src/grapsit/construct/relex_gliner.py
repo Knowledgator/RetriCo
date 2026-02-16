@@ -160,8 +160,6 @@ class RelexGLiNERProcessor(BaseProcessor):
         if entities is not None:
             input_spans = _mentions_to_gliner_spans(entities)
 
-        print('Input spans for GLiNER-relex:', input_spans)
-        
         # Batched inference
         inference_kwargs: Dict[str, Any] = {
             "texts": texts,

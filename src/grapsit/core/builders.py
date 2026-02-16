@@ -74,6 +74,30 @@ class BuildConfigBuilder:
         }
         return self
 
+    def ner_llm(
+        self,
+        api_key: str = None,
+        base_url: str = None,
+        model: str = "gpt-4o-mini",
+        labels: List[str] = None,
+        temperature: float = 0.1,
+        max_completion_tokens: int = 4096,
+        timeout: float = 60.0,
+    ) -> "BuildConfigBuilder":
+        self._ner_type = "ner_llm"
+        self._ner_config = {
+            "model": model,
+            "labels": labels or [],
+            "temperature": temperature,
+            "max_completion_tokens": max_completion_tokens,
+            "timeout": timeout,
+        }
+        if api_key is not None:
+            self._ner_config["api_key"] = api_key
+        if base_url is not None:
+            self._ner_config["base_url"] = base_url
+        return self
+
     def relex_gliner(
         self,
         model: str = "knowledgator/gliner-relex-large-v0.5",
@@ -96,6 +120,32 @@ class BuildConfigBuilder:
             "batch_size": batch_size,
             "device": device,
         }
+        return self
+
+    def relex_llm(
+        self,
+        api_key: str = None,
+        base_url: str = None,
+        model: str = "gpt-4o-mini",
+        entity_labels: List[str] = None,
+        relation_labels: List[str] = None,
+        temperature: float = 0.1,
+        max_completion_tokens: int = 4096,
+        timeout: float = 60.0,
+    ) -> "BuildConfigBuilder":
+        self._relex_type = "relex_llm"
+        self._relex_config = {
+            "model": model,
+            "entity_labels": entity_labels or [],
+            "relation_labels": relation_labels or [],
+            "temperature": temperature,
+            "max_completion_tokens": max_completion_tokens,
+            "timeout": timeout,
+        }
+        if api_key is not None:
+            self._relex_config["api_key"] = api_key
+        if base_url is not None:
+            self._relex_config["base_url"] = base_url
         return self
 
     def graph_writer(
@@ -122,7 +172,7 @@ class BuildConfigBuilder:
         if not self._ner_config and not self._relex_config:
             raise ValueError(
                 "NER or relex config required. "
-                "Call .ner_gliner() or .relex_gliner() first."
+                "Call .ner_gliner()/.ner_llm() or .relex_gliner()/.relex_llm() first."
             )
         if not self._writer_config:
             self._writer_config = {}
