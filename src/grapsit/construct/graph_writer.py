@@ -78,20 +78,27 @@ class GraphWriterProcessor(BaseProcessor):
             if chunk.document_id:
                 self.store.write_chunk_document_link(chunk.id, chunk.document_id)
 
-        # 3. Deduplicate entities by canonical name
-        entity_map: Dict[str, Entity] = {}  # canonical_name -> Entity
+        # 3. Deduplicate entities by canonical name (or linked_entity_id if available)
+        entity_map: Dict[str, Entity] = {}  # dedup_key -> Entity
         for chunk_mentions in entities:
             if not isinstance(chunk_mentions, list):
                 chunk_mentions = [chunk_mentions]
             for mention in chunk_mentions:
                 if isinstance(mention, dict):
                     mention = EntityMention(**mention)
-                key = mention.text.strip().lower()
+                # Use linked_entity_id as dedup key if available, else canonical name
+                if mention.linked_entity_id:
+                    key = mention.linked_entity_id
+                else:
+                    key = mention.text.strip().lower()
                 if key not in entity_map:
-                    entity_map[key] = Entity(
-                        label=mention.text.strip(),
-                        entity_type=mention.label,
-                    )
+                    entity_kwargs = {
+                        "label": mention.text.strip(),
+                        "entity_type": mention.label,
+                    }
+                    if mention.linked_entity_id:
+                        entity_kwargs["id"] = mention.linked_entity_id
+                    entity_map[key] = Entity(**entity_kwargs)
                 entity_map[key].mentions.append(mention)
 
         # 4. Write entities + mention links
@@ -100,6 +107,14 @@ class GraphWriterProcessor(BaseProcessor):
             for mention in entity.mentions:
                 if mention.chunk_id:
                     self.store.write_mention_link(entity.id, mention.chunk_id, mention)
+
+        # Build a text-based lookup for relation resolution
+        # (entity_map may be keyed by linked_entity_id instead of canonical name)
+        text_to_entity: Dict[str, Entity] = {}
+        for entity in entity_map.values():
+            text_to_entity[entity.label.strip().lower()] = entity
+            for mention in entity.mentions:
+                text_to_entity[mention.text.strip().lower()] = entity
 
         # 5. Write relations
         rel_count = 0
@@ -111,8 +126,8 @@ class GraphWriterProcessor(BaseProcessor):
                     rel = Relation(**rel)
                 head_key = rel.head_text.strip().lower()
                 tail_key = rel.tail_text.strip().lower()
-                head_entity = entity_map.get(head_key)
-                tail_entity = entity_map.get(tail_key)
+                head_entity = text_to_entity.get(head_key)
+                tail_entity = text_to_entity.get(tail_key)
                 if head_entity and tail_entity:
                     self.store.write_relation(rel, head_entity.id, tail_entity.id)
                     rel_count += 1

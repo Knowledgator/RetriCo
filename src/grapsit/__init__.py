@@ -60,6 +60,10 @@ def build_graph(
     neo4j_database: str = "neo4j",
     device: str = "cpu",
     verbose: bool = False,
+    linker_model: str = None,
+    linker_entities: Any = None,
+    linker_threshold: float = 0.5,
+    linker_executor: Any = None,
 ) -> PipeContext:
     """Build a knowledge graph from texts in one call.
 
@@ -85,6 +89,17 @@ def build_graph(
     builder = BuildConfigBuilder(name="build_graph")
     builder.chunker(method=chunk_method)
     builder.ner_gliner(model=ner_model, labels=entity_labels, threshold=ner_threshold, device=device)
+
+    # Add linker if any linker param is provided
+    if linker_executor or linker_model or linker_entities:
+        linker_kwargs = {"threshold": linker_threshold}
+        if linker_executor:
+            linker_kwargs["executor"] = linker_executor
+        if linker_model:
+            linker_kwargs["model"] = linker_model
+        if linker_entities:
+            linker_kwargs["entities"] = linker_entities
+        builder.linker(**linker_kwargs)
 
     if relation_labels:
         builder.relex_gliner(
@@ -120,6 +135,11 @@ def query_graph(
     api_key: str = None,
     model: str = "gpt-4o-mini",
     verbose: bool = False,
+    linker_model: str = None,
+    linker_entities: Any = None,
+    linker_threshold: float = 0.5,
+    linker_executor: Any = None,
+    linker_neo4j: bool = False,
 ) -> QueryResult:
     """Query a knowledge graph in one call.
 
@@ -149,6 +169,22 @@ def query_graph(
         parser_kwargs["api_key"] = api_key
         parser_kwargs["model"] = model
     builder.query_parser(**parser_kwargs)
+
+    # Add linker if any linker param is provided
+    if linker_executor or linker_model or linker_entities or linker_neo4j:
+        linker_kwargs = {"threshold": linker_threshold}
+        if linker_executor:
+            linker_kwargs["executor"] = linker_executor
+        if linker_model:
+            linker_kwargs["model"] = linker_model
+        if linker_entities:
+            linker_kwargs["entities"] = linker_entities
+        if linker_neo4j:
+            linker_kwargs["neo4j_uri"] = neo4j_uri
+            linker_kwargs["neo4j_user"] = neo4j_user
+            linker_kwargs["neo4j_password"] = neo4j_password
+            linker_kwargs["neo4j_database"] = neo4j_database
+        builder.linker(**linker_kwargs)
 
     builder.retriever(
         neo4j_uri=neo4j_uri,

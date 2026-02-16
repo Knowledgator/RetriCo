@@ -46,10 +46,13 @@ class RetrieverProcessor(BaseProcessor):
         """
         self._ensure_store()
 
-        # Look up each entity mention by label (case-insensitive)
+        # Look up each entity mention — by linked_entity_id first, then by label
         matched_ids = []
         for mention in entities:
-            record = self._store.get_entity_by_label(mention.text)
+            if mention.linked_entity_id:
+                record = self._store.get_entity_by_id(mention.linked_entity_id)
+            else:
+                record = self._store.get_entity_by_label(mention.text)
             if record is not None:
                 matched_ids.append(record["id"])
 

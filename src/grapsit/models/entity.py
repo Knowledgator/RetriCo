@@ -13,6 +13,7 @@ class EntityMention(BaseModel):
     end: int = 0
     score: float = 0.0
     chunk_id: str = ""
+    linked_entity_id: Optional[str] = None
 
 
 class Entity(BaseModel):

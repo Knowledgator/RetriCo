@@ -203,6 +203,21 @@ class Neo4jGraphStore:
 
     # -- Reads ---------------------------------------------------------------
 
+    def get_entity_by_id(self, entity_id: str) -> Optional[Dict[str, Any]]:
+        """Look up an entity by its ID."""
+        records = self._run(
+            "MATCH (e:Entity {id: $id}) RETURN e",
+            {"id": entity_id},
+        )
+        if records:
+            return records[0]["e"]
+        return None
+
+    def get_all_entities(self) -> List[Dict[str, Any]]:
+        """Return all Entity nodes (for knowledge base loading)."""
+        records = self._run("MATCH (e:Entity) RETURN e")
+        return [r["e"] for r in records]
+
     def get_entity_by_label(self, label: str) -> Optional[Dict[str, Any]]:
         records = self._run(
             "MATCH (e:Entity) WHERE toLower(e.label) = toLower($label) RETURN e",

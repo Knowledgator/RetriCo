@@ -8,6 +8,22 @@ from pathlib import Path
 from .factory import ProcessorFactory
 from .dag import DAGExecutor
 
+# Types that are safe to serialize to YAML
+_YAML_SAFE_TYPES = (str, int, float, bool, type(None))
+
+
+def _strip_non_serializable(obj):
+    """Recursively remove non-serializable values from a config dict."""
+    if isinstance(obj, dict):
+        return {
+            k: _strip_non_serializable(v)
+            for k, v in obj.items()
+            if isinstance(v, (*_YAML_SAFE_TYPES, dict, list))
+        }
+    if isinstance(obj, list):
+        return [_strip_non_serializable(item) for item in obj]
+    return obj
+
 
 class BuildConfigBuilder:
     """Declarative builder for graph-building pipeline configs.
@@ -37,6 +53,8 @@ class BuildConfigBuilder:
         self._chunker_config: Optional[Dict[str, Any]] = None
         self._ner_config: Optional[Dict[str, Any]] = None
         self._ner_type: str = "ner_gliner"
+        self._linker_config: Optional[Dict[str, Any]] = None
+        self._has_linker: bool = False
         self._relex_config: Optional[Dict[str, Any]] = None
         self._relex_type: str = "relex_gliner"
         self._writer_config: Optional[Dict[str, Any]] = None
@@ -96,6 +114,24 @@ class BuildConfigBuilder:
             self._ner_config["api_key"] = api_key
         if base_url is not None:
             self._ner_config["base_url"] = base_url
+        return self
+
+    def linker(
+        self,
+        executor: Any = None,
+        model: str = "knowledgator/gliner-linker-large-v1.0",
+        threshold: float = 0.5,
+        entities: Any = None,
+    ) -> "BuildConfigBuilder":
+        self._has_linker = True
+        self._linker_config = {
+            "model": model,
+            "threshold": threshold,
+        }
+        if executor is not None:
+            self._linker_config["executor"] = executor
+        if entities is not None:
+            self._linker_config["entities"] = entities
         return self
 
     def relex_gliner(
@@ -169,10 +205,10 @@ class BuildConfigBuilder:
         """Build configuration dict."""
         if not self._chunker_config:
             self._chunker_config = {"method": "sentence"}
-        if not self._ner_config and not self._relex_config:
+        if not self._ner_config and not self._relex_config and not self._has_linker:
             raise ValueError(
-                "NER or relex config required. "
-                "Call .ner_gliner()/.ner_llm() or .relex_gliner()/.relex_llm() first."
+                "NER, linker, or relex config required. "
+                "Call .ner_gliner()/.ner_llm(), .linker(), or .relex_gliner()/.relex_llm() first."
             )
         if not self._writer_config:
             self._writer_config = {}
@@ -190,6 +226,7 @@ class BuildConfigBuilder:
         ]
 
         has_ner = self._ner_config is not None
+        has_linker = self._has_linker
         has_relex = self._relex_config is not None
 
         if has_ner:
@@ -204,14 +241,40 @@ class BuildConfigBuilder:
                 "config": self._ner_config,
             })
 
+        if has_linker:
+            linker_inputs = {
+                "chunks": {"source": "chunker_result", "fields": "chunks"},
+            }
+            linker_requires = ["chunker"]
+            if has_ner:
+                linker_inputs["entities"] = {"source": "ner_result", "fields": "entities"}
+                linker_requires.append("ner")
+            nodes.append({
+                "id": "linker",
+                "processor": "entity_linker",
+                "requires": linker_requires,
+                "inputs": linker_inputs,
+                "output": {"key": "linker_result"},
+                "config": self._linker_config,
+            })
+
+        # Determine the entity source after NER/linker
+        # Priority: linker > ner (linker output has linked_entity_id)
+        if has_linker:
+            entity_source_before_relex = "linker_result"
+        elif has_ner:
+            entity_source_before_relex = "ner_result"
+        else:
+            entity_source_before_relex = None
+
         if has_relex:
             relex_inputs = {
                 "chunks": {"source": "chunker_result", "fields": "chunks"},
             }
             relex_requires = ["chunker"]
-            if has_ner:
-                relex_inputs["entities"] = {"source": "ner_result", "fields": "entities"}
-                relex_requires.append("ner")
+            if entity_source_before_relex:
+                relex_inputs["entities"] = {"source": entity_source_before_relex, "fields": "entities"}
+                relex_requires.append("linker" if has_linker else "ner")
             nodes.append({
                 "id": "relex",
                 "processor": self._relex_type,
@@ -223,9 +286,11 @@ class BuildConfigBuilder:
 
         # Determine entity/relation sources for the graph writer
         if has_relex:
-            # relex always produces entities (standalone or with pre-extracted)
             entity_source = "relex_result"
             writer_requires = ["chunker", "relex"]
+        elif has_linker:
+            entity_source = "linker_result"
+            writer_requires = ["chunker", "linker"]
         else:
             entity_source = "ner_result"
             writer_requires = ["chunker", "ner"]
@@ -260,7 +325,7 @@ class BuildConfigBuilder:
 
     def save(self, filepath: str) -> None:
         """Save config to YAML."""
-        config = self.get_config()
+        config = _strip_non_serializable(self.get_config())
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         with open(filepath, "w") as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
@@ -285,6 +350,8 @@ class QueryConfigBuilder:
         self.name = name
         self.description = description or f"{name} — auto-generated"
         self._parser_config: Optional[Dict[str, Any]] = None
+        self._linker_config: Optional[Dict[str, Any]] = None
+        self._has_linker: bool = False
         self._retriever_config: Optional[Dict[str, Any]] = None
         self._chunk_config: Optional[Dict[str, Any]] = None
         self._reasoner_config: Optional[Dict[str, Any]] = None
@@ -313,6 +380,33 @@ class QueryConfigBuilder:
             self._parser_config["api_key"] = api_key
         if base_url is not None:
             self._parser_config["base_url"] = base_url
+        return self
+
+    def linker(
+        self,
+        executor: Any = None,
+        model: str = "knowledgator/gliner-linker-large-v1.0",
+        threshold: float = 0.5,
+        entities: Any = None,
+        neo4j_uri: str = None,
+        neo4j_user: str = "neo4j",
+        neo4j_password: str = "password",
+        neo4j_database: str = "neo4j",
+    ) -> "QueryConfigBuilder":
+        self._has_linker = True
+        self._linker_config = {
+            "model": model,
+            "threshold": threshold,
+        }
+        if executor is not None:
+            self._linker_config["executor"] = executor
+        if entities is not None:
+            self._linker_config["entities"] = entities
+        if neo4j_uri is not None:
+            self._linker_config["neo4j_uri"] = neo4j_uri
+            self._linker_config["neo4j_user"] = neo4j_user
+            self._linker_config["neo4j_password"] = neo4j_password
+            self._linker_config["neo4j_database"] = neo4j_database
         return self
 
     def retriever(
@@ -377,8 +471,10 @@ class QueryConfigBuilder:
 
     def get_config(self) -> Dict[str, Any]:
         """Build configuration dict."""
-        if not self._parser_config:
-            raise ValueError("Parser config required. Call .query_parser() first.")
+        has_parser = self._parser_config is not None
+        has_linker = self._has_linker
+        if not has_parser and not has_linker:
+            raise ValueError("Parser or linker config required. Call .query_parser() or .linker() first.")
         if not self._retriever_config:
             raise ValueError("Retriever config required. Call .retriever() first.")
 
@@ -389,8 +485,10 @@ class QueryConfigBuilder:
             if key not in self._chunk_config and key in self._retriever_config:
                 self._chunk_config[key] = self._retriever_config[key]
 
-        nodes = [
-            {
+        nodes = []
+
+        if has_parser:
+            nodes.append({
                 "id": "query_parser",
                 "processor": "query_parser",
                 "inputs": {
@@ -398,28 +496,52 @@ class QueryConfigBuilder:
                 },
                 "output": {"key": "parser_result"},
                 "config": self._parser_config,
+            })
+
+        if has_linker:
+            linker_inputs = {"query": {"source": "$input", "fields": "query"}}
+            linker_requires = []
+            if has_parser:
+                linker_inputs["entities"] = {"source": "parser_result", "fields": "entities"}
+                linker_requires.append("query_parser")
+            nodes.append({
+                "id": "linker",
+                "processor": "entity_linker",
+                "requires": linker_requires,
+                "inputs": linker_inputs,
+                "output": {"key": "linker_result"},
+                "config": self._linker_config,
+            })
+
+        # Determine entity source for retriever
+        if has_linker:
+            entity_source = "linker_result"
+            retriever_requires = ["linker"]
+        else:
+            entity_source = "parser_result"
+            retriever_requires = ["query_parser"]
+
+        nodes.append({
+            "id": "retriever",
+            "processor": "retriever",
+            "requires": retriever_requires,
+            "inputs": {
+                "entities": {"source": entity_source, "fields": "entities"},
             },
-            {
-                "id": "retriever",
-                "processor": "retriever",
-                "requires": ["query_parser"],
-                "inputs": {
-                    "entities": {"source": "parser_result", "fields": "entities"},
-                },
-                "output": {"key": "retriever_result"},
-                "config": self._retriever_config,
+            "output": {"key": "retriever_result"},
+            "config": self._retriever_config,
+        })
+
+        nodes.append({
+            "id": "chunk_retriever",
+            "processor": "chunk_retriever",
+            "requires": ["retriever"],
+            "inputs": {
+                "subgraph": {"source": "retriever_result", "fields": "subgraph"},
             },
-            {
-                "id": "chunk_retriever",
-                "processor": "chunk_retriever",
-                "requires": ["retriever"],
-                "inputs": {
-                    "subgraph": {"source": "retriever_result", "fields": "subgraph"},
-                },
-                "output": {"key": "chunk_result"},
-                "config": self._chunk_config,
-            },
-        ]
+            "output": {"key": "chunk_result"},
+            "config": self._chunk_config,
+        })
 
         if self._reasoner_config is not None:
             nodes.append({
@@ -446,7 +568,7 @@ class QueryConfigBuilder:
 
     def save(self, filepath: str) -> None:
         """Save config to YAML."""
-        config = self.get_config()
+        config = _strip_non_serializable(self.get_config())
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         with open(filepath, "w") as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
