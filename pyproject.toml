@@ -25,6 +25,9 @@ dev = [
 llm = [
     "openai>=1.0",
 ]
+falkordb = [
+    "falkordb>=1.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

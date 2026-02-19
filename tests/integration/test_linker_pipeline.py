@@ -42,12 +42,12 @@ def _make_mock_glinker_executor(linked_entities=None):
 
 
 class TestBuildPipelineWithLinker:
-    @patch("grapsit.construct.graph_writer.Neo4jGraphStore")
+    @patch("grapsit.construct.graph_writer.create_store")
     @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_ner_plus_linker_pipeline(self, mock_ner_load, mock_store_cls):
+    def test_ner_plus_linker_pipeline(self, mock_ner_load, mock_create_store):
         """Test chunker -> NER -> linker -> graph_writer."""
         mock_store = MagicMock()
-        mock_store_cls.return_value = mock_store
+        mock_create_store.return_value = mock_store
 
         glinker_executor = _make_mock_glinker_executor([
             {"mention_text": "Einstein", "entity_id": "Q937"},
@@ -91,11 +91,11 @@ class TestBuildPipelineWithLinker:
         assert "Q937" in entity_map
         assert "Q3012" in entity_map
 
-    @patch("grapsit.construct.graph_writer.Neo4jGraphStore")
-    def test_linker_only_pipeline(self, mock_store_cls):
+    @patch("grapsit.construct.graph_writer.create_store")
+    def test_linker_only_pipeline(self, mock_create_store):
         """Test chunker -> linker -> graph_writer (no NER, end-to-end)."""
         mock_store = MagicMock()
-        mock_store_cls.return_value = mock_store
+        mock_create_store.return_value = mock_store
 
         glinker_executor = _make_mock_glinker_executor([
             {"mention_text": "Einstein", "label": "person", "entity_id": "Q937",
@@ -122,12 +122,12 @@ class TestBuildPipelineWithLinker:
         writer_result = result.get("writer_result")
         assert writer_result["entity_count"] == 2
 
-    @patch("grapsit.construct.graph_writer.Neo4jGraphStore")
+    @patch("grapsit.construct.graph_writer.create_store")
     @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_ner_linker_relex_pipeline(self, mock_ner_load, mock_store_cls):
+    def test_ner_linker_relex_pipeline(self, mock_ner_load, mock_create_store):
         """Test chunker -> NER -> linker -> relex -> graph_writer."""
         mock_store = MagicMock()
-        mock_store_cls.return_value = mock_store
+        mock_create_store.return_value = mock_store
 
         glinker_executor = _make_mock_glinker_executor([
             {"mention_text": "Einstein", "entity_id": "Q937"},

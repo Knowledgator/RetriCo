@@ -1,9 +1,7 @@
-"""Neo4j graph store for knowledge graph persistence."""
+"""FalkorDB graph store for knowledge graph persistence."""
 
 from typing import Any, Dict, List, Optional
 import logging
-
-from neo4j import GraphDatabase
 
 from .base import BaseGraphStore
 from ..models.document import Chunk, Document
@@ -13,74 +11,74 @@ from ..models.relation import Relation
 logger = logging.getLogger(__name__)
 
 
-class Neo4jGraphStore(BaseGraphStore):
-    """CRUD operations for a knowledge graph in Neo4j.
+class FalkorDBGraphStore(BaseGraphStore):
+    """CRUD operations for a knowledge graph in FalkorDB.
+
+    FalkorDB is a Redis-based graph database supporting OpenCypher.
 
     Schema::
 
-        (:Entity:TypeName {id, label, entity_type, properties})
+        (:Entity {id, label, entity_type, properties})
         (:Chunk {id, document_id, text, index, start_char, end_char})
         (:Document {id, source, metadata})
 
-        (entity)-[:MENTIONED_IN {start, end, score}]->(chunk)
-        (entity)-[:REL_TYPE {score, chunk_id}]->(entity)
+        (entity)-[:MENTIONED_IN {start, end, score, text}]->(chunk)
+        (entity)-[:REL_TYPE {score, chunk_id, id}]->(entity)
         (chunk)-[:PART_OF]->(document)
     """
 
     def __init__(
         self,
-        uri: str = "bolt://localhost:7687",
-        user: str = "neo4j",
-        password: str = "password",
-        database: str = "neo4j",
+        host: str = "localhost",
+        port: int = 6379,
+        graph: str = "grapsit",
     ):
-        self.uri = uri
-        self.user = user
-        self.password = password
-        self.database = database
-        self._driver = None
+        self.host = host
+        self.port = port
+        self.graph_name = graph
+        self._db = None
+        self._graph = None
 
-    @property
-    def driver(self):
-        if self._driver is None:
-            self._driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
-        return self._driver
-
-    def close(self):
-        if self._driver:
-            self._driver.close()
-            self._driver = None
+    def _ensure_connection(self):
+        if self._graph is None:
+            from falkordb import FalkorDB
+            self._db = FalkorDB(host=self.host, port=self.port)
+            self._graph = self._db.select_graph(self.graph_name)
 
     def _run(self, query: str, parameters: dict = None) -> list:
-        with self.driver.session(database=self.database) as session:
-            result = session.run(query, parameters or {})
-            return [record.data() for record in result]
+        self._ensure_connection()
+        params = parameters or {}
+        result = self._graph.query(query, params)
+        return result.result_set
+
+    def close(self):
+        # FalkorDB Python client uses Redis connection pooling;
+        # no explicit close needed, but reset references.
+        self._graph = None
+        self._db = None
 
     # -- Setup ---------------------------------------------------------------
 
     def setup_indexes(self):
-        """Create indexes and constraints."""
-        queries = [
-            "CREATE CONSTRAINT entity_id IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
-            "CREATE CONSTRAINT chunk_id IF NOT EXISTS FOR (c:Chunk) REQUIRE c.id IS UNIQUE",
-            "CREATE CONSTRAINT document_id IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE",
-            "CREATE INDEX entity_label IF NOT EXISTS FOR (e:Entity) ON (e.label)",
-            "CREATE INDEX chunk_doc IF NOT EXISTS FOR (c:Chunk) ON (c.document_id)",
+        """Create indexes (FalkorDB does not support IF NOT EXISTS, so wrap in try/except)."""
+        index_queries = [
+            "CREATE INDEX FOR (e:Entity) ON (e.id)",
+            "CREATE INDEX FOR (e:Entity) ON (e.label)",
+            "CREATE INDEX FOR (c:Chunk) ON (c.id)",
+            "CREATE INDEX FOR (c:Chunk) ON (c.document_id)",
+            "CREATE INDEX FOR (d:Document) ON (d.id)",
         ]
-        for q in queries:
+        for q in index_queries:
             try:
                 self._run(q)
             except Exception as e:
-                logger.debug(f"Index/constraint already exists or error: {e}")
+                logger.debug(f"Index already exists or error: {e}")
 
     # -- Documents -----------------------------------------------------------
 
     def write_document(self, doc: Document):
         self._run(
-            """
-            MERGE (d:Document {id: $id})
-            SET d.source = $source, d.metadata = $metadata
-            """,
+            "MERGE (d:Document {id: $id}) SET d.source = $source, d.metadata = $metadata",
             {"id": doc.id, "source": doc.source, "metadata": str(doc.metadata)},
         )
 
@@ -119,50 +117,19 @@ class Neo4jGraphStore(BaseGraphStore):
     # -- Entities ------------------------------------------------------------
 
     def write_entity(self, entity: Entity):
-        """Create or merge an Entity node with an additional type label."""
-        type_label = _sanitize_label(entity.entity_type) if entity.entity_type else None
-        set_clause = "SET e.label = $label, e.entity_type = $entity_type, e.properties = $properties"
-
-        if type_label:
-            query = f"""
-            MERGE (e:Entity {{id: $id}})
-            {set_clause}
-            WITH e
-            CALL apoc.create.addLabels(e, [$type_label]) YIELD node
-            RETURN node
+        """Create or merge an Entity node (no APOC — single Entity label only)."""
+        self._run(
             """
-            params = {
+            MERGE (e:Entity {id: $id})
+            SET e.label = $label, e.entity_type = $entity_type, e.properties = $properties
+            """,
+            {
                 "id": entity.id,
                 "label": entity.label,
                 "entity_type": entity.entity_type,
                 "properties": str(entity.properties),
-                "type_label": type_label,
-            }
-        else:
-            query = f"""
-            MERGE (e:Entity {{id: $id}})
-            {set_clause}
-            """
-            params = {
-                "id": entity.id,
-                "label": entity.label,
-                "entity_type": entity.entity_type,
-                "properties": str(entity.properties),
-            }
-
-        try:
-            self._run(query, params)
-        except Exception:
-            # Fallback without APOC (addLabels requires APOC plugin)
-            self._run(
-                f"MERGE (e:Entity {{id: $id}}) {set_clause}",
-                {
-                    "id": entity.id,
-                    "label": entity.label,
-                    "entity_type": entity.entity_type,
-                    "properties": str(entity.properties),
-                },
-            )
+            },
+        )
 
     def write_mention_link(self, entity_id: str, chunk_id: str, mention: EntityMention):
         self._run(
@@ -205,41 +172,40 @@ class Neo4jGraphStore(BaseGraphStore):
     # -- Reads ---------------------------------------------------------------
 
     def get_entity_by_id(self, entity_id: str) -> Optional[Dict[str, Any]]:
-        """Look up an entity by its ID."""
-        records = self._run(
+        rows = self._run(
             "MATCH (e:Entity {id: $id}) RETURN e",
             {"id": entity_id},
         )
-        if records:
-            return records[0]["e"]
+        if rows:
+            return _node_to_dict(rows[0][0])
         return None
 
     def get_all_entities(self) -> List[Dict[str, Any]]:
-        """Return all Entity nodes (for knowledge base loading)."""
-        records = self._run("MATCH (e:Entity) RETURN e")
-        return [r["e"] for r in records]
+        rows = self._run("MATCH (e:Entity) RETURN e")
+        return [_node_to_dict(row[0]) for row in rows]
 
     def get_entity_by_label(self, label: str) -> Optional[Dict[str, Any]]:
-        records = self._run(
+        rows = self._run(
             "MATCH (e:Entity) WHERE toLower(e.label) = toLower($label) RETURN e",
             {"label": label},
         )
-        if records:
-            return records[0]["e"]
+        if rows:
+            return _node_to_dict(rows[0][0])
         return None
 
     def get_entity_neighbors(self, entity_id: str, max_hops: int = 1) -> List[Dict[str, Any]]:
-        records = self._run(
+        rows = self._run(
             f"""
             MATCH path = (e:Entity {{id: $id}})-[*1..{max_hops}]-(neighbor:Entity)
             RETURN DISTINCT neighbor
             """,
             {"id": entity_id},
         )
-        return [r["neighbor"] for r in records]
+        return [_node_to_dict(row[0]) for row in rows]
 
     def get_entity_relations(self, entity_id: str) -> List[Dict[str, Any]]:
-        records = self._run(
+        # FalkorDB supports UNION
+        rows = self._run(
             """
             MATCH (e:Entity {id: $id})-[r]->(t:Entity)
             RETURN type(r) as relation_type, r.score as score, t.id as target_id,
@@ -252,21 +218,19 @@ class Neo4jGraphStore(BaseGraphStore):
             """,
             {"id": entity_id},
         )
-        return records
+        # FalkorDB result_set returns lists of values; convert to dicts
+        columns = ["relation_type", "score", "target_id", "target_label", "chunk_id"]
+        return [dict(zip(columns, row)) for row in rows]
 
     def get_chunks_for_entity(self, entity_id: str) -> List[Dict[str, Any]]:
-        records = self._run(
-            """
-            MATCH (e:Entity {id: $id})-[:MENTIONED_IN]->(c:Chunk)
-            RETURN c
-            """,
+        rows = self._run(
+            "MATCH (e:Entity {id: $id})-[:MENTIONED_IN]->(c:Chunk) RETURN c",
             {"id": entity_id},
         )
-        return [r["c"] for r in records]
+        return [_node_to_dict(row[0]) for row in rows]
 
     def get_subgraph(self, entity_ids: List[str], max_hops: int = 1) -> Dict[str, Any]:
-        """Retrieve a subgraph around a set of entity IDs."""
-        records = self._run(
+        rows = self._run(
             f"""
             MATCH (e:Entity) WHERE e.id IN $ids
             OPTIONAL MATCH path = (e)-[*1..{max_hops}]-(neighbor:Entity)
@@ -276,22 +240,53 @@ class Neo4jGraphStore(BaseGraphStore):
             UNWIND nodes AS a
             UNWIND nodes AS b
             OPTIONAL MATCH (a)-[r]->(b) WHERE NOT type(r) = 'MENTIONED_IN'
-            RETURN collect(DISTINCT properties(a)) AS entities,
-                   collect(DISTINCT {{head: a.id, tail: b.id, type: type(r), score: r.score}}) AS relations
+            RETURN collect(DISTINCT a) AS entities,
+                   collect(DISTINCT [a.id, b.id, type(r), r.score]) AS relations
             """,
             {"ids": entity_ids},
         )
-        if records:
-            return records[0]
-        return {"entities": [], "relations": []}
+        if not rows:
+            return {"entities": [], "relations": []}
+
+        row = rows[0]
+        # Parse entities (Node objects)
+        raw_entities = row[0] if row[0] else []
+        entities = [_node_to_dict(n) for n in raw_entities if n is not None]
+
+        # Parse relations (lists of [head_id, tail_id, type, score])
+        raw_relations = row[1] if row[1] else []
+        relations = []
+        for rel_data in raw_relations:
+            if rel_data is None or (isinstance(rel_data, list) and rel_data[2] is None):
+                continue
+            relations.append({
+                "head": rel_data[0],
+                "tail": rel_data[1],
+                "type": rel_data[2],
+                "score": rel_data[3],
+            })
+
+        return {"entities": entities, "relations": relations}
 
     def clear_all(self):
-        """Delete all nodes and relationships."""
         self._run("MATCH (n) DETACH DELETE n")
 
 
+def _node_to_dict(node) -> Dict[str, Any]:
+    """Convert a FalkorDB Node object to a plain dict.
+
+    FalkorDB Node objects expose properties via .properties dict.
+    If the node is already a dict (e.g. in tests), return it as-is.
+    """
+    if isinstance(node, dict):
+        return node
+    if hasattr(node, "properties"):
+        return dict(node.properties)
+    return {}
+
+
 def _sanitize_label(s: str) -> str:
-    """Sanitize a string for use as a Neo4j label or relationship type."""
+    """Sanitize a string for use as a relationship type."""
     s = s.strip().replace(" ", "_").replace("-", "_")
     s = "".join(c for c in s if c.isalnum() or c == "_")
     if s and s[0].isdigit():

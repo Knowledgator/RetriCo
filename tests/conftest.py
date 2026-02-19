@@ -82,3 +82,20 @@ def mock_neo4j_store():
         from grapsit.store.neo4j_store import Neo4jGraphStore
         store = Neo4jGraphStore()
         yield store
+
+
+@pytest.fixture
+def mock_falkordb_store():
+    """A mocked FalkorDBGraphStore."""
+    from grapsit.store.falkordb_store import FalkorDBGraphStore
+    store = FalkorDBGraphStore(host="localhost", port=6379, graph="test")
+
+    mock_graph = MagicMock()
+    mock_result = MagicMock()
+    mock_result.result_set = []
+    mock_graph.query.return_value = mock_result
+
+    # Bypass lazy FalkorDB import by setting internals directly
+    store._db = MagicMock()
+    store._graph = mock_graph
+    yield store
