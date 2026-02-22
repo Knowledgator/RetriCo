@@ -12,6 +12,7 @@ from .models import Document, Chunk, Entity, EntityMention, Relation, KGTriple, 
 from .store.base import BaseGraphStore
 from .store.neo4j_store import Neo4jGraphStore
 from .store.falkordb_store import FalkorDBGraphStore
+from .store.memgraph_store import MemgraphGraphStore
 from .store import create_store
 from .llm import BaseLLMClient, OpenAIClient
 
@@ -43,6 +44,7 @@ __all__ = [
     "BaseGraphStore",
     "Neo4jGraphStore",
     "FalkorDBGraphStore",
+    "MemgraphGraphStore",
     "create_store",
     # LLM
     "BaseLLMClient",
@@ -74,6 +76,10 @@ def build_graph(
     falkordb_host: str = "localhost",
     falkordb_port: int = 6379,
     falkordb_graph: str = "grapsit",
+    memgraph_uri: str = "bolt://localhost:7687",
+    memgraph_user: str = "",
+    memgraph_password: str = "",
+    memgraph_database: str = "memgraph",
 ) -> PipeContext:
     """Build a knowledge graph from texts in one call.
 
@@ -129,6 +135,10 @@ def build_graph(
         falkordb_host=falkordb_host,
         falkordb_port=falkordb_port,
         falkordb_graph=falkordb_graph,
+        memgraph_uri=memgraph_uri,
+        memgraph_user=memgraph_user,
+        memgraph_password=memgraph_password,
+        memgraph_database=memgraph_database,
     )
 
     executor = builder.build(verbose=verbose)
@@ -158,6 +168,10 @@ def query_graph(
     falkordb_host: str = "localhost",
     falkordb_port: int = 6379,
     falkordb_graph: str = "grapsit",
+    memgraph_uri: str = "bolt://localhost:7687",
+    memgraph_user: str = "",
+    memgraph_password: str = "",
+    memgraph_database: str = "memgraph",
 ) -> QueryResult:
     """Query a knowledge graph in one call.
 
@@ -214,6 +228,10 @@ def query_graph(
         falkordb_host=falkordb_host,
         falkordb_port=falkordb_port,
         falkordb_graph=falkordb_graph,
+        memgraph_uri=memgraph_uri,
+        memgraph_user=memgraph_user,
+        memgraph_password=memgraph_password,
+        memgraph_database=memgraph_database,
     )
     builder.chunk_retriever()
 

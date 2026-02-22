@@ -130,6 +130,10 @@ class BuildConfigBuilder:
         falkordb_host: str = None,
         falkordb_port: int = 6379,
         falkordb_graph: str = "grapsit",
+        memgraph_uri: str = None,
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
     ) -> "BuildConfigBuilder":
         self._has_linker = True
         self._linker_config = {
@@ -151,6 +155,11 @@ class BuildConfigBuilder:
             self._linker_config["falkordb_host"] = falkordb_host
             self._linker_config["falkordb_port"] = falkordb_port
             self._linker_config["falkordb_graph"] = falkordb_graph
+        if memgraph_uri is not None:
+            self._linker_config["memgraph_uri"] = memgraph_uri
+            self._linker_config["memgraph_user"] = memgraph_user
+            self._linker_config["memgraph_password"] = memgraph_password
+            self._linker_config["memgraph_database"] = memgraph_database
         return self
 
     def relex_gliner(
@@ -214,6 +223,10 @@ class BuildConfigBuilder:
         falkordb_host: str = "localhost",
         falkordb_port: int = 6379,
         falkordb_graph: str = "grapsit",
+        memgraph_uri: str = "bolt://localhost:7687",
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
     ) -> "BuildConfigBuilder":
         self._writer_config = {
             "store_type": store_type,
@@ -225,6 +238,10 @@ class BuildConfigBuilder:
             "falkordb_host": falkordb_host,
             "falkordb_port": falkordb_port,
             "falkordb_graph": falkordb_graph,
+            "memgraph_uri": memgraph_uri,
+            "memgraph_user": memgraph_user,
+            "memgraph_password": memgraph_password,
+            "memgraph_database": memgraph_database,
         }
         return self
 
@@ -423,6 +440,10 @@ class QueryConfigBuilder:
         falkordb_host: str = None,
         falkordb_port: int = 6379,
         falkordb_graph: str = "grapsit",
+        memgraph_uri: str = None,
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
     ) -> "QueryConfigBuilder":
         self._has_linker = True
         self._linker_config = {
@@ -444,6 +465,11 @@ class QueryConfigBuilder:
             self._linker_config["falkordb_host"] = falkordb_host
             self._linker_config["falkordb_port"] = falkordb_port
             self._linker_config["falkordb_graph"] = falkordb_graph
+        if memgraph_uri is not None:
+            self._linker_config["memgraph_uri"] = memgraph_uri
+            self._linker_config["memgraph_user"] = memgraph_user
+            self._linker_config["memgraph_password"] = memgraph_password
+            self._linker_config["memgraph_database"] = memgraph_database
         return self
 
     def retriever(
@@ -457,6 +483,10 @@ class QueryConfigBuilder:
         falkordb_host: str = "localhost",
         falkordb_port: int = 6379,
         falkordb_graph: str = "grapsit",
+        memgraph_uri: str = "bolt://localhost:7687",
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
     ) -> "QueryConfigBuilder":
         self._retriever_config = {
             "store_type": store_type,
@@ -468,6 +498,10 @@ class QueryConfigBuilder:
             "falkordb_host": falkordb_host,
             "falkordb_port": falkordb_port,
             "falkordb_graph": falkordb_graph,
+            "memgraph_uri": memgraph_uri,
+            "memgraph_user": memgraph_user,
+            "memgraph_password": memgraph_password,
+            "memgraph_database": memgraph_database,
         }
         return self
 
@@ -482,6 +516,10 @@ class QueryConfigBuilder:
         falkordb_host: str = None,
         falkordb_port: int = None,
         falkordb_graph: str = None,
+        memgraph_uri: str = None,
+        memgraph_user: str = None,
+        memgraph_password: str = None,
+        memgraph_database: str = None,
     ) -> "QueryConfigBuilder":
         self._chunk_config = {"max_chunks": max_chunks}
         # Inherit store config from retriever if not explicitly provided
@@ -501,6 +539,14 @@ class QueryConfigBuilder:
             self._chunk_config["falkordb_port"] = falkordb_port
         if falkordb_graph is not None:
             self._chunk_config["falkordb_graph"] = falkordb_graph
+        if memgraph_uri is not None:
+            self._chunk_config["memgraph_uri"] = memgraph_uri
+        if memgraph_user is not None:
+            self._chunk_config["memgraph_user"] = memgraph_user
+        if memgraph_password is not None:
+            self._chunk_config["memgraph_password"] = memgraph_password
+        if memgraph_database is not None:
+            self._chunk_config["memgraph_database"] = memgraph_database
         return self
 
     def reasoner(
@@ -541,6 +587,7 @@ class QueryConfigBuilder:
         inherit_keys = (
             "store_type", "neo4j_uri", "neo4j_user", "neo4j_password", "neo4j_database",
             "falkordb_host", "falkordb_port", "falkordb_graph",
+            "memgraph_uri", "memgraph_user", "memgraph_password", "memgraph_database",
         )
         for key in inherit_keys:
             if key not in self._chunk_config and key in self._retriever_config:
