@@ -63,16 +63,13 @@ class EntityLinkerProcessor(BaseProcessor):
             self._executor.load_entities(entities_cfg)
             return
 
-        # Load from Neo4j if configured
+        # Load from graph store if configured
         neo4j_uri = self.config_dict.get("neo4j_uri")
-        if neo4j_uri:
-            from ..store.neo4j_store import Neo4jGraphStore
-            store = Neo4jGraphStore(
-                uri=neo4j_uri,
-                user=self.config_dict.get("neo4j_user", "neo4j"),
-                password=self.config_dict.get("neo4j_password", "password"),
-                database=self.config_dict.get("neo4j_database", "neo4j"),
-            )
+        falkordb_host = self.config_dict.get("falkordb_host")
+        store_type = self.config_dict.get("store_type")
+        if neo4j_uri or falkordb_host or store_type:
+            from ..store import create_store
+            store = create_store(self.config_dict)
             raw_entities = store.get_all_entities()
             store.close()
 

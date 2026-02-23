@@ -61,14 +61,26 @@ class QueryParserProcessor(BaseProcessor):
     def _parse_gliner(self, query: str) -> List[EntityMention]:
         self._load_gliner()
         threshold = self.config_dict.get("threshold", 0.3)
-        raw = self._model.predict_entities(
-            query, self.labels, threshold=threshold, flat_ner=True,
+        flat_ner = self.config_dict.get("flat_ner", True)
+        # Use inference() for consistent output across GLiNER and GLiNER-relex models
+        entities_batch = self._model.inference(
+            texts=[query], labels=self.labels,
+            threshold=threshold, flat_ner=flat_ner,
         )
+        if isinstance(entities_batch, tuple):
+            entities_batch = entities_batch[0]
+
+        raw = entities_batch[0] if entities_batch else []
+        
         mentions = []
         for ent in raw:
+            entity_label = ent.get("label", "")
+            generated_label = ent.get("generated_label", None)
+            if generated_label is not None:
+                entity_label = generated_label[0]
             mentions.append(EntityMention(
                 text=ent["text"],
-                label=ent.get("label", ""),
+                label=entity_label,
                 start=ent.get("start", 0),
                 end=ent.get("end", 0),
                 score=ent.get("score", 0.0),

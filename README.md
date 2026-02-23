@@ -1,8 +1,8 @@
 # grapsit
 
-End-to-end Graph RAG framework that turns unstructured text into a queryable knowledge graph. Built on [Knowledgator](https://github.com/Knowledgator) technologies (GLiNER, GLinker) with Neo4j for graph storage.
+End-to-end Graph RAG framework that turns unstructured text into a queryable knowledge graph. Built on [Knowledgator](https://github.com/Knowledgator) technologies (GLiNER, GLinker) with Neo4j or FalkorDB for graph storage.
 
-**Build pipeline**: `text chunking → entity recognition → entity linking → relation extraction → Neo4j graph`
+**Build pipeline**: `text chunking → entity recognition → entity linking → relation extraction → graph store (Neo4j / FalkorDB)`
 
 **Query pipeline**: `query parsing → entity linking → subgraph retrieval → chunk retrieval → LLM reasoning`
 
@@ -29,7 +29,13 @@ For entity linking, also install GLinker:
 pip install glinker
 ```
 
-Requires Python 3.10+ and a running [Neo4j](https://neo4j.com/) instance.
+For FalkorDB as an alternative graph store:
+
+```bash
+pip install falkordb
+```
+
+Requires Python 3.10+ and a running graph database — either [Neo4j](https://neo4j.com/) or [FalkorDB](https://www.falkordb.com/).
 
 ## Quickstart
 
@@ -76,13 +82,13 @@ print(answer.subgraph)      # retrieved entities, relations, source chunks
 2. **NER** — [GLiNER](https://github.com/urchade/GLiNER) or LLM extracts entities matching your labels
 3. **Entity linking** (optional) — [GLinker](https://github.com/Knowledgator/GLinker) links entity mentions to a reference knowledge base
 4. **Relation extraction** — [GLiNER-relex](https://huggingface.co/knowledgator/gliner-relex-large-v0.5) or LLM finds relations between entities
-5. **Graph writing** — deduplicates entities (using linked IDs when available), writes nodes and edges to Neo4j
+5. **Graph writing** — deduplicates entities (using linked IDs when available), writes nodes and edges to Neo4j or FalkorDB
 
 **Query pipeline:**
 
 1. **Query parsing** — GLiNER or LLM extracts entities from the natural language query
 2. **Entity linking** (optional) — links parsed entities to the knowledge base for precise lookup
-3. **Retrieval** — looks up entities in Neo4j and expands to a k-hop subgraph
+3. **Retrieval** — looks up entities in the graph store and expands to a k-hop subgraph
 4. **Chunk retrieval** — fetches source text chunks where subgraph entities were mentioned
 5. **Reasoning** (optional) — LLM generates an answer from the subgraph and source chunks
 
@@ -168,10 +174,10 @@ Use any OpenAI-compatible API for entity and relation extraction. This works wit
 pip install vllm
 
 # Start a local OpenAI-compatible server
-vllm serve nowledgator/instruct-it-base --port 8000
+vllm serve knowledgator/instruct-it-base --port 8000
 
 # Or with GPU memory constraints
-vllm serve nowledgator/instruct-it-base --port 8000 --gpu-memory-utilization 0.8
+vllm serve knowledgator/instruct-it-base --port 8000 --gpu-memory-utilization 0.8
 
 # Or using a quantized model for lower memory usage
 vllm serve knowledgator/instruct-it-base --port 8000 --quantization awq
@@ -442,6 +448,122 @@ executor = ProcessorFactory.create_pipeline("pipeline.yaml", verbose=True)
 result = executor.execute({"texts": ["Your text here."]})
 ```
 
+### Using FalkorDB instead of Neo4j
+
+[FalkorDB](https://www.falkordb.com/) is a Redis-based graph database that supports OpenCypher. It can be used as a drop-in replacement for Neo4j in all pipelines.
+
+#### Starting FalkorDB
+
+```bash
+docker run -p 6379:6379 -it --rm falkordb/falkordb
+```
+
+#### `build_graph()` with FalkorDB
+
+```python
+import grapsit
+
+result = grapsit.build_graph(
+    texts=["Einstein was born in Ulm, Germany in 1879."],
+    entity_labels=["person", "location", "date"],
+    relation_labels=["born in"],
+    store_type="falkordb",
+    falkordb_host="localhost",
+    falkordb_port=6379,
+    falkordb_graph="my_knowledge_graph",
+)
+```
+
+#### Builder API with FalkorDB
+
+```python
+from grapsit import BuildConfigBuilder
+
+builder = BuildConfigBuilder(name="falkordb_pipeline")
+builder.chunker(method="sentence")
+builder.ner_gliner(labels=["person", "organization", "location"])
+builder.relex_gliner(
+    entity_labels=["person", "organization", "location"],
+    relation_labels=["works at", "born in", "located in"],
+)
+builder.graph_writer(
+    store_type="falkordb",
+    falkordb_host="localhost",
+    falkordb_port=6379,
+    falkordb_graph="my_knowledge_graph",
+)
+
+executor = builder.build(verbose=True)
+result = executor.execute({"texts": ["Einstein worked at Princeton."]})
+```
+
+#### Querying with FalkorDB
+
+```python
+result = grapsit.query_graph(
+    query="Where was Einstein born?",
+    entity_labels=["person", "location"],
+    store_type="falkordb",
+    falkordb_host="localhost",
+    falkordb_port=6379,
+    falkordb_graph="my_knowledge_graph",
+    api_key="sk-...",
+    model="gpt-4o-mini",
+)
+print(result.answer)
+```
+
+#### Query builder API with FalkorDB
+
+```python
+from grapsit import QueryConfigBuilder
+
+builder = QueryConfigBuilder(name="falkordb_query")
+builder.query_parser(method="gliner", labels=["person", "location"])
+builder.retriever(
+    store_type="falkordb",
+    falkordb_host="localhost",
+    falkordb_port=6379,
+    falkordb_graph="my_knowledge_graph",
+    max_hops=2,
+)
+builder.chunk_retriever()
+builder.reasoner(api_key="sk-...", model="gpt-4o-mini")
+
+executor = builder.build()
+ctx = executor.execute({"query": "Where was Einstein born?"})
+```
+
+#### Direct FalkorDB queries
+
+```python
+from grapsit import FalkorDBGraphStore
+
+store = FalkorDBGraphStore(host="localhost", port=6379, graph="my_knowledge_graph")
+
+entity = store.get_entity_by_label("Albert Einstein")
+relations = store.get_entity_relations(entity["id"])
+neighbors = store.get_entity_neighbors(entity["id"], max_hops=2)
+subgraph = store.get_subgraph(entity_ids=[entity["id"]], max_hops=1)
+
+store.close()
+```
+
+#### YAML config with FalkorDB
+
+```yaml
+nodes:
+  - id: graph_writer
+    processor: graph_writer
+    config:
+      store_type: falkordb
+      falkordb_host: localhost
+      falkordb_port: 6379
+      falkordb_graph: my_knowledge_graph
+```
+
+The `store_type` parameter works everywhere — `build_graph()`, `query_graph()`, builder methods, and YAML configs. All processors (`graph_writer`, `retriever`, `chunk_retriever`, `entity_linker`) use the same parameter to select the backend.
+
 ## Querying the graph
 
 ### Query pipeline
@@ -513,9 +635,9 @@ chunk_result = ctx.get("chunk_result")      # {"subgraph": Subgraph} (with chunk
 reasoner_result = ctx.get("reasoner_result")    # {"result": QueryResult}
 ```
 
-### Direct Neo4j queries
+### Direct store queries (Neo4j)
 
-After building, use `Neo4jGraphStore` to query directly:
+After building, use `Neo4jGraphStore` to query directly (see [FalkorDB section](#direct-falkordb-queries) for FalkorDB):
 
 ```python
 from grapsit import Neo4jGraphStore
@@ -576,9 +698,9 @@ print(writer["entity_count"], writer["relation_count"])
 entity_map = writer["entity_map"]  # dedup_key -> Entity
 ```
 
-## Neo4j schema
+## Graph schema
 
-The graph writer creates this schema in Neo4j:
+The graph writer creates this schema (same for both Neo4j and FalkorDB):
 
 ```
 (:Entity {id, label, entity_type, properties})
@@ -630,7 +752,7 @@ $input (texts)
        graph_writer
            │
            ▼
-     Neo4j database
+  Neo4j / FalkorDB
 ```
 
 **Query pipeline:**
@@ -645,7 +767,7 @@ $input (query)
  entity_linker (optional)
     │
     ▼
- retriever (Neo4j lookup + k-hop expansion)
+ retriever (graph DB lookup + k-hop expansion)
     │
     ▼
  chunk_retriever (source text retrieval)
@@ -676,10 +798,10 @@ Nodes at the same level run sequentially within a level, but levels are topologi
 | `entity_linker` | Entity linking with GLinker | `executor`, `model`, `threshold`, `entities` |
 | `relex_gliner` | Relation extraction with GLiNER-relex | `model`, `entity_labels`, `relation_labels`, `threshold`, `relation_threshold` |
 | `relex_llm` | Relation extraction with LLM | `model`, `entity_labels`, `relation_labels`, `api_key`, `base_url`, `temperature` |
-| `graph_writer` | Deduplicate and write to Neo4j | `neo4j_uri`, `neo4j_user`, `neo4j_password`, `neo4j_database` |
+| `graph_writer` | Deduplicate and write to graph store | `store_type`, `neo4j_uri`/`falkordb_host`, … |
 | `query_parser` | Extract entities from a query | `method` (gliner/llm), `labels`, `model`, `api_key` |
-| `retriever` | Look up entities + k-hop subgraph | `neo4j_uri`, `max_hops` |
-| `chunk_retriever` | Fetch source chunks for entities | `neo4j_uri`, `max_chunks` |
+| `retriever` | Look up entities + k-hop subgraph | `store_type`, `neo4j_uri`/`falkordb_host`, `max_hops` |
+| `chunk_retriever` | Fetch source chunks for entities | `store_type`, `neo4j_uri`/`falkordb_host`, `max_chunks` |
 | `reasoner` | LLM multi-hop reasoning | `method` (llm), `model`, `api_key`, `base_url` |
 
 ## Development
@@ -690,7 +812,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 
 # Run tests (mocked GLiNER + GLinker + Neo4j, no external services needed)
-.venv/bin/pytest tests/ -v    # 139 tests
+.venv/bin/pytest tests/ -v    # 170 tests
 ```
 
 ## Roadmap
@@ -698,6 +820,7 @@ python3 -m venv .venv
 - ~~**LLM extraction** — OpenAI-compatible NER and relation extraction as alternative to GLiNER~~ Done
 - ~~**Entity linking** — GLinker integration for linking mentions to a knowledge base~~ Done
 - ~~**Query pipeline** — DAG-based retrieval: query parsing, subgraph retrieval, LLM reasoning~~ Done
+- ~~**FalkorDB support** — alternative graph store, `store_type` parameter across all APIs~~ Done
 - **KG modeling** — node/edge embeddings, community detection (Leiden), path reasoning
-- **In-memory store** — testing without Neo4j
+- **In-memory store** — testing without a database
 - **CLI** — `grapsit build --config pipeline.yaml`

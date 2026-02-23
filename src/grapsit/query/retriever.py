@@ -30,13 +30,8 @@ class RetrieverProcessor(BaseProcessor):
 
     def _ensure_store(self):
         if self._store is None:
-            from ..store.neo4j_store import Neo4jGraphStore
-            self._store = Neo4jGraphStore(
-                uri=self.config_dict.get("neo4j_uri", "bolt://localhost:7687"),
-                user=self.config_dict.get("neo4j_user", "neo4j"),
-                password=self.config_dict.get("neo4j_password", "password"),
-                database=self.config_dict.get("neo4j_database", "neo4j"),
-            )
+            from ..store import create_store
+            self._store = create_store(self.config_dict)
 
     def __call__(self, *, entities: List[EntityMention], **kwargs) -> Dict[str, Any]:
         """Look up entities and build a subgraph.

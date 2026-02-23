@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import json
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -433,6 +434,7 @@ class DAGExecutor:
             logger.info(f"Executing pipeline: {self.pipeline.name}")
             logger.info(f"Total nodes: {len(self.nodes_map)}, levels: {len(execution_levels)}")
 
+        pipeline_start = time.perf_counter()
         for level_idx, level_nodes in enumerate(execution_levels):
             if self.verbose:
                 logger.info(f"Level {level_idx + 1}/{len(execution_levels)}: {level_nodes}")
@@ -440,7 +442,8 @@ class DAGExecutor:
                 self._run_node(node_id, context)
 
         if self.verbose:
-            logger.info("Pipeline completed successfully!")
+            total = time.perf_counter() - pipeline_start
+            logger.info(f"Pipeline completed in {total:.2f}s")
         return context
 
     def _run_node(self, node_id: str, context: PipeContext):
@@ -469,10 +472,12 @@ class DAGExecutor:
         if node.schema_ and hasattr(processor, "schema"):
             processor.schema = node.schema_
 
+        node_start = time.perf_counter()
         try:
             result = processor(**kwargs)
         except Exception as e:
             raise RuntimeError(f"Node '{node_id}' failed: {e}")
+        elapsed = time.perf_counter() - node_start
 
         if node.output.fields:
             if isinstance(node.output.fields, str):
@@ -481,7 +486,7 @@ class DAGExecutor:
         context.set(node.output.key, result)
 
         if self.verbose:
-            logger.info(f"  Output: '{node.output.key}' — success")
+            logger.info(f"  Output: '{node.output.key}' — {elapsed:.2f}s")
 
     def _evaluate_condition(self, condition: str, context: PipeContext) -> bool:
         return True

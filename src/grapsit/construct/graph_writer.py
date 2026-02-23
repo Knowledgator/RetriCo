@@ -8,30 +8,29 @@ from ..core.registry import processor_registry
 from ..models.document import Chunk, Document
 from ..models.entity import Entity, EntityMention
 from ..models.relation import Relation
-from ..store.neo4j_store import Neo4jGraphStore
+from ..store import create_store
 
 logger = logging.getLogger(__name__)
 
 
 class GraphWriterProcessor(BaseProcessor):
-    """Deduplicate entities and write everything to Neo4j.
+    """Deduplicate entities and write everything to the graph store.
 
     Config keys:
+        store_type: str (default: "neo4j") — "neo4j" or "falkordb"
         neo4j_uri: str (default: "bolt://localhost:7687")
         neo4j_user: str (default: "neo4j")
         neo4j_password: str (default: "password")
         neo4j_database: str (default: "neo4j")
+        falkordb_host: str (default: "localhost")
+        falkordb_port: int (default: 6379)
+        falkordb_graph: str (default: "grapsit")
         setup_indexes: bool (default: True)
     """
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
-        self.store = Neo4jGraphStore(
-            uri=config_dict.get("neo4j_uri", "bolt://localhost:7687"),
-            user=config_dict.get("neo4j_user", "neo4j"),
-            password=config_dict.get("neo4j_password", "password"),
-            database=config_dict.get("neo4j_database", "neo4j"),
-        )
+        self.store = create_store(config_dict)
         if config_dict.get("setup_indexes", True):
             try:
                 self.store.setup_indexes()
