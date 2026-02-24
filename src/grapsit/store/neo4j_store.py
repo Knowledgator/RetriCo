@@ -64,6 +64,7 @@ class Neo4jGraphStore(BaseGraphStore):
             "CREATE CONSTRAINT entity_id IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
             "CREATE CONSTRAINT chunk_id IF NOT EXISTS FOR (c:Chunk) REQUIRE c.id IS UNIQUE",
             "CREATE CONSTRAINT document_id IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE",
+            "CREATE CONSTRAINT community_id IF NOT EXISTS FOR (co:Community) REQUIRE co.id IS UNIQUE",
             "CREATE INDEX entity_label IF NOT EXISTS FOR (e:Entity) ON (e.label)",
             "CREATE INDEX chunk_doc IF NOT EXISTS FOR (c:Chunk) ON (c.document_id)",
         ]
@@ -284,6 +285,194 @@ class Neo4jGraphStore(BaseGraphStore):
         if records:
             return records[0]
         return {"entities": [], "relations": []}
+
+    # -- Chunk lookups -------------------------------------------------------
+
+    def get_entities_for_chunk(self, chunk_id: str) -> list:
+        records = self._run(
+            "MATCH (e:Entity)-[:MENTIONED_IN]->(c:Chunk {id: $id}) RETURN e",
+            {"id": chunk_id},
+        )
+        return [r["e"] for r in records]
+
+    def get_chunk_by_id(self, chunk_id: str):
+        records = self._run(
+            "MATCH (c:Chunk {id: $id}) RETURN c",
+            {"id": chunk_id},
+        )
+        if records:
+            return records[0]["c"]
+        return None
+
+    # -- Path queries --------------------------------------------------------
+
+    def get_shortest_paths(self, source_id: str, target_id: str, max_length: int = 5) -> list:
+        records = self._run(
+            f"""
+            MATCH (s:Entity {{id: $source}}), (t:Entity {{id: $target}}),
+                  path = shortestPath((s)-[*1..{max_length}]-(t))
+            WHERE ALL(r IN relationships(path) WHERE NOT type(r) = 'MENTIONED_IN')
+            RETURN [n IN nodes(path) | properties(n)] AS nodes,
+                   [r IN relationships(path) | {{type: type(r), score: r.score}}] AS rels
+            """,
+            {"source": source_id, "target": target_id},
+        )
+        return records
+
+    # -- Community CRUD ------------------------------------------------------
+
+    def write_community(self, community_id: str, level: int, title: str, summary: str):
+        self._run(
+            """
+            MERGE (co:Community {id: $id})
+            SET co.level = $level, co.title = $title, co.summary = $summary
+            """,
+            {"id": community_id, "level": level, "title": title, "summary": summary},
+        )
+
+    def write_community_membership(self, entity_id: str, community_id: str, level: int):
+        self._run(
+            """
+            MATCH (e:Entity {id: $entity_id})
+            MATCH (co:Community {id: $community_id})
+            MERGE (e)-[r:MEMBER_OF]->(co)
+            SET r.level = $level
+            """,
+            {"entity_id": entity_id, "community_id": community_id, "level": level},
+        )
+
+    def get_community_members(self, community_id: str) -> list:
+        records = self._run(
+            "MATCH (e:Entity)-[:MEMBER_OF]->(co:Community {id: $id}) RETURN e",
+            {"id": community_id},
+        )
+        return [r["e"] for r in records]
+
+    def get_all_communities(self) -> list:
+        records = self._run("MATCH (co:Community) RETURN co")
+        return [r["co"] for r in records]
+
+    def detect_communities(self, method: str = "louvain", **params) -> dict:
+        graph_name = params.get("graph_name", "community_graph")
+        # Project entity-to-entity relationships (exclude MENTIONED_IN, MEMBER_OF, PART_OF)
+        try:
+            self._run(
+                f"""
+                CALL gds.graph.project(
+                    '{graph_name}',
+                    'Entity',
+                    {{
+                        ALL: {{
+                            type: '*',
+                            orientation: 'UNDIRECTED'
+                        }}
+                    }}
+                )
+                """
+            )
+        except Exception as e:
+            # Graph may already exist; drop and retry
+            logger.debug(f"Graph projection error (retrying): {e}")
+            try:
+                self._run(f"CALL gds.graph.drop('{graph_name}')")
+            except Exception:
+                pass
+            self._run(
+                f"""
+                CALL gds.graph.project(
+                    '{graph_name}',
+                    'Entity',
+                    {{
+                        ALL: {{
+                            type: '*',
+                            orientation: 'UNDIRECTED'
+                        }}
+                    }}
+                )
+                """
+            )
+
+        algo = "gds.leiden.stream" if method == "leiden" else "gds.louvain.stream"
+        records = self._run(f"CALL {algo}('{graph_name}') YIELD nodeId, communityId "
+                            "RETURN gds.util.asNode(nodeId).id AS entity_id, "
+                            "toString(communityId) AS community_id")
+
+        # Clean up
+        try:
+            self._run(f"CALL gds.graph.drop('{graph_name}')")
+        except Exception:
+            pass
+
+        return {r["entity_id"]: r["community_id"] for r in records}
+
+    def write_community_hierarchy(self, child_id: str, parent_id: str):
+        self._run(
+            """
+            MATCH (child:Community {id: $child_id})
+            MATCH (parent:Community {id: $parent_id})
+            MERGE (child)-[:CHILD_OF]->(parent)
+            """,
+            {"child_id": child_id, "parent_id": parent_id},
+        )
+
+    def get_top_entities_by_degree(self, entity_ids=None, top_k=10):
+        if entity_ids:
+            records = self._run(
+                """
+                MATCH (e:Entity) WHERE e.id IN $ids
+                OPTIONAL MATCH (e)-[r]-()
+                WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF']
+                RETURN e, count(r) AS degree
+                ORDER BY degree DESC
+                LIMIT $top_k
+                """,
+                {"ids": entity_ids, "top_k": top_k},
+            )
+        else:
+            records = self._run(
+                """
+                MATCH (e:Entity)
+                OPTIONAL MATCH (e)-[r]-()
+                WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF']
+                RETURN e, count(r) AS degree
+                ORDER BY degree DESC
+                LIMIT $top_k
+                """,
+                {"top_k": top_k},
+            )
+        results = []
+        for rec in records:
+            entity_dict = dict(rec["e"]) if not isinstance(rec["e"], dict) else rec["e"]
+            entity_dict["degree"] = rec["degree"]
+            results.append(entity_dict)
+        return results
+
+    def update_community_embedding(self, community_id: str, embedding):
+        self._run(
+            "MATCH (co:Community {id: $id}) SET co.embedding = $embedding",
+            {"id": community_id, "embedding": embedding},
+        )
+
+    def get_inter_community_edges(self, community_memberships):
+        # Get all entity-entity relationships and aggregate by community pair
+        records = self._run(
+            """
+            MATCH (h:Entity)-[r]->(t:Entity)
+            WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF', 'CHILD_OF']
+            RETURN h.id AS head_id, t.id AS tail_id
+            """
+        )
+        from collections import Counter
+        edge_counts = Counter()
+        for rec in records:
+            head_comm = community_memberships.get(rec["head_id"])
+            tail_comm = community_memberships.get(rec["tail_id"])
+            if head_comm and tail_comm and head_comm != tail_comm:
+                pair = tuple(sorted([head_comm, tail_comm]))
+                edge_counts[pair] += 1
+        return [(a, b, w) for (a, b), w in edge_counts.items()]
+
+    # -- Danger zone ---------------------------------------------------------
 
     def clear_all(self):
         """Delete all nodes and relationships."""

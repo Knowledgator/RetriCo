@@ -1,9 +1,10 @@
 """OpenAI-compatible LLM client with lazy SDK loading."""
 
 from typing import Any, Dict, List, Optional
+import json
 import logging
 
-from .base import BaseLLMClient
+from .base import BaseLLMClient, GRAPH_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -97,3 +98,53 @@ class OpenAIClient(BaseLLMClient):
 
         response = self._client.chat.completions.create(**api_kwargs)
         return response.choices[0].message.content
+
+    def complete_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        *,
+        temperature: Optional[float] = None,
+        max_completion_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Send a chat completion with tool/function calling.
+
+        Returns:
+            ``{"content": str | None,
+              "tool_calls": [{"id": str, "name": str, "arguments": dict}, ...]}``
+        """
+        self._ensure_client()
+
+        if tools is None:
+            tools = GRAPH_TOOLS
+
+        api_kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "temperature": temperature if temperature is not None else self.default_temperature,
+            "max_completion_tokens": max_completion_tokens if max_completion_tokens is not None else self.default_max_completion_tokens,
+        }
+        api_kwargs.update(kwargs)
+
+        response = self._client.chat.completions.create(**api_kwargs)
+        message = response.choices[0].message
+
+        tool_calls = []
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                try:
+                    arguments = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, TypeError):
+                    arguments = tc.function.arguments
+                tool_calls.append({
+                    "id": tc.id,
+                    "name": tc.function.name,
+                    "arguments": arguments,
+                })
+
+        return {
+            "content": message.content,
+            "tool_calls": tool_calls,
+        }

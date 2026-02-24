@@ -91,3 +91,82 @@ class BaseGraphStore(ABC):
     @abstractmethod
     def clear_all(self):
         """Delete all nodes and relationships."""
+
+    # -- Chunk lookups -------------------------------------------------------
+
+    def get_entities_for_chunk(self, chunk_id: str) -> List[Dict[str, Any]]:
+        """Get entities mentioned in a chunk (reverse MENTIONED_IN)."""
+        raise NotImplementedError
+
+    def get_chunk_by_id(self, chunk_id: str) -> Optional[Dict[str, Any]]:
+        """Look up a chunk by its ID."""
+        raise NotImplementedError
+
+    # -- Path queries --------------------------------------------------------
+
+    def get_shortest_paths(
+        self, source_id: str, target_id: str, max_length: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Find shortest paths between two entities (entity relations only)."""
+        raise NotImplementedError
+
+    # -- Community CRUD ------------------------------------------------------
+
+    def write_community(
+        self, community_id: str, level: int, title: str, summary: str,
+    ):
+        """Create or merge a Community node."""
+        raise NotImplementedError
+
+    def write_community_membership(
+        self, entity_id: str, community_id: str, level: int,
+    ):
+        """Create a MEMBER_OF relationship between an Entity and a Community."""
+        raise NotImplementedError
+
+    def get_community_members(self, community_id: str) -> List[Dict[str, Any]]:
+        """Get all entities that are members of a community."""
+        raise NotImplementedError
+
+    def get_all_communities(self) -> List[Dict[str, Any]]:
+        """Return all Community nodes."""
+        raise NotImplementedError
+
+    def detect_communities(self, method: str = "louvain", **params) -> Dict[str, str]:
+        """Run community detection and return entity_id → community_id mapping."""
+        raise NotImplementedError
+
+    def write_community_hierarchy(self, child_id: str, parent_id: str):
+        """Create CHILD_OF relationship between communities."""
+        raise NotImplementedError
+
+    def get_top_entities_by_degree(
+        self, entity_ids: List[str] = None, top_k: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Get top-k entities by degree centrality (relationship count).
+
+        Args:
+            entity_ids: If provided, only consider these entities.
+            top_k: Number of top entities to return.
+
+        Returns:
+            List of dicts with entity properties plus ``degree`` count.
+        """
+        raise NotImplementedError
+
+    def update_community_embedding(self, community_id: str, embedding: List[float]):
+        """Store embedding vector on a Community node."""
+        raise NotImplementedError
+
+    def get_inter_community_edges(
+        self, community_memberships: Dict[str, str],
+    ) -> List[Any]:
+        """Get weighted edges between communities based on member relationships.
+
+        Args:
+            community_memberships: Mapping of entity_id → community_id.
+
+        Returns:
+            List of (community_a, community_b, weight) tuples.
+        """
+        raise NotImplementedError
