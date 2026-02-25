@@ -227,6 +227,7 @@ class BuildConfigBuilder:
         memgraph_user: str = "",
         memgraph_password: str = "",
         memgraph_database: str = "memgraph",
+        json_output: str = None,
     ) -> "BuildConfigBuilder":
         self._writer_config = {
             "store_type": store_type,
@@ -243,6 +244,8 @@ class BuildConfigBuilder:
             "memgraph_password": memgraph_password,
             "memgraph_database": memgraph_database,
         }
+        if json_output is not None:
+            self._writer_config["json_output"] = json_output
         return self
 
     def get_config(self) -> Dict[str, Any]:
@@ -356,6 +359,118 @@ class BuildConfigBuilder:
             "output": {"key": "writer_result"},
             "config": self._writer_config,
         })
+
+        return {
+            "name": self.name,
+            "description": self.description,
+            "nodes": nodes,
+        }
+
+    def build(self, verbose: bool = False) -> DAGExecutor:
+        """Build and return a DAGExecutor."""
+        return ProcessorFactory.create_from_dict(self.get_config(), verbose=verbose)
+
+    def save(self, filepath: str) -> None:
+        """Save config to YAML."""
+        config = _strip_non_serializable(self.get_config())
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+class IngestConfigBuilder:
+    """Declarative builder for raw data ingest pipelines.
+
+    Writes pre-structured entities and relations directly to the graph database,
+    bypassing chunking, NER, and relation extraction.
+
+    Usage::
+
+        builder = IngestConfigBuilder(name="my_ingest")
+        builder.graph_writer(neo4j_uri="bolt://localhost:7687")
+        executor = builder.build()
+        result = executor.execute({
+            "entities": [
+                {"text": "Einstein", "label": "person"},
+                {"text": "Ulm", "label": "location"},
+            ],
+            "relations": [
+                {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+            ],
+        })
+    """
+
+    def __init__(self, name: str = "ingest_pipeline", description: str = None):
+        self.name = name
+        self.description = description or f"{name} — auto-generated"
+        self._writer_config: Optional[Dict[str, Any]] = None
+
+    def graph_writer(
+        self,
+        neo4j_uri: str = "bolt://localhost:7687",
+        neo4j_user: str = "neo4j",
+        neo4j_password: str = "password",
+        neo4j_database: str = "neo4j",
+        setup_indexes: bool = True,
+        store_type: str = "neo4j",
+        falkordb_host: str = "localhost",
+        falkordb_port: int = 6379,
+        falkordb_graph: str = "grapsit",
+        memgraph_uri: str = "bolt://localhost:7687",
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
+        json_output: str = None,
+    ) -> "IngestConfigBuilder":
+        self._writer_config = {
+            "store_type": store_type,
+            "neo4j_uri": neo4j_uri,
+            "neo4j_user": neo4j_user,
+            "neo4j_password": neo4j_password,
+            "neo4j_database": neo4j_database,
+            "setup_indexes": setup_indexes,
+            "falkordb_host": falkordb_host,
+            "falkordb_port": falkordb_port,
+            "falkordb_graph": falkordb_graph,
+            "memgraph_uri": memgraph_uri,
+            "memgraph_user": memgraph_user,
+            "memgraph_password": memgraph_password,
+            "memgraph_database": memgraph_database,
+        }
+        if json_output is not None:
+            self._writer_config["json_output"] = json_output
+        return self
+
+    def get_config(self) -> Dict[str, Any]:
+        """Build configuration dict."""
+        if not self._writer_config:
+            self._writer_config = {}
+
+        nodes = [
+            {
+                "id": "data_ingest",
+                "processor": "data_ingest",
+                "inputs": {
+                    "entities": {"source": "$input", "fields": "entities"},
+                    "relations": {"source": "$input", "fields": "relations"},
+                },
+                "output": {"key": "ingest_result"},
+                "config": {},
+            },
+            {
+                "id": "graph_writer",
+                "processor": "graph_writer",
+                "requires": ["data_ingest"],
+                "inputs": {
+                    "entities": {"source": "ingest_result", "fields": "entities"},
+                    "relations": {"source": "ingest_result", "fields": "relations"},
+                    "chunks": {"source": "ingest_result", "fields": "chunks"},
+                    "documents": {"source": "ingest_result", "fields": "documents"},
+                },
+                "output": {"key": "writer_result"},
+                "config": self._writer_config,
+            },
+        ]
 
         return {
             "name": self.name,
@@ -662,6 +777,178 @@ class QueryConfigBuilder:
                 },
                 "output": {"key": "reasoner_result"},
                 "config": self._reasoner_config,
+            })
+
+        return {
+            "name": self.name,
+            "description": self.description,
+            "nodes": nodes,
+        }
+
+    def build(self, verbose: bool = False) -> DAGExecutor:
+        """Build and return a DAGExecutor."""
+        return ProcessorFactory.create_from_dict(self.get_config(), verbose=verbose)
+
+    def save(self, filepath: str) -> None:
+        """Save config to YAML."""
+        config = _strip_non_serializable(self.get_config())
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+class CommunityConfigBuilder:
+    """Declarative builder for community detection pipeline configs.
+
+    Detects communities in an existing knowledge graph, optionally generates
+    LLM summaries, and optionally embeds community summaries.
+
+    Usage::
+
+        builder = CommunityConfigBuilder(name="my_communities")
+        builder.detector(method="louvain", levels=2, neo4j_uri="bolt://localhost:7687")
+        builder.summarizer(api_key="sk-...", model="gpt-4o-mini")
+        builder.embedder(embedding_method="sentence_transformer")
+        executor = builder.build()
+        result = executor.execute({})
+    """
+
+    def __init__(self, name: str = "community_pipeline", description: str = None):
+        self.name = name
+        self.description = description or f"{name} — auto-generated"
+        self._detector_config: Optional[Dict[str, Any]] = None
+        self._summarizer_config: Optional[Dict[str, Any]] = None
+        self._embedder_config: Optional[Dict[str, Any]] = None
+
+    def detector(
+        self,
+        method: str = "louvain",
+        levels: int = 1,
+        resolution: float = 1.0,
+        store_type: str = "neo4j",
+        neo4j_uri: str = "bolt://localhost:7687",
+        neo4j_user: str = "neo4j",
+        neo4j_password: str = "password",
+        neo4j_database: str = "neo4j",
+        falkordb_host: str = "localhost",
+        falkordb_port: int = 6379,
+        falkordb_graph: str = "grapsit",
+        memgraph_uri: str = "bolt://localhost:7687",
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
+    ) -> "CommunityConfigBuilder":
+        self._detector_config = {
+            "method": method,
+            "levels": levels,
+            "resolution": resolution,
+            "store_type": store_type,
+            "neo4j_uri": neo4j_uri,
+            "neo4j_user": neo4j_user,
+            "neo4j_password": neo4j_password,
+            "neo4j_database": neo4j_database,
+            "falkordb_host": falkordb_host,
+            "falkordb_port": falkordb_port,
+            "falkordb_graph": falkordb_graph,
+            "memgraph_uri": memgraph_uri,
+            "memgraph_user": memgraph_user,
+            "memgraph_password": memgraph_password,
+            "memgraph_database": memgraph_database,
+        }
+        return self
+
+    def summarizer(
+        self,
+        top_k: int = 10,
+        api_key: str = None,
+        base_url: str = None,
+        model: str = "gpt-4o-mini",
+        temperature: float = 0.3,
+        max_completion_tokens: int = 4096,
+        **store_overrides,
+    ) -> "CommunityConfigBuilder":
+        self._summarizer_config = {
+            "top_k": top_k,
+            "model": model,
+            "temperature": temperature,
+            "max_completion_tokens": max_completion_tokens,
+        }
+        if api_key is not None:
+            self._summarizer_config["api_key"] = api_key
+        if base_url is not None:
+            self._summarizer_config["base_url"] = base_url
+        self._summarizer_config.update(store_overrides)
+        return self
+
+    def embedder(
+        self,
+        embedding_method: str = "sentence_transformer",
+        model_name: str = "all-MiniLM-L6-v2",
+        vector_store_type: str = "in_memory",
+        **extra,
+    ) -> "CommunityConfigBuilder":
+        self._embedder_config = {
+            "embedding_method": embedding_method,
+            "model_name": model_name,
+            "vector_store_type": vector_store_type,
+        }
+        self._embedder_config.update(extra)
+        return self
+
+    def get_config(self) -> Dict[str, Any]:
+        """Build configuration dict."""
+        if not self._detector_config:
+            raise ValueError("Detector config required. Call .detector() first.")
+
+        nodes = [
+            {
+                "id": "community_detector",
+                "processor": "community_detector",
+                "inputs": {},
+                "output": {"key": "detector_result"},
+                "config": self._detector_config,
+            },
+        ]
+
+        # Inherit store params from detector for downstream processors
+        store_keys = (
+            "store_type", "neo4j_uri", "neo4j_user", "neo4j_password", "neo4j_database",
+            "falkordb_host", "falkordb_port", "falkordb_graph",
+            "memgraph_uri", "memgraph_user", "memgraph_password", "memgraph_database",
+        )
+
+        if self._summarizer_config is not None:
+            summarizer_full = dict(self._summarizer_config)
+            for key in store_keys:
+                if key not in summarizer_full and key in self._detector_config:
+                    summarizer_full[key] = self._detector_config[key]
+
+            nodes.append({
+                "id": "community_summarizer",
+                "processor": "community_summarizer",
+                "requires": ["community_detector"],
+                "inputs": {},
+                "output": {"key": "summarizer_result"},
+                "config": summarizer_full,
+            })
+
+        if self._embedder_config is not None:
+            embedder_full = dict(self._embedder_config)
+            for key in store_keys:
+                if key not in embedder_full and key in self._detector_config:
+                    embedder_full[key] = self._detector_config[key]
+
+            embedder_requires = ["community_detector"]
+            if self._summarizer_config is not None:
+                embedder_requires.append("community_summarizer")
+
+            nodes.append({
+                "id": "community_embedder",
+                "processor": "community_embedder",
+                "requires": embedder_requires,
+                "inputs": {},
+                "output": {"key": "embedder_result"},
+                "config": embedder_full,
             })
 
         return {

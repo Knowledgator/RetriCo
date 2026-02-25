@@ -67,6 +67,7 @@ class FalkorDBGraphStore(BaseGraphStore):
             "CREATE INDEX FOR (c:Chunk) ON (c.id)",
             "CREATE INDEX FOR (c:Chunk) ON (c.document_id)",
             "CREATE INDEX FOR (d:Document) ON (d.id)",
+            "CREATE INDEX FOR (co:Community) ON (co.id)",
         ]
         for q in index_queries:
             try:
@@ -267,6 +268,182 @@ class FalkorDBGraphStore(BaseGraphStore):
             })
 
         return {"entities": entities, "relations": relations}
+
+    # -- Chunk lookups -------------------------------------------------------
+
+    def get_entities_for_chunk(self, chunk_id: str) -> list:
+        rows = self._run(
+            "MATCH (e:Entity)-[:MENTIONED_IN]->(c:Chunk {id: $id}) RETURN e",
+            {"id": chunk_id},
+        )
+        return [_node_to_dict(row[0]) for row in rows]
+
+    def get_chunk_by_id(self, chunk_id: str):
+        rows = self._run(
+            "MATCH (c:Chunk {id: $id}) RETURN c",
+            {"id": chunk_id},
+        )
+        if rows:
+            return _node_to_dict(rows[0][0])
+        return None
+
+    # -- Path queries --------------------------------------------------------
+
+    def get_shortest_paths(self, source_id: str, target_id: str, max_length: int = 5) -> list:
+        rows = self._run(
+            f"""
+            MATCH (s:Entity {{id: $source}}), (t:Entity {{id: $target}}),
+                  path = shortestPath((s)-[*1..{max_length}]-(t))
+            WHERE ALL(r IN relationships(path) WHERE NOT type(r) = 'MENTIONED_IN')
+            RETURN nodes(path) AS nodes, relationships(path) AS rels
+            """,
+            {"source": source_id, "target": target_id},
+        )
+        results = []
+        for row in rows:
+            nodes = [_node_to_dict(n) for n in (row[0] or [])]
+            rels = []
+            for edge in (row[1] or []):
+                if hasattr(edge, "relation"):
+                    rel_dict = {"type": edge.relation}
+                    if hasattr(edge, "properties"):
+                        rel_dict["score"] = edge.properties.get("score")
+                    rels.append(rel_dict)
+                elif isinstance(edge, dict):
+                    rels.append(edge)
+            results.append({"nodes": nodes, "rels": rels})
+        return results
+
+    # -- Community CRUD ------------------------------------------------------
+
+    def write_community(self, community_id: str, level: int, title: str, summary: str):
+        self._run(
+            """
+            MERGE (co:Community {id: $id})
+            SET co.level = $level, co.title = $title, co.summary = $summary
+            """,
+            {"id": community_id, "level": level, "title": title, "summary": summary},
+        )
+
+    def write_community_membership(self, entity_id: str, community_id: str, level: int):
+        self._run(
+            """
+            MATCH (e:Entity {id: $entity_id})
+            MATCH (co:Community {id: $community_id})
+            MERGE (e)-[r:MEMBER_OF]->(co)
+            SET r.level = $level
+            """,
+            {"entity_id": entity_id, "community_id": community_id, "level": level},
+        )
+
+    def get_community_members(self, community_id: str) -> list:
+        rows = self._run(
+            "MATCH (e:Entity)-[:MEMBER_OF]->(co:Community {id: $id}) RETURN e",
+            {"id": community_id},
+        )
+        return [_node_to_dict(row[0]) for row in rows]
+
+    def get_all_communities(self) -> list:
+        rows = self._run("MATCH (co:Community) RETURN co")
+        return [_node_to_dict(row[0]) for row in rows]
+
+    def detect_communities(self, method: str = "louvain", **params) -> dict:
+        """Run community detection using FalkorDB's CDLP algorithm.
+
+        FalkorDB provides ``algo.labelPropagation()`` (Community Detection
+        via Label Propagation).  Louvain/Leiden are not natively supported;
+        a warning is logged and CDLP is used instead.
+        """
+        if method in ("louvain", "leiden"):
+            logger.warning(
+                "FalkorDB does not support %s; using CDLP (label propagation) instead.",
+                method,
+            )
+
+        max_iterations = params.get("max_iterations", 10)
+        rows = self._run(
+            """
+            CALL algo.labelPropagation({nodeLabels: ['Entity'], maxIterations: $max_iter})
+            YIELD node, communityId
+            RETURN node.id AS entity_id, toString(communityId) AS community_id
+            """,
+            {"max_iter": max_iterations},
+        )
+        columns = ["entity_id", "community_id"]
+        return {
+            row[0]: row[1]
+            for row in rows
+        }
+
+    def write_community_hierarchy(self, child_id: str, parent_id: str):
+        self._run(
+            """
+            MATCH (child:Community {id: $child_id})
+            MATCH (parent:Community {id: $parent_id})
+            MERGE (child)-[:CHILD_OF]->(parent)
+            """,
+            {"child_id": child_id, "parent_id": parent_id},
+        )
+
+    def get_top_entities_by_degree(self, entity_ids=None, top_k=10):
+        if entity_ids:
+            rows = self._run(
+                """
+                MATCH (e:Entity) WHERE e.id IN $ids
+                OPTIONAL MATCH (e)-[r]-()
+                WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF']
+                RETURN e, count(r) AS degree
+                ORDER BY degree DESC
+                LIMIT $top_k
+                """,
+                {"ids": entity_ids, "top_k": top_k},
+            )
+        else:
+            rows = self._run(
+                """
+                MATCH (e:Entity)
+                OPTIONAL MATCH (e)-[r]-()
+                WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF']
+                RETURN e, count(r) AS degree
+                ORDER BY degree DESC
+                LIMIT $top_k
+                """,
+                {"top_k": top_k},
+            )
+        results = []
+        for row in rows:
+            entity_dict = _node_to_dict(row[0])
+            entity_dict["degree"] = row[1]
+            results.append(entity_dict)
+        return results
+
+    def update_community_embedding(self, community_id: str, embedding):
+        self._run(
+            "MATCH (co:Community {id: $id}) SET co.embedding = $embedding",
+            {"id": community_id, "embedding": embedding},
+        )
+
+    def get_inter_community_edges(self, community_memberships):
+        rows = self._run(
+            """
+            MATCH (h:Entity)-[r]->(t:Entity)
+            WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF', 'CHILD_OF']
+            RETURN h.id AS head_id, t.id AS tail_id
+            """
+        )
+        from collections import Counter
+        edge_counts = Counter()
+        columns = ["head_id", "tail_id"]
+        for row in rows:
+            rec = dict(zip(columns, row))
+            head_comm = community_memberships.get(rec["head_id"])
+            tail_comm = community_memberships.get(rec["tail_id"])
+            if head_comm and tail_comm and head_comm != tail_comm:
+                pair = tuple(sorted([head_comm, tail_comm]))
+                edge_counts[pair] += 1
+        return [(a, b, w) for (a, b), w in edge_counts.items()]
+
+    # -- Danger zone ---------------------------------------------------------
 
     def clear_all(self):
         self._run("MATCH (n) DETACH DELETE n")

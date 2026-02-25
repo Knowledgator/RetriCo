@@ -5,6 +5,7 @@ so only the defaults, index syntax, and entity writing (no APOC) differ.
 """
 
 import logging
+import uuid
 
 from .neo4j_store import Neo4jGraphStore, _sanitize_label
 from ..models.entity import Entity
@@ -38,6 +39,7 @@ class MemgraphGraphStore(Neo4jGraphStore):
             "CREATE INDEX ON :Chunk(id)",
             "CREATE INDEX ON :Chunk(document_id)",
             "CREATE INDEX ON :Document(id)",
+            "CREATE INDEX ON :Community(id)",
         ]
         for q in index_queries:
             try:
@@ -61,3 +63,26 @@ class MemgraphGraphStore(Neo4jGraphStore):
                 "properties": str(entity.properties),
             },
         )
+
+    # -- Community detection (MAGE) ------------------------------------------
+
+    def detect_communities(self, method: str = "louvain", **params) -> dict:
+        """Run community detection using Memgraph MAGE.
+
+        Uses ``community_detection.get()`` which implements Louvain.
+        Leiden is not supported by MAGE; a warning is logged if requested.
+        """
+        if method == "leiden":
+            logger.warning(
+                "Memgraph MAGE does not support Leiden; falling back to Louvain."
+            )
+
+        records = self._run(
+            """
+            CALL community_detection.get()
+            YIELD node, community_id
+            WHERE 'Entity' IN labels(node)
+            RETURN node.id AS entity_id, toString(community_id) AS community_id
+            """
+        )
+        return {r["entity_id"]: r["community_id"] for r in records}

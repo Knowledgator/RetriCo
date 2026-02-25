@@ -4,10 +4,12 @@
 from . import construct as _construct  # noqa: F401
 # Register all query processors on import.
 from . import query as _query  # noqa: F401
+# Register modeling processors on import.
+from . import modeling as _modeling  # noqa: F401
 
 from .core.dag import DAGExecutor, PipeContext
 from .core.factory import ProcessorFactory
-from .core.builders import BuildConfigBuilder, QueryConfigBuilder
+from .core.builders import BuildConfigBuilder, QueryConfigBuilder, IngestConfigBuilder, CommunityConfigBuilder
 from .models import Document, Chunk, Entity, EntityMention, Relation, KGTriple, Subgraph, QueryResult
 from .store.base import BaseGraphStore
 from .store.neo4j_store import Neo4jGraphStore
@@ -25,12 +27,16 @@ __all__ = [
     # Public API
     "build_graph",
     "query_graph",
+    "ingest_data",
+    "detect_communities",
     # Core
     "DAGExecutor",
     "PipeContext",
     "ProcessorFactory",
     "BuildConfigBuilder",
     "QueryConfigBuilder",
+    "IngestConfigBuilder",
+    "CommunityConfigBuilder",
     # Models
     "Document",
     "Chunk",
@@ -80,6 +86,7 @@ def build_graph(
     memgraph_user: str = "",
     memgraph_password: str = "",
     memgraph_database: str = "memgraph",
+    json_output: str = None,
 ) -> PipeContext:
     """Build a knowledge graph from texts in one call.
 
@@ -98,6 +105,7 @@ def build_graph(
         neo4j_database: Neo4j database name.
         device: "cpu" or "cuda".
         verbose: Enable verbose logging.
+        json_output: Path to save extracted data as JSON (ingest-ready format).
 
     Returns:
         PipeContext with all intermediate results.
@@ -139,6 +147,7 @@ def build_graph(
         memgraph_user=memgraph_user,
         memgraph_password=memgraph_password,
         memgraph_database=memgraph_database,
+        json_output=json_output,
     )
 
     executor = builder.build(verbose=verbose)
@@ -249,3 +258,163 @@ def query_graph(
         return QueryResult(query=query, subgraph=subgraph)
     else:
         return QueryResult(query=query)
+
+
+def ingest_data(
+    entities: List[Dict[str, Any]],
+    relations: List[Dict[str, Any]] = None,
+    *,
+    neo4j_uri: str = "bolt://localhost:7687",
+    neo4j_user: str = "neo4j",
+    neo4j_password: str = "password",
+    neo4j_database: str = "neo4j",
+    store_type: str = "neo4j",
+    falkordb_host: str = "localhost",
+    falkordb_port: int = 6379,
+    falkordb_graph: str = "grapsit",
+    memgraph_uri: str = "bolt://localhost:7687",
+    memgraph_user: str = "",
+    memgraph_password: str = "",
+    memgraph_database: str = "memgraph",
+    json_output: str = None,
+    verbose: bool = False,
+) -> PipeContext:
+    """Ingest pre-structured entities and relations into the graph database.
+
+    Bypasses chunking, NER, and relation extraction — writes directly.
+
+    Args:
+        entities: List of entity dicts, each with ``text`` and ``label`` keys.
+            Optional keys: ``id`` (explicit ID), ``properties`` (metadata dict).
+        relations: List of relation dicts, each with ``head``, ``tail``, ``type``.
+            Optional keys: ``score``, ``properties``.
+        neo4j_uri: Neo4j bolt URI.
+        neo4j_user: Neo4j user.
+        neo4j_password: Neo4j password.
+        neo4j_database: Neo4j database name.
+        store_type: Graph store backend ("neo4j", "falkordb", "memgraph").
+        json_output: Path to also save data as JSON (ingest-ready format).
+        verbose: Enable verbose logging.
+
+    Returns:
+        PipeContext with writer_result containing entity_count, relation_count.
+
+    Example::
+
+        import grapsit
+
+        result = grapsit.ingest_data(
+            entities=[
+                {"text": "Einstein", "label": "person"},
+                {"text": "Ulm", "label": "location"},
+            ],
+            relations=[
+                {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+            ],
+            neo4j_uri="bolt://localhost:7687",
+        )
+    """
+    if relations is None:
+        relations = []
+
+    builder = IngestConfigBuilder(name="ingest_data")
+    builder.graph_writer(
+        neo4j_uri=neo4j_uri,
+        neo4j_user=neo4j_user,
+        neo4j_password=neo4j_password,
+        neo4j_database=neo4j_database,
+        store_type=store_type,
+        falkordb_host=falkordb_host,
+        falkordb_port=falkordb_port,
+        falkordb_graph=falkordb_graph,
+        memgraph_uri=memgraph_uri,
+        memgraph_user=memgraph_user,
+        memgraph_password=memgraph_password,
+        memgraph_database=memgraph_database,
+        json_output=json_output,
+    )
+
+    executor = builder.build(verbose=verbose)
+    return executor.execute({"entities": entities, "relations": relations})
+
+
+def detect_communities(
+    *,
+    method: str = "louvain",
+    levels: int = 1,
+    resolution: float = 1.0,
+    neo4j_uri: str = "bolt://localhost:7687",
+    neo4j_user: str = "neo4j",
+    neo4j_password: str = "password",
+    neo4j_database: str = "neo4j",
+    store_type: str = "neo4j",
+    falkordb_host: str = "localhost",
+    falkordb_port: int = 6379,
+    falkordb_graph: str = "grapsit",
+    memgraph_uri: str = "bolt://localhost:7687",
+    memgraph_user: str = "",
+    memgraph_password: str = "",
+    memgraph_database: str = "memgraph",
+    api_key: str = None,
+    model: str = "gpt-4o-mini",
+    top_k: int = 10,
+    embedding_method: str = "sentence_transformer",
+    model_name: str = "all-MiniLM-L6-v2",
+    vector_store_type: str = "in_memory",
+    verbose: bool = False,
+) -> PipeContext:
+    """Detect communities in an existing knowledge graph.
+
+    Optionally generates LLM summaries (if ``api_key`` is provided) and
+    embeds community summaries into a vector store.
+
+    Args:
+        method: Community detection algorithm ("louvain" or "leiden").
+        levels: Number of hierarchical levels.
+        resolution: Resolution parameter for Louvain.
+        neo4j_uri: Neo4j bolt URI.
+        neo4j_user: Neo4j user.
+        neo4j_password: Neo4j password.
+        neo4j_database: Neo4j database name.
+        store_type: Graph store backend ("neo4j", "falkordb", "memgraph").
+        api_key: OpenAI API key. If provided, enables summarization + embedding.
+        model: LLM model name for summarizer.
+        top_k: Max entities per community for summarization context.
+        embedding_method: "sentence_transformer" or "openai".
+        model_name: Embedding model name.
+        vector_store_type: "in_memory", "faiss", or "qdrant".
+        verbose: Enable verbose logging.
+
+    Returns:
+        PipeContext with detector_result and optionally summarizer_result,
+        embedder_result.
+    """
+    builder = CommunityConfigBuilder(name="detect_communities")
+    builder.detector(
+        method=method,
+        levels=levels,
+        resolution=resolution,
+        store_type=store_type,
+        neo4j_uri=neo4j_uri,
+        neo4j_user=neo4j_user,
+        neo4j_password=neo4j_password,
+        neo4j_database=neo4j_database,
+        falkordb_host=falkordb_host,
+        falkordb_port=falkordb_port,
+        falkordb_graph=falkordb_graph,
+        memgraph_uri=memgraph_uri,
+        memgraph_user=memgraph_user,
+        memgraph_password=memgraph_password,
+        memgraph_database=memgraph_database,
+    )
+
+    if api_key is not None:
+        builder.summarizer(api_key=api_key, model=model, top_k=top_k)
+        builder.embedder(
+            embedding_method=embedding_method,
+            model_name=model_name,
+            vector_store_type=vector_store_type,
+        )
+
+    executor = builder.build(verbose=verbose)
+    return executor.execute({})
