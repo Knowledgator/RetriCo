@@ -58,6 +58,8 @@ class BuildConfigBuilder:
         self._relex_config: Optional[Dict[str, Any]] = None
         self._relex_type: str = "relex_gliner"
         self._writer_config: Optional[Dict[str, Any]] = None
+        self._chunk_embedder_config: Optional[Dict[str, Any]] = None
+        self._entity_embedder_config: Optional[Dict[str, Any]] = None
 
     def chunker(
         self,
@@ -248,6 +250,40 @@ class BuildConfigBuilder:
             self._writer_config["json_output"] = json_output
         return self
 
+    def chunk_embedder(
+        self,
+        embedding_method: str = "sentence_transformer",
+        model_name: str = "all-MiniLM-L6-v2",
+        vector_store_type: str = "in_memory",
+        vector_index_name: str = "chunk_embeddings",
+        **extra,
+    ) -> "BuildConfigBuilder":
+        self._chunk_embedder_config = {
+            "embedding_method": embedding_method,
+            "model_name": model_name,
+            "vector_store_type": vector_store_type,
+            "vector_index_name": vector_index_name,
+            **extra,
+        }
+        return self
+
+    def entity_embedder(
+        self,
+        embedding_method: str = "sentence_transformer",
+        model_name: str = "all-MiniLM-L6-v2",
+        vector_store_type: str = "in_memory",
+        vector_index_name: str = "entity_embeddings",
+        **extra,
+    ) -> "BuildConfigBuilder":
+        self._entity_embedder_config = {
+            "embedding_method": embedding_method,
+            "model_name": model_name,
+            "vector_store_type": vector_store_type,
+            "vector_index_name": vector_index_name,
+            **extra,
+        }
+        return self
+
     def get_config(self) -> Dict[str, Any]:
         """Build configuration dict."""
         if not self._chunker_config:
@@ -359,6 +395,36 @@ class BuildConfigBuilder:
             "output": {"key": "writer_result"},
             "config": self._writer_config,
         })
+
+        # Optional embedder nodes (run after graph_writer)
+        if self._chunk_embedder_config is not None:
+            # Inherit store params from writer config
+            embedder_config = dict(self._writer_config)
+            embedder_config.update(self._chunk_embedder_config)
+            nodes.append({
+                "id": "chunk_embedder",
+                "processor": "chunk_embedder",
+                "requires": ["graph_writer"],
+                "inputs": {
+                    "chunks": {"source": "chunker_result", "fields": "chunks"},
+                },
+                "output": {"key": "chunk_embedder_result"},
+                "config": embedder_config,
+            })
+
+        if self._entity_embedder_config is not None:
+            embedder_config = dict(self._writer_config)
+            embedder_config.update(self._entity_embedder_config)
+            nodes.append({
+                "id": "entity_embedder",
+                "processor": "entity_embedder",
+                "requires": ["graph_writer"],
+                "inputs": {
+                    "entity_map": {"source": "writer_result", "fields": "entity_map"},
+                },
+                "output": {"key": "entity_embedder_result"},
+                "config": embedder_config,
+            })
 
         return {
             "name": self.name,
@@ -512,6 +578,7 @@ class QueryConfigBuilder:
         self._linker_config: Optional[Dict[str, Any]] = None
         self._has_linker: bool = False
         self._retriever_config: Optional[Dict[str, Any]] = None
+        self._retriever_type: str = "retriever"
         self._chunk_config: Optional[Dict[str, Any]] = None
         self._reasoner_config: Optional[Dict[str, Any]] = None
 
@@ -603,6 +670,7 @@ class QueryConfigBuilder:
         memgraph_password: str = "",
         memgraph_database: str = "memgraph",
     ) -> "QueryConfigBuilder":
+        self._retriever_type = "retriever"
         self._retriever_config = {
             "store_type": store_type,
             "neo4j_uri": neo4j_uri,
@@ -610,6 +678,226 @@ class QueryConfigBuilder:
             "neo4j_password": neo4j_password,
             "neo4j_database": neo4j_database,
             "max_hops": max_hops,
+            "falkordb_host": falkordb_host,
+            "falkordb_port": falkordb_port,
+            "falkordb_graph": falkordb_graph,
+            "memgraph_uri": memgraph_uri,
+            "memgraph_user": memgraph_user,
+            "memgraph_password": memgraph_password,
+            "memgraph_database": memgraph_database,
+        }
+        return self
+
+    def community_retriever(
+        self,
+        top_k: int = 3,
+        max_hops: int = 1,
+        vector_index_name: str = "community_embeddings",
+        embedding_method: str = "sentence_transformer",
+        model_name: str = "all-MiniLM-L6-v2",
+        vector_store_type: str = "in_memory",
+        store_type: str = "neo4j",
+        neo4j_uri: str = "bolt://localhost:7687",
+        neo4j_user: str = "neo4j",
+        neo4j_password: str = "password",
+        neo4j_database: str = "neo4j",
+        falkordb_host: str = "localhost",
+        falkordb_port: int = 6379,
+        falkordb_graph: str = "grapsit",
+        memgraph_uri: str = "bolt://localhost:7687",
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
+    ) -> "QueryConfigBuilder":
+        self._retriever_type = "community_retriever"
+        self._retriever_config = {
+            "top_k": top_k,
+            "max_hops": max_hops,
+            "vector_index_name": vector_index_name,
+            "embedding_method": embedding_method,
+            "model_name": model_name,
+            "vector_store_type": vector_store_type,
+            "store_type": store_type,
+            "neo4j_uri": neo4j_uri,
+            "neo4j_user": neo4j_user,
+            "neo4j_password": neo4j_password,
+            "neo4j_database": neo4j_database,
+            "falkordb_host": falkordb_host,
+            "falkordb_port": falkordb_port,
+            "falkordb_graph": falkordb_graph,
+            "memgraph_uri": memgraph_uri,
+            "memgraph_user": memgraph_user,
+            "memgraph_password": memgraph_password,
+            "memgraph_database": memgraph_database,
+        }
+        return self
+
+    def chunk_embedding_retriever(
+        self,
+        top_k: int = 5,
+        max_hops: int = 1,
+        vector_index_name: str = "chunk_embeddings",
+        embedding_method: str = "sentence_transformer",
+        model_name: str = "all-MiniLM-L6-v2",
+        vector_store_type: str = "in_memory",
+        store_type: str = "neo4j",
+        neo4j_uri: str = "bolt://localhost:7687",
+        neo4j_user: str = "neo4j",
+        neo4j_password: str = "password",
+        neo4j_database: str = "neo4j",
+        falkordb_host: str = "localhost",
+        falkordb_port: int = 6379,
+        falkordb_graph: str = "grapsit",
+        memgraph_uri: str = "bolt://localhost:7687",
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
+    ) -> "QueryConfigBuilder":
+        self._retriever_type = "chunk_embedding_retriever"
+        self._retriever_config = {
+            "top_k": top_k,
+            "max_hops": max_hops,
+            "vector_index_name": vector_index_name,
+            "embedding_method": embedding_method,
+            "model_name": model_name,
+            "vector_store_type": vector_store_type,
+            "store_type": store_type,
+            "neo4j_uri": neo4j_uri,
+            "neo4j_user": neo4j_user,
+            "neo4j_password": neo4j_password,
+            "neo4j_database": neo4j_database,
+            "falkordb_host": falkordb_host,
+            "falkordb_port": falkordb_port,
+            "falkordb_graph": falkordb_graph,
+            "memgraph_uri": memgraph_uri,
+            "memgraph_user": memgraph_user,
+            "memgraph_password": memgraph_password,
+            "memgraph_database": memgraph_database,
+        }
+        return self
+
+    def entity_embedding_retriever(
+        self,
+        top_k: int = 5,
+        max_hops: int = 2,
+        vector_index_name: str = "entity_embeddings",
+        embedding_method: str = "sentence_transformer",
+        model_name: str = "all-MiniLM-L6-v2",
+        vector_store_type: str = "in_memory",
+        store_type: str = "neo4j",
+        neo4j_uri: str = "bolt://localhost:7687",
+        neo4j_user: str = "neo4j",
+        neo4j_password: str = "password",
+        neo4j_database: str = "neo4j",
+        falkordb_host: str = "localhost",
+        falkordb_port: int = 6379,
+        falkordb_graph: str = "grapsit",
+        memgraph_uri: str = "bolt://localhost:7687",
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
+    ) -> "QueryConfigBuilder":
+        self._retriever_type = "entity_embedding_retriever"
+        self._retriever_config = {
+            "top_k": top_k,
+            "max_hops": max_hops,
+            "vector_index_name": vector_index_name,
+            "embedding_method": embedding_method,
+            "model_name": model_name,
+            "vector_store_type": vector_store_type,
+            "store_type": store_type,
+            "neo4j_uri": neo4j_uri,
+            "neo4j_user": neo4j_user,
+            "neo4j_password": neo4j_password,
+            "neo4j_database": neo4j_database,
+            "falkordb_host": falkordb_host,
+            "falkordb_port": falkordb_port,
+            "falkordb_graph": falkordb_graph,
+            "memgraph_uri": memgraph_uri,
+            "memgraph_user": memgraph_user,
+            "memgraph_password": memgraph_password,
+            "memgraph_database": memgraph_database,
+        }
+        return self
+
+    def tool_retriever(
+        self,
+        api_key: str = None,
+        base_url: str = None,
+        model: str = "gpt-4o-mini",
+        temperature: float = 0.1,
+        max_completion_tokens: int = 4096,
+        timeout: float = 60.0,
+        entity_types: List[str] = None,
+        relation_types: List[str] = None,
+        max_tool_rounds: int = 3,
+        store_type: str = "neo4j",
+        neo4j_uri: str = "bolt://localhost:7687",
+        neo4j_user: str = "neo4j",
+        neo4j_password: str = "password",
+        neo4j_database: str = "neo4j",
+        falkordb_host: str = "localhost",
+        falkordb_port: int = 6379,
+        falkordb_graph: str = "grapsit",
+        memgraph_uri: str = "bolt://localhost:7687",
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
+    ) -> "QueryConfigBuilder":
+        self._retriever_type = "tool_retriever"
+        self._retriever_config = {
+            "model": model,
+            "temperature": temperature,
+            "max_completion_tokens": max_completion_tokens,
+            "timeout": timeout,
+            "entity_types": entity_types or [],
+            "relation_types": relation_types or [],
+            "max_tool_rounds": max_tool_rounds,
+            "store_type": store_type,
+            "neo4j_uri": neo4j_uri,
+            "neo4j_user": neo4j_user,
+            "neo4j_password": neo4j_password,
+            "neo4j_database": neo4j_database,
+            "falkordb_host": falkordb_host,
+            "falkordb_port": falkordb_port,
+            "falkordb_graph": falkordb_graph,
+            "memgraph_uri": memgraph_uri,
+            "memgraph_user": memgraph_user,
+            "memgraph_password": memgraph_password,
+            "memgraph_database": memgraph_database,
+        }
+        if api_key is not None:
+            self._retriever_config["api_key"] = api_key
+        if base_url is not None:
+            self._retriever_config["base_url"] = base_url
+        return self
+
+    def path_retriever(
+        self,
+        max_path_length: int = 5,
+        max_pairs: int = 10,
+        store_type: str = "neo4j",
+        neo4j_uri: str = "bolt://localhost:7687",
+        neo4j_user: str = "neo4j",
+        neo4j_password: str = "password",
+        neo4j_database: str = "neo4j",
+        falkordb_host: str = "localhost",
+        falkordb_port: int = 6379,
+        falkordb_graph: str = "grapsit",
+        memgraph_uri: str = "bolt://localhost:7687",
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
+    ) -> "QueryConfigBuilder":
+        self._retriever_type = "path_retriever"
+        self._retriever_config = {
+            "max_path_length": max_path_length,
+            "max_pairs": max_pairs,
+            "store_type": store_type,
+            "neo4j_uri": neo4j_uri,
+            "neo4j_user": neo4j_user,
+            "neo4j_password": neo4j_password,
+            "neo4j_database": neo4j_database,
             "falkordb_host": falkordb_host,
             "falkordb_port": falkordb_port,
             "falkordb_graph": falkordb_graph,
@@ -691,10 +979,21 @@ class QueryConfigBuilder:
         """Build configuration dict."""
         has_parser = self._parser_config is not None
         has_linker = self._has_linker
-        if not has_parser and not has_linker:
-            raise ValueError("Parser or linker config required. Call .query_parser() or .linker() first.")
+
+        # Strategies that require entities from a parser
+        _ENTITY_STRATEGIES = {"retriever", "entity_embedding_retriever", "path_retriever"}
+        # Strategies that take query directly (no parser needed)
+        _QUERY_STRATEGIES = {"community_retriever", "chunk_embedding_retriever", "tool_retriever"}
+
+        needs_parser = self._retriever_type in _ENTITY_STRATEGIES
+
+        if needs_parser and not has_parser and not has_linker:
+            raise ValueError(
+                f"Parser or linker config required for '{self._retriever_type}' strategy. "
+                "Call .query_parser() or .linker() first."
+            )
         if not self._retriever_config:
-            raise ValueError("Retriever config required. Call .retriever() first.")
+            raise ValueError("Retriever config required. Call a retriever method first.")
 
         # Default chunk retriever inherits store config from retriever
         if self._chunk_config is None:
@@ -710,6 +1009,7 @@ class QueryConfigBuilder:
 
         nodes = []
 
+        # Add parser if configured (needed for entity-based strategies)
         if has_parser:
             nodes.append({
                 "id": "query_parser",
@@ -736,24 +1036,38 @@ class QueryConfigBuilder:
                 "config": self._linker_config,
             })
 
-        # Determine entity source for retriever
-        if has_linker:
-            entity_source = "linker_result"
-            retriever_requires = ["linker"]
-        else:
-            entity_source = "parser_result"
-            retriever_requires = ["query_parser"]
+        # Build retriever node based on strategy type
+        if self._retriever_type in _ENTITY_STRATEGIES:
+            # Entity-based retriever: needs entities from parser/linker
+            if has_linker:
+                entity_source = "linker_result"
+                retriever_requires = ["linker"]
+            else:
+                entity_source = "parser_result"
+                retriever_requires = ["query_parser"]
 
-        nodes.append({
-            "id": "retriever",
-            "processor": "retriever",
-            "requires": retriever_requires,
-            "inputs": {
-                "entities": {"source": entity_source, "fields": "entities"},
-            },
-            "output": {"key": "retriever_result"},
-            "config": self._retriever_config,
-        })
+            nodes.append({
+                "id": "retriever",
+                "processor": self._retriever_type,
+                "requires": retriever_requires,
+                "inputs": {
+                    "entities": {"source": entity_source, "fields": "entities"},
+                },
+                "output": {"key": "retriever_result"},
+                "config": self._retriever_config,
+            })
+        else:
+            # Query-based retriever: takes query directly
+            nodes.append({
+                "id": "retriever",
+                "processor": self._retriever_type,
+                "requires": [],
+                "inputs": {
+                    "query": {"source": "$input", "fields": "query"},
+                },
+                "output": {"key": "retriever_result"},
+                "config": self._retriever_config,
+            })
 
         nodes.append({
             "id": "chunk_retriever",

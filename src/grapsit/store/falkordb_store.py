@@ -57,6 +57,12 @@ class FalkorDBGraphStore(BaseGraphStore):
         self._graph = None
         self._db = None
 
+    # -- Raw Cypher ----------------------------------------------------------
+
+    def run_cypher(self, query: str, params: dict = None) -> list:
+        """Execute a raw Cypher query and return results."""
+        return self._run(query, params)
+
     # -- Setup ---------------------------------------------------------------
 
     def setup_indexes(self):
@@ -421,6 +427,18 @@ class FalkorDBGraphStore(BaseGraphStore):
         self._run(
             "MATCH (co:Community {id: $id}) SET co.embedding = $embedding",
             {"id": community_id, "embedding": embedding},
+        )
+
+    def update_entity_embedding(self, entity_id: str, embedding):
+        self._run(
+            "MATCH (e:Entity {id: $id}) SET e.embedding = $embedding",
+            {"id": entity_id, "embedding": embedding},
+        )
+
+    def update_chunk_embedding(self, chunk_id: str, embedding):
+        self._run(
+            "MATCH (c:Chunk {id: $id}) SET c.embedding = $embedding",
+            {"id": chunk_id, "embedding": embedding},
         )
 
     def get_inter_community_edges(self, community_memberships):

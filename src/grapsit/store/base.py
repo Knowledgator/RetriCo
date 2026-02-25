@@ -92,6 +92,20 @@ class BaseGraphStore(ABC):
     def clear_all(self):
         """Delete all nodes and relationships."""
 
+    # -- Raw Cypher ----------------------------------------------------------
+
+    def run_cypher(self, query: str, params: dict = None) -> list:
+        """Execute a raw Cypher query and return results.
+
+        Args:
+            query: Cypher query string.
+            params: Optional parameters dict.
+
+        Returns:
+            List of result records.
+        """
+        raise NotImplementedError
+
     # -- Chunk lookups -------------------------------------------------------
 
     def get_entities_for_chunk(self, chunk_id: str) -> List[Dict[str, Any]]:
@@ -156,6 +170,14 @@ class BaseGraphStore(ABC):
 
     def update_community_embedding(self, community_id: str, embedding: List[float]):
         """Store embedding vector on a Community node."""
+        raise NotImplementedError
+
+    def update_entity_embedding(self, entity_id: str, embedding: List[float]):
+        """Store embedding vector on an Entity node."""
+        raise NotImplementedError
+
+    def update_chunk_embedding(self, chunk_id: str, embedding: List[float]):
+        """Store embedding vector on a Chunk node."""
         raise NotImplementedError
 
     def get_inter_community_edges(

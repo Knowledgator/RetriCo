@@ -87,6 +87,11 @@ def build_graph(
     memgraph_password: str = "",
     memgraph_database: str = "memgraph",
     json_output: str = None,
+    embed_chunks: bool = False,
+    embed_entities: bool = False,
+    embedding_method: str = "sentence_transformer",
+    embedding_model_name: str = "all-MiniLM-L6-v2",
+    vector_store_type: str = "in_memory",
 ) -> PipeContext:
     """Build a knowledge graph from texts in one call.
 
@@ -150,6 +155,19 @@ def build_graph(
         json_output=json_output,
     )
 
+    if embed_chunks:
+        builder.chunk_embedder(
+            embedding_method=embedding_method,
+            model_name=embedding_model_name,
+            vector_store_type=vector_store_type,
+        )
+    if embed_entities:
+        builder.entity_embedder(
+            embedding_method=embedding_method,
+            model_name=embedding_model_name,
+            vector_store_type=vector_store_type,
+        )
+
     executor = builder.build(verbose=verbose)
     return executor.execute({"texts": texts})
 
@@ -157,7 +175,7 @@ def build_graph(
 def query_graph(
     query: str,
     *,
-    entity_labels: List[str],
+    entity_labels: List[str] = None,
     neo4j_uri: str = "bolt://localhost:7687",
     neo4j_user: str = "neo4j",
     neo4j_password: str = "password",
@@ -181,12 +199,15 @@ def query_graph(
     memgraph_user: str = "",
     memgraph_password: str = "",
     memgraph_database: str = "memgraph",
+    retrieval_strategy: str = "entity",
+    retriever_kwargs: Dict[str, Any] = None,
 ) -> QueryResult:
     """Query a knowledge graph in one call.
 
     Args:
         query: Natural language query.
-        entity_labels: Entity types for NER on the query.
+        entity_labels: Entity types for NER on the query. Required for entity-based
+            strategies (entity, entity_embedding, path).
         neo4j_uri: Neo4j bolt URI.
         neo4j_user: Neo4j user.
         neo4j_password: Neo4j password.
@@ -197,43 +218,29 @@ def query_graph(
         api_key: OpenAI API key. If provided, enables LLM reasoner.
         model: LLM model name for reasoner (and LLM parser if ner_method="llm").
         verbose: Enable verbose logging.
+        retrieval_strategy: Strategy name — "entity" (default), "community",
+            "chunk_embedding", "entity_embedding", "tool", or "path".
+        retriever_kwargs: Extra kwargs passed to the retriever builder method
+            (e.g. top_k, vector_index_name, max_tool_rounds).
 
     Returns:
         QueryResult with subgraph, answer, and metadata.
     """
     builder = QueryConfigBuilder(name="query_graph")
 
-    parser_kwargs = {"method": ner_method, "labels": entity_labels}
-    if ner_model is not None:
-        parser_kwargs["model"] = ner_model
-    if ner_method == "llm" and api_key is not None:
-        parser_kwargs["api_key"] = api_key
-        parser_kwargs["model"] = model
-    builder.query_parser(**parser_kwargs)
+    if retriever_kwargs is None:
+        retriever_kwargs = {}
 
-    # Add linker if any linker param is provided
-    if linker_executor or linker_model or linker_entities or linker_neo4j:
-        linker_kwargs = {"threshold": linker_threshold}
-        if linker_executor:
-            linker_kwargs["executor"] = linker_executor
-        if linker_model:
-            linker_kwargs["model"] = linker_model
-        if linker_entities:
-            linker_kwargs["entities"] = linker_entities
-        if linker_neo4j:
-            linker_kwargs["neo4j_uri"] = neo4j_uri
-            linker_kwargs["neo4j_user"] = neo4j_user
-            linker_kwargs["neo4j_password"] = neo4j_password
-            linker_kwargs["neo4j_database"] = neo4j_database
-        builder.linker(**linker_kwargs)
+    # Strategies that need a parser
+    _ENTITY_STRATEGIES = {"entity", "entity_embedding", "path"}
 
-    builder.retriever(
+    # Common store kwargs
+    store_kwargs = dict(
+        store_type=store_type,
         neo4j_uri=neo4j_uri,
         neo4j_user=neo4j_user,
         neo4j_password=neo4j_password,
         neo4j_database=neo4j_database,
-        max_hops=max_hops,
-        store_type=store_type,
         falkordb_host=falkordb_host,
         falkordb_port=falkordb_port,
         falkordb_graph=falkordb_graph,
@@ -242,6 +249,61 @@ def query_graph(
         memgraph_password=memgraph_password,
         memgraph_database=memgraph_database,
     )
+
+    if retrieval_strategy in _ENTITY_STRATEGIES:
+        if entity_labels is None:
+            raise ValueError(
+                f"entity_labels required for '{retrieval_strategy}' strategy."
+            )
+        parser_kwargs = {"method": ner_method, "labels": entity_labels}
+        if ner_model is not None:
+            parser_kwargs["model"] = ner_model
+        if ner_method == "llm" and api_key is not None:
+            parser_kwargs["api_key"] = api_key
+            parser_kwargs["model"] = model
+        builder.query_parser(**parser_kwargs)
+
+        # Add linker if any linker param is provided
+        if linker_executor or linker_model or linker_entities or linker_neo4j:
+            linker_kw = {"threshold": linker_threshold}
+            if linker_executor:
+                linker_kw["executor"] = linker_executor
+            if linker_model:
+                linker_kw["model"] = linker_model
+            if linker_entities:
+                linker_kw["entities"] = linker_entities
+            if linker_neo4j:
+                linker_kw["neo4j_uri"] = neo4j_uri
+                linker_kw["neo4j_user"] = neo4j_user
+                linker_kw["neo4j_password"] = neo4j_password
+                linker_kw["neo4j_database"] = neo4j_database
+            builder.linker(**linker_kw)
+
+    # Configure retriever based on strategy
+    if retrieval_strategy == "entity":
+        builder.retriever(max_hops=max_hops, **store_kwargs)
+    elif retrieval_strategy == "community":
+        builder.community_retriever(**store_kwargs, **retriever_kwargs)
+    elif retrieval_strategy == "chunk_embedding":
+        builder.chunk_embedding_retriever(**store_kwargs, **retriever_kwargs)
+    elif retrieval_strategy == "entity_embedding":
+        builder.entity_embedding_retriever(**store_kwargs, **retriever_kwargs)
+    elif retrieval_strategy == "tool":
+        tool_kw = dict(retriever_kwargs)
+        if api_key is not None and "api_key" not in tool_kw:
+            tool_kw["api_key"] = api_key
+        if "model" not in tool_kw:
+            tool_kw["model"] = model
+        builder.tool_retriever(**store_kwargs, **tool_kw)
+    elif retrieval_strategy == "path":
+        builder.path_retriever(**store_kwargs, **retriever_kwargs)
+    else:
+        raise ValueError(
+            f"Unknown retrieval_strategy: {retrieval_strategy!r}. "
+            "Expected 'entity', 'community', 'chunk_embedding', "
+            "'entity_embedding', 'tool', or 'path'."
+        )
+
     builder.chunk_retriever()
 
     if api_key is not None:

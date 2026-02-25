@@ -174,6 +174,10 @@ class OpenAIEmbedding(BaseEmbeddingModel):
         return [item.embedding for item in response.data]
 
 
+_ST_KEYS = {"model_name", "device", "batch_size"}
+_OPENAI_KEYS = {"api_key", "base_url", "model", "dimensions", "timeout", "max_retries"}
+
+
 def create_embedding_model(config: dict) -> BaseEmbeddingModel:
     """Factory to create an embedding model from config.
 
@@ -181,15 +185,18 @@ def create_embedding_model(config: dict) -> BaseEmbeddingModel:
     - ``"sentence_transformer"`` (default): SentenceTransformerEmbedding
     - ``"openai"``: OpenAIEmbedding
 
-    Remaining keys are passed as constructor kwargs.
+    Only recognised constructor keys are forwarded; extra keys (e.g. store
+    params, ``top_k``) are silently ignored.
     """
     config = dict(config)
     method = config.pop("embedding_method", "sentence_transformer")
 
     if method == "sentence_transformer":
-        return SentenceTransformerEmbedding(**config)
+        filtered = {k: v for k, v in config.items() if k in _ST_KEYS}
+        return SentenceTransformerEmbedding(**filtered)
     elif method == "openai":
-        return OpenAIEmbedding(**config)
+        filtered = {k: v for k, v in config.items() if k in _OPENAI_KEYS}
+        return OpenAIEmbedding(**filtered)
     else:
         raise ValueError(
             f"Unknown embedding_method: {method!r}. "

@@ -28,14 +28,33 @@ class InMemoryVectorStore(BaseVectorStore):
 
     Suitable for development, testing, and small-to-medium datasets.
     All data is lost when the process exits.
+
+    Uses a singleton pattern so that all callers within the same process share
+    the same index data (e.g. embeddings created during build are available
+    at query time).
     """
 
+    _instance: "InMemoryVectorStore | None" = None
+    _shared_indexes: Dict[str, _VectorIndex] = {}
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        self._indexes: Dict[str, _VectorIndex] = {}
+        self._indexes = self.__class__._shared_indexes
 
     def create_index(self, name: str, dimension: int):
         if name in self._indexes:
-            raise ValueError(f"Index {name!r} already exists.")
+            existing = self._indexes[name]
+            if existing.dimension != dimension:
+                raise ValueError(
+                    f"Index {name!r} already exists with dimension "
+                    f"{existing.dimension}, cannot recreate with {dimension}."
+                )
+            logger.debug(f"In-memory index {name!r} already exists, reusing")
+            return
         self._indexes[name] = _VectorIndex(name, dimension)
         logger.info(f"Created in-memory index {name!r} (dim={dimension})")
 
@@ -139,4 +158,14 @@ class InMemoryVectorStore(BaseVectorStore):
         logger.info(f"Deleted in-memory index {name!r}")
 
     def close(self):
-        self._indexes.clear()
+        """No-op for the singleton in-memory store.
+
+        Use ``reset()`` to explicitly clear all indexes.
+        """
+        pass
+
+    @classmethod
+    def reset(cls):
+        """Clear all indexes and release the singleton instance."""
+        cls._shared_indexes.clear()
+        cls._instance = None

@@ -1,0 +1,113 @@
+"""Entity embedding processor — embeds entities into a vector store after graph writing."""
+
+from typing import Any, Dict, List
+import logging
+
+from ..core.base import BaseProcessor
+from ..core.registry import processor_registry
+from ..store import create_store
+from ..modeling.embeddings import create_embedding_model
+from ..store.vector import create_vector_store
+
+logger = logging.getLogger(__name__)
+
+
+class EntityEmbedderProcessor(BaseProcessor):
+    """Embed entity labels and store in vector store + optionally on graph nodes.
+
+    Runs after ``graph_writer`` so that entities already exist in the database.
+    Uses ``entity_map`` from ``writer_result`` (Dict[str, Entity]).
+
+    Config keys:
+        embedding_method: str — "sentence_transformer" or "openai" (default: "sentence_transformer").
+        model_name: str — embedding model name (default: "all-MiniLM-L6-v2").
+        vector_store_type: str — "in_memory", "faiss", or "qdrant" (default: "in_memory").
+        vector_index_name: str — index name (default: "entity_embeddings").
+        batch_size: int — batch size for encoding (default: 32).
+        device: str — device for sentence-transformers (default: "cpu").
+        Store params: store_type, neo4j_uri, etc. (for persisting embeddings on nodes).
+        Additional embedding/vector store params passed through.
+    """
+
+    def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
+        super().__init__(config_dict, pipeline)
+        self._store = None
+        self._embedding_model = None
+        self._vector_store = None
+
+    def _ensure_store(self):
+        if self._store is None:
+            self._store = create_store(self.config_dict)
+
+    def _ensure_embedding_model(self):
+        if self._embedding_model is None:
+            embed_config = {
+                "embedding_method": self.config_dict.get("embedding_method", "sentence_transformer"),
+            }
+            for key in ("model_name", "device", "batch_size", "api_key", "base_url",
+                        "model", "dimensions", "timeout"):
+                if key in self.config_dict:
+                    embed_config[key] = self.config_dict[key]
+            self._embedding_model = create_embedding_model(embed_config)
+
+    def _ensure_vector_store(self):
+        if self._vector_store is None:
+            vector_config = {
+                "vector_store_type": self.config_dict.get("vector_store_type", "in_memory"),
+            }
+            for key in ("use_gpu", "qdrant_url", "qdrant_api_key", "qdrant_path", "prefer_grpc"):
+                if key in self.config_dict:
+                    vector_config[key] = self.config_dict[key]
+            self._vector_store = create_vector_store(vector_config)
+
+    def __call__(self, *, entity_map: Dict[str, Any] = None, **kwargs) -> Dict[str, Any]:
+        if not entity_map:
+            logger.info("No entities to embed")
+            return {"embedded_count": 0, "dimension": 0, "index_name": ""}
+
+        self._ensure_store()
+        self._ensure_embedding_model()
+        self._ensure_vector_store()
+
+        index_name = self.config_dict.get("vector_index_name", "entity_embeddings")
+        dimension = self._embedding_model.dimension
+        self._vector_store.create_index(index_name, dimension)
+
+        # Extract labels and IDs from entity_map
+        texts = []
+        ids = []
+        for entity in entity_map.values():
+            label = entity.label if hasattr(entity, "label") else entity.get("label", "")
+            eid = entity.id if hasattr(entity, "id") else entity.get("id", "")
+            if label and eid:
+                texts.append(label)
+                ids.append(eid)
+
+        if not texts:
+            logger.info("No entity labels to embed")
+            return {"embedded_count": 0, "dimension": dimension, "index_name": index_name}
+
+        embeddings = self._embedding_model.encode(texts)
+
+        # Store in vector store
+        items = list(zip(ids, embeddings))
+        self._vector_store.store_embeddings(index_name, items)
+
+        # Optionally persist on graph nodes
+        for eid, emb in items:
+            try:
+                self._store.update_entity_embedding(eid, emb)
+            except Exception as e:
+                logger.debug(f"Could not store embedding on Entity node: {e}")
+
+        logger.info(f"Embedded {len(items)} entities (dim={dimension})")
+        return {
+            "embedded_count": len(items),
+            "dimension": dimension,
+            "index_name": index_name,
+        }
+
+
+@processor_registry.register("entity_embedder")
+def create_entity_embedder(config_dict: dict, pipeline=None):
+    return EntityEmbedderProcessor(config_dict, pipeline)
