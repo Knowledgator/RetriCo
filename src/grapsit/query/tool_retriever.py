@@ -12,6 +12,64 @@ from .base_retriever import BaseRetriever
 
 logger = logging.getLogger(__name__)
 
+# Properties to exclude when serializing graph objects for the LLM
+_EXCLUDE_PROPS = {"embedding"}
+
+
+def _obj_to_dict(obj: Any) -> Any:
+    """Convert a FalkorDB Node/Edge or Neo4j record value to a plain dict.
+
+    - FalkorDB ``Node``: ``{**node.properties, "_labels": node.labels}``
+    - FalkorDB ``Edge``: ``{**edge.properties, "_relation": edge.relation}``
+    - ``dict`` / primitive: returned as-is.
+
+    Large properties (embeddings) are stripped out.
+    """
+    cls = type(obj).__name__
+
+    if cls == "Node" and hasattr(obj, "properties"):
+        d = {k: v for k, v in obj.properties.items() if k not in _EXCLUDE_PROPS}
+        d["_labels"] = getattr(obj, "labels", [])
+        return d
+    if cls == "Edge" and hasattr(obj, "properties"):
+        d = {k: v for k, v in obj.properties.items() if k not in _EXCLUDE_PROPS}
+        d["_relation"] = getattr(obj, "relation", "")
+        return d
+    if isinstance(obj, dict):
+        return {k: v for k, v in obj.items() if k not in _EXCLUDE_PROPS}
+    return obj
+
+
+def _normalize_results(raw_results: list) -> List[Dict[str, Any]]:
+    """Normalize raw Cypher results to a list of dicts.
+
+    Neo4j returns ``[{"e": {...}, "r": {...}}, ...]``.
+    FalkorDB returns ``[[Node, Edge, Node], ...]``.
+    This function produces a uniform list of flat dicts.
+    """
+    normalized = []
+    for record in raw_results:
+        if isinstance(record, dict):
+            # Neo4j style — convert any nested Node/Edge objects
+            row: Dict[str, Any] = {}
+            for key, val in record.items():
+                row[key] = _obj_to_dict(val)
+            normalized.append(row)
+        elif isinstance(record, (list, tuple)):
+            # FalkorDB style — list of Node/Edge objects
+            row = {}
+            for i, val in enumerate(record):
+                converted = _obj_to_dict(val)
+                if isinstance(converted, dict):
+                    # Merge into row, prefixing duplicate keys
+                    for k, v in converted.items():
+                        dest_key = k if k not in row else f"{k}_{i}"
+                        row[dest_key] = v
+                else:
+                    row[f"col_{i}"] = converted
+            normalized.append(row)
+    return normalized
+
 
 class ToolRetrieverProcessor(BaseRetriever):
     """Retrieve subgraph via an LLM agent that calls graph query tools.
@@ -133,7 +191,8 @@ class ToolRetrieverProcessor(BaseRetriever):
                 results = []
                 try:
                     cypher, params = tool_call_to_cypher(tc["name"], tc["arguments"])
-                    results = self._store.run_cypher(cypher, params)
+                    raw = self._store.run_cypher(cypher, params)
+                    results = _normalize_results(raw)
                 except Exception as e:
                     results = []
                     messages.append({
@@ -171,11 +230,11 @@ class ToolRetrieverProcessor(BaseRetriever):
 
     def _collect_from_results(
         self,
-        results: list,
+        results: List[Dict[str, Any]],
         entities: Dict[str, Entity],
         relations: List[Relation],
     ):
-        """Extract entities and relations from Cypher query results."""
+        """Extract entities and relations from normalized Cypher results."""
         for record in results:
             if not isinstance(record, dict):
                 continue
@@ -195,6 +254,36 @@ class ToolRetrieverProcessor(BaseRetriever):
                         head_text=record.get("entity_id", ""),
                         tail_text=record.get("target_id", ""),
                         relation_type=record.get("relation_type", ""),
+                        score=record.get("score", 0.0) or 0.0,
+                    ))
+
+            # Handle flat records (FalkorDB normalized): entity props merged at top level
+            if "id" in record and "label" in record and "_labels" in record:
+                eid = record["id"]
+                if eid not in entities:
+                    entities[eid] = Entity(
+                        id=eid,
+                        label=record.get("label", ""),
+                        entity_type=record.get("entity_type", ""),
+                    )
+
+            # Handle relations from flat records (e.g. RETURN e, r, other)
+            if "_relation" in record:
+                rel_type = record["_relation"]
+                # Find entity IDs — look for id and id_N patterns
+                entity_ids = []
+                for k, v in record.items():
+                    if k == "id" or (k.startswith("id_") and isinstance(v, str)):
+                        entity_ids.append(v)
+                entity_labels = []
+                for k, v in record.items():
+                    if k == "label" or (k.startswith("label_") and isinstance(v, str)):
+                        entity_labels.append(v)
+                if len(entity_ids) >= 2:
+                    relations.append(Relation(
+                        head_text=entity_labels[0] if entity_labels else entity_ids[0],
+                        tail_text=entity_labels[1] if len(entity_labels) > 1 else entity_ids[1],
+                        relation_type=rel_type,
                         score=record.get("score", 0.0) or 0.0,
                     ))
 

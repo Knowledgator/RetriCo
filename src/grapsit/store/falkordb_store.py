@@ -296,29 +296,56 @@ class FalkorDBGraphStore(BaseGraphStore):
     # -- Path queries --------------------------------------------------------
 
     def get_shortest_paths(self, source_id: str, target_id: str, max_length: int = 5) -> list:
-        rows = self._run(
-            f"""
-            MATCH (s:Entity {{id: $source}}), (t:Entity {{id: $target}}),
-                  path = shortestPath((s)-[*1..{max_length}]-(t))
-            WHERE ALL(r IN relationships(path) WHERE NOT type(r) = 'MENTIONED_IN')
-            RETURN nodes(path) AS nodes, relationships(path) AS rels
-            """,
-            {"source": source_id, "target": target_id},
-        )
-        results = []
-        for row in rows:
-            nodes = [_node_to_dict(n) for n in (row[0] or [])]
-            rels = []
-            for edge in (row[1] or []):
-                if hasattr(edge, "relation"):
-                    rel_dict = {"type": edge.relation}
-                    if hasattr(edge, "properties"):
-                        rel_dict["score"] = edge.properties.get("score")
-                    rels.append(rel_dict)
-                elif isinstance(edge, dict):
-                    rels.append(edge)
-            results.append({"nodes": nodes, "rels": rels})
-        return results
+        # FalkorDB doesn't support shortestPath or undirected traversals.
+        # Try directed path in both directions, then fall back to a
+        # meet-in-the-middle approach via get_subgraph.
+        for src, tgt in [(source_id, target_id), (target_id, source_id)]:
+            rows = self._run(
+                f"""
+                MATCH path = (s:Entity {{id: $source}})-[*1..{max_length}]->(t:Entity {{id: $target}})
+                WHERE ALL(r IN relationships(path) WHERE NOT type(r) = 'MENTIONED_IN')
+                RETURN nodes(path) AS nodes, relationships(path) AS rels
+                ORDER BY length(path)
+                LIMIT 1
+                """,
+                {"source": src, "target": tgt},
+            )
+            if rows:
+                results = []
+                for row in rows:
+                    nodes = [_node_to_dict(n) for n in (row[0] or [])]
+                    rels = []
+                    for edge in (row[1] or []):
+                        if hasattr(edge, "relation"):
+                            rel_dict = {"type": edge.relation}
+                            if hasattr(edge, "properties"):
+                                rel_dict["score"] = edge.properties.get("score")
+                            rels.append(rel_dict)
+                        elif isinstance(edge, dict):
+                            rels.append(edge)
+                    results.append({"nodes": nodes, "rels": rels})
+                return results
+
+        # Fallback: get overlapping neighborhoods (meet-in-the-middle).
+        # Query outgoing neighbours of each entity and find shared nodes.
+        hops = min(max_length // 2 + 1, max_length)
+        raw = self.get_subgraph([source_id, target_id], max_hops=hops)
+        if not raw or (not raw.get("entities") and not raw.get("nodes")):
+            return []
+        # Convert subgraph to a single "path" result
+        nodes_list = raw.get("entities") or raw.get("nodes") or []
+        rels_list = raw.get("relations") or raw.get("rels") or []
+        path_nodes = [n if isinstance(n, dict) else _node_to_dict(n) for n in nodes_list]
+        path_rels = []
+        for r in rels_list:
+            if isinstance(r, dict):
+                path_rels.append(r)
+            elif hasattr(r, "relation"):
+                rel_dict = {"type": r.relation}
+                if hasattr(r, "properties"):
+                    rel_dict["score"] = r.properties.get("score")
+                path_rels.append(rel_dict)
+        return [{"nodes": path_nodes, "rels": path_rels}]
 
     # -- Community CRUD ------------------------------------------------------
 
@@ -425,20 +452,20 @@ class FalkorDBGraphStore(BaseGraphStore):
 
     def update_community_embedding(self, community_id: str, embedding):
         self._run(
-            "MATCH (co:Community {id: $id}) SET co.embedding = $embedding",
-            {"id": community_id, "embedding": embedding},
+            "MATCH (co:Community {id: $id}) SET co.embedding = vecf32($embedding)",
+            {"id": community_id, "embedding": list(embedding)},
         )
 
     def update_entity_embedding(self, entity_id: str, embedding):
         self._run(
-            "MATCH (e:Entity {id: $id}) SET e.embedding = $embedding",
-            {"id": entity_id, "embedding": embedding},
+            "MATCH (e:Entity {id: $id}) SET e.embedding = vecf32($embedding)",
+            {"id": entity_id, "embedding": list(embedding)},
         )
 
     def update_chunk_embedding(self, chunk_id: str, embedding):
         self._run(
-            "MATCH (c:Chunk {id: $id}) SET c.embedding = $embedding",
-            {"id": chunk_id, "embedding": embedding},
+            "MATCH (c:Chunk {id: $id}) SET c.embedding = vecf32($embedding)",
+            {"id": chunk_id, "embedding": list(embedding)},
         )
 
     def get_all_triples(self) -> list:

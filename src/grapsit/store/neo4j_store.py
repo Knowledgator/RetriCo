@@ -456,19 +456,19 @@ class Neo4jGraphStore(BaseGraphStore):
     def update_community_embedding(self, community_id: str, embedding):
         self._run(
             "MATCH (co:Community {id: $id}) SET co.embedding = $embedding",
-            {"id": community_id, "embedding": embedding},
+            {"id": community_id, "embedding": list(embedding)},
         )
 
     def update_entity_embedding(self, entity_id: str, embedding):
         self._run(
             "MATCH (e:Entity {id: $id}) SET e.embedding = $embedding",
-            {"id": entity_id, "embedding": embedding},
+            {"id": entity_id, "embedding": list(embedding)},
         )
 
     def update_chunk_embedding(self, chunk_id: str, embedding):
         self._run(
             "MATCH (c:Chunk {id: $id}) SET c.embedding = $embedding",
-            {"id": chunk_id, "embedding": embedding},
+            {"id": chunk_id, "embedding": list(embedding)},
         )
 
     def get_all_triples(self) -> list:

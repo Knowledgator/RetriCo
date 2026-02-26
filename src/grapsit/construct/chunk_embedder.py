@@ -8,6 +8,7 @@ from ..core.registry import processor_registry
 from ..store import create_store
 from ..modeling.embeddings import create_embedding_model
 from ..store.vector import create_vector_store
+from ..store.vector_graph import GraphDBVectorStore as _GraphDBVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,14 @@ class ChunkEmbedderProcessor(BaseProcessor):
             vector_config = {
                 "vector_store_type": self.config_dict.get("vector_store_type", "in_memory"),
             }
-            for key in ("use_gpu", "qdrant_url", "qdrant_api_key", "qdrant_path", "prefer_grpc"):
+            _VECTOR_PASSTHROUGH_KEYS = (
+                "use_gpu", "qdrant_url", "qdrant_api_key", "qdrant_path", "prefer_grpc",
+                # graph_db backend needs graph store connection params
+                "store_type", "neo4j_uri", "neo4j_user", "neo4j_password", "neo4j_database",
+                "falkordb_host", "falkordb_port", "falkordb_graph",
+                "memgraph_uri", "memgraph_user", "memgraph_password", "memgraph_database",
+            )
+            for key in _VECTOR_PASSTHROUGH_KEYS:
                 if key in self.config_dict:
                     vector_config[key] = self.config_dict[key]
             self._vector_store = create_vector_store(vector_config)
@@ -92,12 +100,13 @@ class ChunkEmbedderProcessor(BaseProcessor):
         items = list(zip(ids, embeddings))
         self._vector_store.store_embeddings(index_name, items)
 
-        # Optionally persist on graph nodes
-        for cid, emb in items:
-            try:
-                self._store.update_chunk_embedding(cid, emb)
-            except Exception as e:
-                logger.debug(f"Could not store embedding on Chunk node: {e}")
+        # Persist on graph nodes (skip if vector store already writes to graph DB)
+        if not isinstance(self._vector_store, _GraphDBVectorStore):
+            for cid, emb in items:
+                try:
+                    self._store.update_chunk_embedding(cid, emb)
+                except Exception as e:
+                    logger.debug(f"Could not store embedding on Chunk node: {e}")
 
         logger.info(f"Embedded {len(items)} chunks (dim={dimension})")
         return {
