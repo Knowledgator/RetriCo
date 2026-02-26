@@ -192,3 +192,16 @@ class BaseGraphStore(ABC):
             List of (community_a, community_b, weight) tuples.
         """
         raise NotImplementedError
+
+    # -- Triple export -------------------------------------------------------
+
+    def get_all_triples(self) -> List[Any]:
+        """Return all (head_label, relation_type, tail_label) triples.
+
+        Excludes structural relationships (MENTIONED_IN, MEMBER_OF, PART_OF,
+        CHILD_OF).
+
+        Returns:
+            List of (head_label, relation_type, tail_label) tuples.
+        """
+        raise NotImplementedError

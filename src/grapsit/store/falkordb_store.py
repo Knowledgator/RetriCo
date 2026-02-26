@@ -441,6 +441,17 @@ class FalkorDBGraphStore(BaseGraphStore):
             {"id": chunk_id, "embedding": embedding},
         )
 
+    def get_all_triples(self) -> list:
+        """Return all (head_label, relation_type, tail_label) triples."""
+        rows = self._run(
+            """
+            MATCH (h:Entity)-[r]->(t:Entity)
+            WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF', 'CHILD_OF']
+            RETURN h.label AS head, type(r) AS rel, t.label AS tail
+            """
+        )
+        return [(row[0], row[1], row[2]) for row in rows]
+
     def get_inter_community_edges(self, community_memberships):
         rows = self._run(
             """

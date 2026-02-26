@@ -20,11 +20,17 @@ class ChunkRetrieverProcessor(BaseProcessor):
         neo4j_password: str — (default: "password")
         neo4j_database: str — (default: "neo4j")
         max_chunks: int — optional limit on chunks returned (default: None, no limit)
+        chunk_entity_source: str — which entities to get chunks for:
+            "all" (default) — all entities in subgraph
+            "head" — only head entities from scored triples
+            "tail" — only tail entities from scored triples
+            "both" — explicit alias for "all"
     """
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
         self.max_chunks: int = config_dict.get("max_chunks", 0)
+        self.chunk_entity_source: str = config_dict.get("chunk_entity_source", "all")
         self._store = None
 
     def _ensure_store(self):
@@ -32,8 +38,36 @@ class ChunkRetrieverProcessor(BaseProcessor):
             from ..store import create_store
             self._store = create_store(self.config_dict)
 
+    def _select_entities(self, subgraph: Subgraph, scored_triples: Any = None):
+        """Select which entities to retrieve chunks for based on chunk_entity_source."""
+        if self.chunk_entity_source in ("all", "both") or not scored_triples:
+            return subgraph.entities
+
+        # Build set of labels to filter by
+        target_labels = set()
+        for triple in scored_triples:
+            if isinstance(triple, dict):
+                if self.chunk_entity_source in ("head", "both"):
+                    head = triple.get("head", "")
+                    if head:
+                        target_labels.add(head.lower())
+                if self.chunk_entity_source in ("tail", "both"):
+                    tail = triple.get("tail", "")
+                    if tail:
+                        target_labels.add(tail.lower())
+
+        if not target_labels:
+            return subgraph.entities
+
+        return [e for e in subgraph.entities if e.label.lower() in target_labels]
+
     def __call__(self, *, subgraph: Any, **kwargs) -> Dict[str, Any]:
-        """Retrieve chunks for all entities in the subgraph.
+        """Retrieve chunks for entities in the subgraph.
+
+        Args:
+            subgraph: Subgraph or dict with entities/relations.
+            scored_triples: Optional list of scored triple dicts (for
+                chunk_entity_source filtering).
 
         Returns:
             {"subgraph": Subgraph} with chunks populated
@@ -46,10 +80,13 @@ class ChunkRetrieverProcessor(BaseProcessor):
         elif not isinstance(subgraph, Subgraph):
             subgraph = Subgraph()
 
+        scored_triples = kwargs.get("scored_triples")
+        entities_to_query = self._select_entities(subgraph, scored_triples)
+
         seen_ids = set()
         chunks = []
 
-        for entity in subgraph.entities:
+        for entity in entities_to_query:
             raw_chunks = self._store.get_chunks_for_entity(entity.id)
             for chunk_dict in raw_chunks:
                 if chunk_dict is None:

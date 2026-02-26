@@ -159,13 +159,98 @@ class QueryParserProcessor(BaseProcessor):
             ))
         return mentions
 
+    def _parse_tool(self, query: str) -> Dict[str, Any]:
+        """Parse query using LLM tool calling with search_triples.
+
+        Returns:
+            {"query": str, "entities": List[EntityMention],
+             "triple_queries": [{"head": str|None, "relation": str|None, "tail": str|None}]}
+        """
+        self._ensure_llm_client()
+        from ..llm.tools import TRIPLE_QUERY_TOOLS
+
+        labels = self.labels
+        relation_labels = self.config_dict.get("relation_labels", [])
+
+        schema_lines = []
+        if labels:
+            schema_lines.append(f"Entity types: {', '.join(labels)}")
+        if relation_labels:
+            schema_lines.append(f"Relation types: {', '.join(relation_labels)}")
+        schema_info = "\n".join(schema_lines) if schema_lines else ""
+
+        system_prompt = (
+            "You are a knowledge graph query decomposer. "
+            "Given a natural language question, decompose it into one or more "
+            "triple patterns by calling the search_triples tool.\n\n"
+            "Each call specifies a (head, relation, tail) pattern where unknown "
+            "parts should be null.\n\n"
+            "Examples:\n"
+            '- "Where was Einstein born?" → search_triples(head="Einstein", relation="born_in", tail=null)\n'
+            '- "Who works at MIT?" → search_triples(head=null, relation="works_at", tail="MIT")\n'
+            '- "What is the relationship between Einstein and Bohr?" → '
+            'search_triples(head="Einstein", relation=null, tail="Bohr")\n'
+        )
+        if schema_info:
+            system_prompt += f"\nKnowledge Graph Schema:\n{schema_info}\n"
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query},
+        ]
+
+        try:
+            result = self._client.complete_with_tools(messages, tools=TRIPLE_QUERY_TOOLS)
+        except Exception as e:
+            logger.warning(f"Tool-calling query parse failed: {e}")
+            return {"query": query, "entities": [], "triple_queries": []}
+
+        triple_queries = []
+        entity_texts = set()
+
+        for tc in result.get("tool_calls", []):
+            if tc["name"] != "search_triples":
+                continue
+            args = tc["arguments"] if isinstance(tc["arguments"], dict) else {}
+            head = args.get("head")
+            relation = args.get("relation")
+            tail = args.get("tail")
+            triple_queries.append({
+                "head": head,
+                "relation": relation,
+                "tail": tail,
+            })
+            if head:
+                entity_texts.add(head)
+            if tail:
+                entity_texts.add(tail)
+
+        # Build EntityMention list from head/tail values for backward compat
+        mentions = []
+        for text in entity_texts:
+            idx = query.find(text)
+            start = idx if idx >= 0 else 0
+            end = start + len(text) if idx >= 0 else 0
+            mentions.append(EntityMention(
+                text=text,
+                label="",
+                start=start,
+                end=end,
+                score=1.0,
+            ))
+
+        return {"query": query, "entities": mentions, "triple_queries": triple_queries}
+
     def __call__(self, *, query: str, **kwargs) -> Dict[str, Any]:
         """Parse a query string to extract entities.
 
         Returns:
             {"query": str, "entities": List[EntityMention]}
+            For method="tool", also includes "triple_queries".
         """
-        if self.method == "llm":
+        if self.method == "tool":
+            return self._parse_tool(query)
+        elif self.method == "llm":
             entities = self._parse_llm(query)
         else:
             entities = self._parse_gliner(query)

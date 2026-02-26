@@ -581,12 +581,14 @@ class QueryConfigBuilder:
         self._retriever_type: str = "retriever"
         self._chunk_config: Optional[Dict[str, Any]] = None
         self._reasoner_config: Optional[Dict[str, Any]] = None
+        self._kg_scorer_config: Optional[Dict[str, Any]] = None
 
     def query_parser(
         self,
         method: str = "gliner",
         model: str = None,
         labels: List[str] = None,
+        relation_labels: List[str] = None,
         threshold: float = 0.3,
         device: str = "cpu",
         api_key: str = None,
@@ -600,6 +602,8 @@ class QueryConfigBuilder:
             "device": device,
             "temperature": temperature,
         }
+        if relation_labels is not None:
+            self._parser_config["relation_labels"] = relation_labels
         if model is not None:
             self._parser_config["model"] = model
         if api_key is not None:
@@ -915,6 +919,7 @@ class QueryConfigBuilder:
         neo4j_password: str = None,
         neo4j_database: str = None,
         max_chunks: int = 0,
+        chunk_entity_source: str = "all",
         store_type: str = None,
         falkordb_host: str = None,
         falkordb_port: int = None,
@@ -924,7 +929,7 @@ class QueryConfigBuilder:
         memgraph_password: str = None,
         memgraph_database: str = None,
     ) -> "QueryConfigBuilder":
-        self._chunk_config = {"max_chunks": max_chunks}
+        self._chunk_config = {"max_chunks": max_chunks, "chunk_entity_source": chunk_entity_source}
         # Inherit store config from retriever if not explicitly provided
         if neo4j_uri is not None:
             self._chunk_config["neo4j_uri"] = neo4j_uri
@@ -975,27 +980,97 @@ class QueryConfigBuilder:
             self._reasoner_config["base_url"] = base_url
         return self
 
+    def kg_scorer(
+        self,
+        model_path: str = None,
+        model_name: str = "RotatE",
+        embedding_dim: int = 128,
+        top_k: int = 10,
+        score_threshold: float = None,
+        predict_tails: bool = True,
+        predict_heads: bool = False,
+        device: str = "cpu",
+        store_type: str = None,
+        neo4j_uri: str = None,
+        neo4j_user: str = None,
+        neo4j_password: str = None,
+        neo4j_database: str = None,
+        falkordb_host: str = None,
+        falkordb_port: int = None,
+        falkordb_graph: str = None,
+        memgraph_uri: str = None,
+        memgraph_user: str = None,
+        memgraph_password: str = None,
+        memgraph_database: str = None,
+    ) -> "QueryConfigBuilder":
+        self._kg_scorer_config = {
+            "model_name": model_name,
+            "embedding_dim": embedding_dim,
+            "top_k": top_k,
+            "predict_tails": predict_tails,
+            "predict_heads": predict_heads,
+            "device": device,
+        }
+        if model_path is not None:
+            self._kg_scorer_config["model_path"] = model_path
+        if score_threshold is not None:
+            self._kg_scorer_config["score_threshold"] = score_threshold
+        if store_type is not None:
+            self._kg_scorer_config["store_type"] = store_type
+        if neo4j_uri is not None:
+            self._kg_scorer_config["neo4j_uri"] = neo4j_uri
+        if neo4j_user is not None:
+            self._kg_scorer_config["neo4j_user"] = neo4j_user
+        if neo4j_password is not None:
+            self._kg_scorer_config["neo4j_password"] = neo4j_password
+        if neo4j_database is not None:
+            self._kg_scorer_config["neo4j_database"] = neo4j_database
+        if falkordb_host is not None:
+            self._kg_scorer_config["falkordb_host"] = falkordb_host
+        if falkordb_port is not None:
+            self._kg_scorer_config["falkordb_port"] = falkordb_port
+        if falkordb_graph is not None:
+            self._kg_scorer_config["falkordb_graph"] = falkordb_graph
+        if memgraph_uri is not None:
+            self._kg_scorer_config["memgraph_uri"] = memgraph_uri
+        if memgraph_user is not None:
+            self._kg_scorer_config["memgraph_user"] = memgraph_user
+        if memgraph_password is not None:
+            self._kg_scorer_config["memgraph_password"] = memgraph_password
+        if memgraph_database is not None:
+            self._kg_scorer_config["memgraph_database"] = memgraph_database
+        return self
+
     def get_config(self) -> Dict[str, Any]:
         """Build configuration dict."""
         has_parser = self._parser_config is not None
         has_linker = self._has_linker
+
+        # Check if this is a kg_scored pipeline (tool parser + kg_scorer, no separate retriever)
+        is_kg_scored = (
+            has_parser
+            and self._parser_config.get("method") == "tool"
+            and self._kg_scorer_config is not None
+            and self._retriever_config is None
+        )
 
         # Strategies that require entities from a parser
         _ENTITY_STRATEGIES = {"retriever", "entity_embedding_retriever", "path_retriever"}
         # Strategies that take query directly (no parser needed)
         _QUERY_STRATEGIES = {"community_retriever", "chunk_embedding_retriever", "tool_retriever"}
 
-        needs_parser = self._retriever_type in _ENTITY_STRATEGIES
+        if not is_kg_scored:
+            needs_parser = self._retriever_type in _ENTITY_STRATEGIES
 
-        if needs_parser and not has_parser and not has_linker:
-            raise ValueError(
-                f"Parser or linker config required for '{self._retriever_type}' strategy. "
-                "Call .query_parser() or .linker() first."
-            )
-        if not self._retriever_config:
-            raise ValueError("Retriever config required. Call a retriever method first.")
+            if needs_parser and not has_parser and not has_linker:
+                raise ValueError(
+                    f"Parser or linker config required for '{self._retriever_type}' strategy. "
+                    "Call .query_parser() or .linker() first."
+                )
+            if not self._retriever_config:
+                raise ValueError("Retriever config required. Call a retriever method first.")
 
-        # Default chunk retriever inherits store config from retriever
+        # Default chunk retriever inherits store config
         if self._chunk_config is None:
             self._chunk_config = {}
         inherit_keys = (
@@ -1003,12 +1078,72 @@ class QueryConfigBuilder:
             "falkordb_host", "falkordb_port", "falkordb_graph",
             "memgraph_uri", "memgraph_user", "memgraph_password", "memgraph_database",
         )
+        # Inherit from retriever config or kg_scorer config
+        inherit_source = self._retriever_config or self._kg_scorer_config or {}
         for key in inherit_keys:
-            if key not in self._chunk_config and key in self._retriever_config:
-                self._chunk_config[key] = self._retriever_config[key]
+            if key not in self._chunk_config and key in inherit_source:
+                self._chunk_config[key] = inherit_source[key]
 
         nodes = []
 
+        # kg_scored pipeline: parser(tool) → kg_scorer → chunk_retriever → reasoner
+        if is_kg_scored:
+            nodes.append({
+                "id": "query_parser",
+                "processor": "query_parser",
+                "inputs": {
+                    "query": {"source": "$input", "fields": "query"},
+                },
+                "output": {"key": "parser_result"},
+                "config": self._parser_config,
+            })
+
+            nodes.append({
+                "id": "kg_scorer",
+                "processor": "kg_scorer",
+                "requires": ["query_parser"],
+                "inputs": {
+                    "triple_queries": {"source": "parser_result", "fields": "triple_queries"},
+                },
+                "output": {"key": "kg_scorer_result"},
+                "config": self._kg_scorer_config,
+            })
+
+            chunk_inputs = {
+                "subgraph": {"source": "kg_scorer_result", "fields": "subgraph"},
+            }
+            if self._chunk_config.get("chunk_entity_source") not in ("all", "both", None):
+                chunk_inputs["scored_triples"] = {"source": "kg_scorer_result", "fields": "scored_triples"}
+
+            nodes.append({
+                "id": "chunk_retriever",
+                "processor": "chunk_retriever",
+                "requires": ["kg_scorer"],
+                "inputs": chunk_inputs,
+                "output": {"key": "chunk_result"},
+                "config": self._chunk_config,
+            })
+
+            if self._reasoner_config is not None:
+                nodes.append({
+                    "id": "reasoner",
+                    "processor": "reasoner",
+                    "requires": ["chunk_retriever"],
+                    "inputs": {
+                        "query": {"source": "$input", "fields": "query"},
+                        "subgraph": {"source": "chunk_result", "fields": "subgraph"},
+                    },
+                    "output": {"key": "reasoner_result"},
+                    "config": self._reasoner_config,
+                })
+
+            return {
+                "name": self.name,
+                "description": self.description,
+                "nodes": nodes,
+            }
+
+        # Standard pipeline
         # Add parser if configured (needed for entity-based strategies)
         if has_parser:
             nodes.append({
@@ -1091,6 +1226,28 @@ class QueryConfigBuilder:
                 },
                 "output": {"key": "reasoner_result"},
                 "config": self._reasoner_config,
+            })
+
+        if self._kg_scorer_config is not None:
+            # Determine subgraph source and dependencies
+            scorer_requires = ["retriever"]
+            subgraph_source = "retriever_result"
+            if has_parser:
+                scorer_inputs = {
+                    "entities": {"source": "parser_result", "fields": "entities"},
+                    "subgraph": {"source": subgraph_source, "fields": "subgraph"},
+                }
+            else:
+                scorer_inputs = {
+                    "subgraph": {"source": subgraph_source, "fields": "subgraph"},
+                }
+            nodes.append({
+                "id": "kg_scorer",
+                "processor": "kg_scorer",
+                "requires": scorer_requires,
+                "inputs": scorer_inputs,
+                "output": {"key": "kg_scorer_result"},
+                "config": self._kg_scorer_config,
             })
 
         return {
@@ -1263,6 +1420,188 @@ class CommunityConfigBuilder:
                 "inputs": {},
                 "output": {"key": "embedder_result"},
                 "config": embedder_full,
+            })
+
+        return {
+            "name": self.name,
+            "description": self.description,
+            "nodes": nodes,
+        }
+
+    def build(self, verbose: bool = False) -> DAGExecutor:
+        """Build and return a DAGExecutor."""
+        return ProcessorFactory.create_from_dict(self.get_config(), verbose=verbose)
+
+    def save(self, filepath: str) -> None:
+        """Save config to YAML."""
+        config = _strip_non_serializable(self.get_config())
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+class KGModelingConfigBuilder:
+    """Declarative builder for KG embedding training pipelines.
+
+    Reads triples, trains a PyKEEN model, and stores embeddings.
+
+    Usage::
+
+        builder = KGModelingConfigBuilder(name="my_kg")
+        builder.triple_reader(neo4j_uri="bolt://localhost:7687")
+        builder.trainer(model="RotatE", epochs=100)
+        builder.storer(model_path="kg_model")
+        executor = builder.build()
+        result = executor.execute({})
+    """
+
+    def __init__(self, name: str = "kg_modeling_pipeline", description: str = None):
+        self.name = name
+        self.description = description or f"{name} — auto-generated"
+        self._reader_config: Optional[Dict[str, Any]] = None
+        self._trainer_config: Optional[Dict[str, Any]] = None
+        self._storer_config: Optional[Dict[str, Any]] = None
+
+    def triple_reader(
+        self,
+        source: str = "graph_store",
+        tsv_path: str = None,
+        train_ratio: float = 0.8,
+        val_ratio: float = 0.1,
+        test_ratio: float = 0.1,
+        random_seed: int = 42,
+        store_type: str = "neo4j",
+        neo4j_uri: str = "bolt://localhost:7687",
+        neo4j_user: str = "neo4j",
+        neo4j_password: str = "password",
+        neo4j_database: str = "neo4j",
+        falkordb_host: str = "localhost",
+        falkordb_port: int = 6379,
+        falkordb_graph: str = "grapsit",
+        memgraph_uri: str = "bolt://localhost:7687",
+        memgraph_user: str = "",
+        memgraph_password: str = "",
+        memgraph_database: str = "memgraph",
+    ) -> "KGModelingConfigBuilder":
+        self._reader_config = {
+            "source": source,
+            "train_ratio": train_ratio,
+            "val_ratio": val_ratio,
+            "test_ratio": test_ratio,
+            "random_seed": random_seed,
+            "store_type": store_type,
+            "neo4j_uri": neo4j_uri,
+            "neo4j_user": neo4j_user,
+            "neo4j_password": neo4j_password,
+            "neo4j_database": neo4j_database,
+            "falkordb_host": falkordb_host,
+            "falkordb_port": falkordb_port,
+            "falkordb_graph": falkordb_graph,
+            "memgraph_uri": memgraph_uri,
+            "memgraph_user": memgraph_user,
+            "memgraph_password": memgraph_password,
+            "memgraph_database": memgraph_database,
+        }
+        if tsv_path is not None:
+            self._reader_config["tsv_path"] = tsv_path
+        return self
+
+    def trainer(
+        self,
+        model: str = "RotatE",
+        embedding_dim: int = 128,
+        epochs: int = 100,
+        batch_size: int = 256,
+        lr: float = 0.001,
+        negative_sampler: str = "basic",
+        num_negatives: int = 1,
+        device: str = "cpu",
+        use_tqdm: bool = True,
+    ) -> "KGModelingConfigBuilder":
+        self._trainer_config = {
+            "model": model,
+            "embedding_dim": embedding_dim,
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "lr": lr,
+            "negative_sampler": negative_sampler,
+            "num_negatives": num_negatives,
+            "device": device,
+            "use_tqdm": use_tqdm,
+        }
+        return self
+
+    def storer(
+        self,
+        model_path: str = "kg_model",
+        entity_index_name: str = "kg_entity_embeddings",
+        relation_index_name: str = "kg_relation_embeddings",
+        vector_store_type: str = "in_memory",
+        store_to_graph: bool = False,
+        **extra,
+    ) -> "KGModelingConfigBuilder":
+        self._storer_config = {
+            "model_path": model_path,
+            "entity_index_name": entity_index_name,
+            "relation_index_name": relation_index_name,
+            "vector_store_type": vector_store_type,
+            "store_to_graph": store_to_graph,
+        }
+        self._storer_config.update(extra)
+        return self
+
+    def get_config(self) -> Dict[str, Any]:
+        """Build configuration dict."""
+        if not self._reader_config:
+            raise ValueError("Triple reader config required. Call .triple_reader() first.")
+        if not self._trainer_config:
+            self._trainer_config = {}
+
+        nodes = [
+            {
+                "id": "kg_triple_reader",
+                "processor": "kg_triple_reader",
+                "inputs": {},
+                "output": {"key": "reader_result"},
+                "config": self._reader_config,
+            },
+            {
+                "id": "kg_trainer",
+                "processor": "kg_trainer",
+                "requires": ["kg_triple_reader"],
+                "inputs": {
+                    "training": {"source": "reader_result", "fields": "training"},
+                    "validation": {"source": "reader_result", "fields": "validation"},
+                    "testing": {"source": "reader_result", "fields": "testing"},
+                },
+                "output": {"key": "trainer_result"},
+                "config": self._trainer_config,
+            },
+        ]
+
+        if self._storer_config is not None:
+            # Inherit store params from reader for graph DB writes
+            store_keys = (
+                "store_type", "neo4j_uri", "neo4j_user", "neo4j_password", "neo4j_database",
+                "falkordb_host", "falkordb_port", "falkordb_graph",
+                "memgraph_uri", "memgraph_user", "memgraph_password", "memgraph_database",
+            )
+            storer_full = dict(self._storer_config)
+            for key in store_keys:
+                if key not in storer_full and key in self._reader_config:
+                    storer_full[key] = self._reader_config[key]
+
+            nodes.append({
+                "id": "kg_embedding_storer",
+                "processor": "kg_embedding_storer",
+                "requires": ["kg_trainer"],
+                "inputs": {
+                    "model": {"source": "trainer_result", "fields": "model"},
+                    "entity_to_id": {"source": "reader_result", "fields": "entity_to_id"},
+                    "relation_to_id": {"source": "reader_result", "fields": "relation_to_id"},
+                },
+                "output": {"key": "storer_result"},
+                "config": storer_full,
             })
 
         return {

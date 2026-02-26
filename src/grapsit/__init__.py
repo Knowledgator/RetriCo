@@ -9,7 +9,7 @@ from . import modeling as _modeling  # noqa: F401
 
 from .core.dag import DAGExecutor, PipeContext
 from .core.factory import ProcessorFactory
-from .core.builders import BuildConfigBuilder, QueryConfigBuilder, IngestConfigBuilder, CommunityConfigBuilder
+from .core.builders import BuildConfigBuilder, QueryConfigBuilder, IngestConfigBuilder, CommunityConfigBuilder, KGModelingConfigBuilder
 from .models import Document, Chunk, Entity, EntityMention, Relation, KGTriple, Subgraph, QueryResult
 from .store.base import BaseGraphStore
 from .store.neo4j_store import Neo4jGraphStore
@@ -29,6 +29,7 @@ __all__ = [
     "query_graph",
     "ingest_data",
     "detect_communities",
+    "train_kg_model",
     # Core
     "DAGExecutor",
     "PipeContext",
@@ -37,6 +38,7 @@ __all__ = [
     "QueryConfigBuilder",
     "IngestConfigBuilder",
     "CommunityConfigBuilder",
+    "KGModelingConfigBuilder",
     # Models
     "Document",
     "Chunk",
@@ -233,6 +235,8 @@ def query_graph(
 
     # Strategies that need a parser
     _ENTITY_STRATEGIES = {"entity", "entity_embedding", "path"}
+    # kg_scored uses tool-calling parser (needs api_key, not entity_labels)
+    _TOOL_PARSER_STRATEGIES = {"kg_scored"}
 
     # Common store kwargs
     store_kwargs = dict(
@@ -250,7 +254,23 @@ def query_graph(
         memgraph_database=memgraph_database,
     )
 
-    if retrieval_strategy in _ENTITY_STRATEGIES:
+    if retrieval_strategy in _TOOL_PARSER_STRATEGIES:
+        if api_key is None:
+            raise ValueError(
+                f"api_key required for '{retrieval_strategy}' strategy."
+            )
+        parser_kwargs = {
+            "method": "tool",
+            "api_key": api_key,
+            "model": model,
+        }
+        if entity_labels:
+            parser_kwargs["labels"] = entity_labels
+        relation_labels = retriever_kwargs.get("relation_labels")
+        if relation_labels:
+            parser_kwargs["relation_labels"] = relation_labels
+        builder.query_parser(**parser_kwargs)
+    elif retrieval_strategy in _ENTITY_STRATEGIES:
         if entity_labels is None:
             raise ValueError(
                 f"entity_labels required for '{retrieval_strategy}' strategy."
@@ -297,14 +317,22 @@ def query_graph(
         builder.tool_retriever(**store_kwargs, **tool_kw)
     elif retrieval_strategy == "path":
         builder.path_retriever(**store_kwargs, **retriever_kwargs)
+    elif retrieval_strategy == "kg_scored":
+        # kg_scored: tool parser → kg_scorer (no separate retriever)
+        scorer_kw = dict(retriever_kwargs)
+        scorer_kw.update(store_kwargs)
+        builder.kg_scorer(**scorer_kw)
     else:
         raise ValueError(
             f"Unknown retrieval_strategy: {retrieval_strategy!r}. "
             "Expected 'entity', 'community', 'chunk_embedding', "
-            "'entity_embedding', 'tool', or 'path'."
+            "'entity_embedding', 'tool', 'path', or 'kg_scored'."
         )
 
-    builder.chunk_retriever()
+    chunk_kw = {}
+    if "chunk_entity_source" in retriever_kwargs:
+        chunk_kw["chunk_entity_source"] = retriever_kwargs["chunk_entity_source"]
+    builder.chunk_retriever(**chunk_kw)
 
     if api_key is not None:
         builder.reasoner(api_key=api_key, model=model)
@@ -317,6 +345,9 @@ def query_graph(
         return ctx.get("reasoner_result")["result"]
     elif ctx.has("chunk_result"):
         subgraph = ctx.get("chunk_result")["subgraph"]
+        return QueryResult(query=query, subgraph=subgraph)
+    elif ctx.has("kg_scorer_result"):
+        subgraph = ctx.get("kg_scorer_result")["subgraph"]
         return QueryResult(query=query, subgraph=subgraph)
     else:
         return QueryResult(query=query)
@@ -478,5 +509,102 @@ def detect_communities(
             vector_store_type=vector_store_type,
         )
 
+    executor = builder.build(verbose=verbose)
+    return executor.execute({})
+
+
+def train_kg_model(
+    *,
+    source: str = "graph_store",
+    tsv_path: str = None,
+    model: str = "RotatE",
+    embedding_dim: int = 128,
+    epochs: int = 100,
+    batch_size: int = 256,
+    lr: float = 0.001,
+    device: str = "cpu",
+    model_path: str = "kg_model",
+    vector_store_type: str = "in_memory",
+    store_to_graph: bool = False,
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.1,
+    test_ratio: float = 0.1,
+    neo4j_uri: str = "bolt://localhost:7687",
+    neo4j_user: str = "neo4j",
+    neo4j_password: str = "password",
+    neo4j_database: str = "neo4j",
+    store_type: str = "neo4j",
+    falkordb_host: str = "localhost",
+    falkordb_port: int = 6379,
+    falkordb_graph: str = "grapsit",
+    memgraph_uri: str = "bolt://localhost:7687",
+    memgraph_user: str = "",
+    memgraph_password: str = "",
+    memgraph_database: str = "memgraph",
+    verbose: bool = False,
+) -> PipeContext:
+    """Train KG embeddings using PyKEEN in one call.
+
+    Reads triples from the graph store (or TSV), trains a model, and stores
+    the resulting embeddings.
+
+    Args:
+        source: "graph_store" or "tsv".
+        tsv_path: Path to TSV file (if source="tsv").
+        model: PyKEEN model name (e.g. "RotatE", "TransE", "ComplEx").
+        embedding_dim: Embedding dimension.
+        epochs: Training epochs.
+        batch_size: Training batch size.
+        lr: Learning rate.
+        device: "cpu" or "cuda".
+        model_path: Directory to save model weights.
+        vector_store_type: "in_memory", "faiss", or "qdrant".
+        store_to_graph: Write entity embeddings to graph DB nodes.
+        train_ratio: Fraction of triples for training.
+        val_ratio: Fraction for validation.
+        test_ratio: Fraction for test.
+        neo4j_uri: Neo4j bolt URI.
+        neo4j_user: Neo4j user.
+        neo4j_password: Neo4j password.
+        neo4j_database: Neo4j database name.
+        store_type: Graph store backend.
+        verbose: Enable verbose logging.
+
+    Returns:
+        PipeContext with reader_result, trainer_result, storer_result.
+    """
+    builder = KGModelingConfigBuilder(name="train_kg_model")
+    builder.triple_reader(
+        source=source,
+        tsv_path=tsv_path,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        test_ratio=test_ratio,
+        store_type=store_type,
+        neo4j_uri=neo4j_uri,
+        neo4j_user=neo4j_user,
+        neo4j_password=neo4j_password,
+        neo4j_database=neo4j_database,
+        falkordb_host=falkordb_host,
+        falkordb_port=falkordb_port,
+        falkordb_graph=falkordb_graph,
+        memgraph_uri=memgraph_uri,
+        memgraph_user=memgraph_user,
+        memgraph_password=memgraph_password,
+        memgraph_database=memgraph_database,
+    )
+    builder.trainer(
+        model=model,
+        embedding_dim=embedding_dim,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        device=device,
+    )
+    builder.storer(
+        model_path=model_path,
+        vector_store_type=vector_store_type,
+        store_to_graph=store_to_graph,
+    )
     executor = builder.build(verbose=verbose)
     return executor.execute({})

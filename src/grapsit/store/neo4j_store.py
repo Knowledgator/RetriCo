@@ -471,6 +471,17 @@ class Neo4jGraphStore(BaseGraphStore):
             {"id": chunk_id, "embedding": embedding},
         )
 
+    def get_all_triples(self) -> list:
+        """Return all (head_label, relation_type, tail_label) triples."""
+        records = self._run(
+            """
+            MATCH (h:Entity)-[r]->(t:Entity)
+            WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF', 'CHILD_OF']
+            RETURN h.label AS head, type(r) AS rel, t.label AS tail
+            """
+        )
+        return [(r["head"], r["rel"], r["tail"]) for r in records]
+
     def get_inter_community_edges(self, community_memberships):
         # Get all entity-entity relationships and aggregate by community pair
         records = self._run(

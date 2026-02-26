@@ -52,6 +52,43 @@ PROPERTY_FILTER_SCHEMA: Dict[str, Any] = {
 # Built-in graph query tools (OpenAI function-calling format)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Triple query tool for tool-calling parser
+# ---------------------------------------------------------------------------
+
+TRIPLE_QUERY_TOOLS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_triples",
+            "description": (
+                "Search for knowledge graph triples. Specify head entity, "
+                "relation, and/or tail entity. Use null for unknown parts "
+                "you want to find."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "head": {
+                        "type": "string",
+                        "description": "Source entity label (or null if unknown).",
+                    },
+                    "relation": {
+                        "type": "string",
+                        "description": "Relation type (or null if unknown).",
+                    },
+                    "tail": {
+                        "type": "string",
+                        "description": "Target entity label (or null if unknown).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+]
+
+
 GRAPH_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
