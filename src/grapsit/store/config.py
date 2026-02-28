@@ -331,3 +331,149 @@ def resolve_vector_store_config(
 def extract_vector_store_kwargs(kwargs: dict) -> dict:
     """Pop vector-store-related keys from a kwargs dict, returning them separately."""
     return {k: kwargs.pop(k) for k in list(kwargs) if k in _VECTOR_STORE_FLAT_KEYS}
+
+
+# ============================================================================
+# Relational store configs
+# ============================================================================
+
+
+# All known flat-dict keys for relational store params
+_RELATIONAL_STORE_FLAT_KEYS = frozenset({
+    "relational_store_type", "relational_store_name",
+    "sqlite_path",
+    "postgres_host", "postgres_port", "postgres_user", "postgres_password", "postgres_database",
+    "elasticsearch_url", "elasticsearch_api_key", "elasticsearch_index_prefix",
+})
+
+
+class BaseRelationalStoreConfig(BaseModel):
+    """Base class for all relational store configurations."""
+
+    relational_store_type: str
+    name: str = "default"
+
+    def to_flat_dict(self) -> dict:
+        """Serialize to flat dict for backward compat."""
+        raise NotImplementedError
+
+    @classmethod
+    def from_flat_dict(cls, d: dict) -> "BaseRelationalStoreConfig":
+        """Create from a flat dict (auto-detect relational_store_type)."""
+        rtype = d.get("relational_store_type", "sqlite")
+        name = d.get("relational_store_name", "default")
+        if rtype == "sqlite":
+            cfg = SqliteRelationalConfig.from_flat_dict(d)
+        elif rtype == "postgres":
+            cfg = PostgresRelationalConfig.from_flat_dict(d)
+        elif rtype == "elasticsearch":
+            cfg = ElasticsearchRelationalConfig.from_flat_dict(d)
+        else:
+            raise ValueError(f"Unknown relational_store_type: {rtype!r}")
+        cfg.name = name
+        return cfg
+
+
+class SqliteRelationalConfig(BaseRelationalStoreConfig):
+    """Configuration for SQLite relational store."""
+
+    relational_store_type: str = "sqlite"
+    path: str = ":memory:"
+
+    def to_flat_dict(self) -> dict:
+        d: dict = {
+            "relational_store_type": self.relational_store_type,
+            "sqlite_path": self.path,
+        }
+        if self.name != "default":
+            d["relational_store_name"] = self.name
+        return d
+
+    @classmethod
+    def from_flat_dict(cls, d: dict) -> "SqliteRelationalConfig":
+        return cls(
+            path=d.get("sqlite_path", ":memory:"),
+            name=d.get("relational_store_name", "default"),
+        )
+
+
+class PostgresRelationalConfig(BaseRelationalStoreConfig):
+    """Configuration for PostgreSQL relational store."""
+
+    relational_store_type: str = "postgres"
+    host: str = "localhost"
+    port: int = 5432
+    user: str = "postgres"
+    password: str = ""
+    database: str = "grapsit"
+
+    def to_flat_dict(self) -> dict:
+        d: dict = {
+            "relational_store_type": self.relational_store_type,
+            "postgres_host": self.host,
+            "postgres_port": self.port,
+            "postgres_user": self.user,
+            "postgres_password": self.password,
+            "postgres_database": self.database,
+        }
+        if self.name != "default":
+            d["relational_store_name"] = self.name
+        return d
+
+    @classmethod
+    def from_flat_dict(cls, d: dict) -> "PostgresRelationalConfig":
+        return cls(
+            host=d.get("postgres_host", "localhost"),
+            port=d.get("postgres_port", 5432),
+            user=d.get("postgres_user", "postgres"),
+            password=d.get("postgres_password", ""),
+            database=d.get("postgres_database", "grapsit"),
+            name=d.get("relational_store_name", "default"),
+        )
+
+
+class ElasticsearchRelationalConfig(BaseRelationalStoreConfig):
+    """Configuration for Elasticsearch relational store."""
+
+    relational_store_type: str = "elasticsearch"
+    url: str = "http://localhost:9200"
+    api_key: Optional[str] = None
+    index_prefix: str = "grapsit_"
+
+    def to_flat_dict(self) -> dict:
+        d: dict = {
+            "relational_store_type": self.relational_store_type,
+            "elasticsearch_url": self.url,
+            "elasticsearch_index_prefix": self.index_prefix,
+        }
+        if self.api_key is not None:
+            d["elasticsearch_api_key"] = self.api_key
+        if self.name != "default":
+            d["relational_store_name"] = self.name
+        return d
+
+    @classmethod
+    def from_flat_dict(cls, d: dict) -> "ElasticsearchRelationalConfig":
+        return cls(
+            url=d.get("elasticsearch_url", "http://localhost:9200"),
+            api_key=d.get("elasticsearch_api_key"),
+            index_prefix=d.get("elasticsearch_index_prefix", "grapsit_"),
+            name=d.get("relational_store_name", "default"),
+        )
+
+
+def resolve_relational_store_config(
+    config: Optional[BaseRelationalStoreConfig] = None,
+    **kwargs,
+) -> BaseRelationalStoreConfig:
+    """Resolve a relational store config from explicit config object or kwargs."""
+    if config is not None and not kwargs:
+        return config
+    flat = config.to_flat_dict() if config else {}
+    flat.update({k: v for k, v in kwargs.items() if k in _RELATIONAL_STORE_FLAT_KEYS})
+    return BaseRelationalStoreConfig.from_flat_dict(flat)
+
+
+def extract_relational_store_kwargs(kwargs: dict) -> dict:
+    """Pop relational-store-related keys from a kwargs dict, returning them separately."""
+    return {k: kwargs.pop(k) for k in list(kwargs) if k in _RELATIONAL_STORE_FLAT_KEYS}

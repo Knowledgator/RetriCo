@@ -9,7 +9,7 @@ from grapsit.core.builders import BuildConfigBuilder
 
 
 class TestBuildPipeline:
-    @patch("grapsit.construct.graph_writer.create_store")
+    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
     @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
     def test_full_pipeline_ner_only(self, mock_ner_load, mock_create_store):
         """Test chunker -> NER -> graph_writer (no relex)."""
@@ -40,7 +40,7 @@ class TestBuildPipeline:
         assert writer_result["entity_count"] >= 1
         assert writer_result["chunk_count"] >= 1
 
-    @patch("grapsit.construct.graph_writer.create_store")
+    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
     @patch("grapsit.construct.relex_gliner.RelexGLiNERProcessor._load_model")
     @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
     def test_full_pipeline_with_relex(self, mock_ner_load, mock_relex_load, mock_create_store):
@@ -98,7 +98,7 @@ class TestBuildPipeline:
         assert writer_result["entity_count"] >= 2
         assert writer_result["relation_count"] >= 1
 
-    @patch("grapsit.construct.graph_writer.create_store")
+    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
     def test_llm_pipeline_ner_and_relex(self, mock_create_store):
         """Test chunker -> ner_llm -> relex_llm -> graph_writer."""
         mock_store = MagicMock()
@@ -142,7 +142,7 @@ class TestBuildPipeline:
         assert writer_result["entity_count"] >= 2
         assert writer_result["relation_count"] >= 1
 
-    @patch("grapsit.construct.graph_writer.create_store")
+    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
     @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
     def test_mixed_pipeline_gliner_ner_llm_relex(self, mock_ner_load, mock_create_store):
         """Test chunker -> ner_gliner -> relex_llm -> graph_writer."""
@@ -193,7 +193,7 @@ class TestBuildPipeline:
         assert writer_result["entity_count"] >= 2
         assert writer_result["relation_count"] >= 1
 
-    @patch("grapsit.construct.graph_writer.create_store")
+    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
     def test_llm_relex_standalone(self, mock_create_store):
         """Test chunker -> relex_llm (standalone, no NER) -> graph_writer."""
         mock_store = MagicMock()

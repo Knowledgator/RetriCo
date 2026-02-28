@@ -162,7 +162,7 @@ class TestIngestConfigBuilder:
     def test_build_creates_executor(self):
         builder = IngestConfigBuilder()
         builder.graph_writer(setup_indexes=False)
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
             executor = builder.build()
@@ -185,7 +185,7 @@ class TestIngestIntegration:
     """Integration test: data_ingest -> graph_writer with mocked store."""
 
     def test_full_ingest_pipeline(self):
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
@@ -215,7 +215,7 @@ class TestIngestIntegration:
             assert mock_store.write_relation.call_count == 2
 
     def test_ingest_entities_only(self):
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
@@ -235,7 +235,7 @@ class TestIngestIntegration:
             assert result["relation_count"] == 0
 
     def test_ingest_with_entity_ids(self):
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
@@ -256,7 +256,7 @@ class TestIngestIntegration:
             assert result["entity_count"] == 1
 
     def test_convenience_function(self):
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
@@ -281,7 +281,7 @@ class TestJsonExport:
 
     def test_json_output_creates_file(self, tmp_path):
         json_path = str(tmp_path / "output.json")
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
@@ -317,7 +317,7 @@ class TestJsonExport:
 
     def test_json_output_entities_only(self, tmp_path):
         json_path = str(tmp_path / "entities_only.json")
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
@@ -338,7 +338,7 @@ class TestJsonExport:
 
     def test_json_output_with_entity_ids(self, tmp_path):
         json_path = str(tmp_path / "with_ids.json")
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
@@ -363,7 +363,7 @@ class TestJsonExport:
 
     def test_json_output_skips_unresolved_relations(self, tmp_path):
         json_path = str(tmp_path / "unresolved.json")
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
@@ -386,7 +386,7 @@ class TestJsonExport:
             assert len(data["relations"]) == 0
 
     def test_json_output_no_file_when_not_configured(self, tmp_path):
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
@@ -404,7 +404,7 @@ class TestJsonExport:
 
     def test_json_output_creates_parent_dirs(self, tmp_path):
         json_path = str(tmp_path / "sub" / "dir" / "output.json")
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
@@ -424,7 +424,7 @@ class TestJsonExport:
     def test_json_is_ingest_compatible(self, tmp_path):
         """Verify the JSON output can be fed back into ingest_data()."""
         json_path = str(tmp_path / "roundtrip.json")
-        with patch("grapsit.construct.graph_writer.create_store") as mock_cs:
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 

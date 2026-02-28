@@ -36,11 +36,31 @@ class GraphWriterProcessor(BaseProcessor):
         super().__init__(config_dict, pipeline)
         self.store = resolve_from_pool_or_create(config_dict, "graph")
         self.json_output = config_dict.get("json_output", None)
+        self.chunk_table = config_dict.get("chunk_table", "chunks")
+        self.document_table = config_dict.get("document_table", "documents")
         if config_dict.get("setup_indexes", True):
             try:
                 self.store.setup_indexes()
             except Exception as e:
                 logger.warning(f"Could not setup indexes: {e}")
+        # Optional relational store for chunk/document storage
+        self.relational_store = None
+        if self._has_relational_config(config_dict):
+            try:
+                self.relational_store = resolve_from_pool_or_create(config_dict, "relational")
+            except (ValueError, KeyError) as e:
+                logger.debug(f"No relational store configured: {e}")
+
+    @staticmethod
+    def _has_relational_config(config_dict: dict) -> bool:
+        """Check if config contains relational store configuration."""
+        if config_dict.get("relational_store_type"):
+            return True
+        pool = config_dict.get("__store_pool__")
+        if pool is not None:
+            name = config_dict.get("relational_store_name", "default")
+            return pool.has_relational(name)
+        return False
 
     def __call__(
         self,
@@ -141,6 +161,10 @@ class GraphWriterProcessor(BaseProcessor):
                         f"head_found={head_entity is not None}, tail_found={tail_entity is not None}"
                     )
 
+        # 6. Write chunks/documents to relational store (if configured)
+        if self.relational_store is not None:
+            self._write_to_relational(documents, chunks)
+
         result = {
             "entity_count": len(entity_map),
             "relation_count": rel_count,
@@ -157,6 +181,39 @@ class GraphWriterProcessor(BaseProcessor):
             self._save_json(entity_map, text_to_entity, relations)
 
         return result
+
+    def _write_to_relational(
+        self,
+        documents: List[Document],
+        chunks: List[Chunk],
+    ) -> None:
+        """Write documents and chunks to the relational store."""
+        if documents:
+            doc_records = []
+            for doc in documents:
+                record: Dict[str, Any] = {"id": doc.id, "source": doc.source}
+                if doc.metadata:
+                    record["metadata"] = json.dumps(doc.metadata)
+                doc_records.append(record)
+            self.relational_store.write_records(self.document_table, doc_records)
+
+        if chunks:
+            chunk_records = []
+            for chunk in chunks:
+                chunk_records.append({
+                    "id": chunk.id,
+                    "document_id": chunk.document_id or "",
+                    "text": chunk.text,
+                    "index": chunk.index,
+                    "start_char": chunk.start_char,
+                    "end_char": chunk.end_char,
+                })
+            self.relational_store.write_records(self.chunk_table, chunk_records)
+
+        logger.debug(
+            f"Relational store: wrote {len(documents)} documents to "
+            f"'{self.document_table}', {len(chunks)} chunks to '{self.chunk_table}'"
+        )
 
     def _save_json(
         self,

@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 
-from grapsit.store.vector_memory import InMemoryVectorStore
+from grapsit.store.vector.memory import InMemoryVectorStore
 from grapsit.store.vector import create_vector_store
 
 
@@ -192,5 +192,5 @@ class TestCreateVectorStore:
         store.close()
 
     def test_unknown_type_raises(self):
-        with pytest.raises(ValueError, match="Unknown vector_store_type"):
+        with pytest.raises(KeyError, match="Unknown vector_store type"):
             create_vector_store({"vector_store_type": "weaviate"})

@@ -65,6 +65,7 @@ def register_relational_store(name: str, factory):
 __all__ = [
     # Public API
     "build_graph",
+    "build_graph_from_store",
     "query_graph",
     "ingest_data",
     "detect_communities",
@@ -232,6 +233,120 @@ def build_graph(
 
     executor = builder.build(verbose=verbose)
     return executor.execute({"texts": texts})
+
+
+def build_graph_from_store(
+    *,
+    table: str = "documents",
+    text_field: str = "text",
+    id_field: str = "id",
+    metadata_fields: List[str] = None,
+    limit: int = 0,
+    offset: int = 0,
+    filter_empty: bool = True,
+    entity_labels: List[str],
+    relation_labels: List[str] = None,
+    relational_store_type: str = "sqlite",
+    sqlite_path: str = ":memory:",
+    postgres_host: str = "localhost",
+    postgres_port: int = 5432,
+    postgres_user: str = "postgres",
+    postgres_password: str = "",
+    postgres_database: str = "grapsit",
+    elasticsearch_url: str = "http://localhost:9200",
+    elasticsearch_api_key: str = None,
+    elasticsearch_index_prefix: str = "grapsit_",
+    ner_model: str = "urchade/gliner_multi-v2.1",
+    relex_model: str = "knowledgator/gliner-relex-large-v0.5",
+    ner_threshold: float = 0.3,
+    relex_threshold: float = 0.5,
+    chunk_method: str = "sentence",
+    device: str = "cpu",
+    verbose: bool = False,
+    json_output: str = None,
+    store_type: str = "neo4j",
+    neo4j_uri: str = "bolt://localhost:7687",
+    neo4j_user: str = "neo4j",
+    neo4j_password: str = "password",
+    neo4j_database: str = "neo4j",
+    store_config: BaseStoreConfig = None,
+) -> PipeContext:
+    """Build a knowledge graph from texts stored in a relational database.
+
+    Reads records from the configured relational store, extracts texts,
+    and runs the standard build pipeline (chunker -> NER -> relex -> graph_writer).
+
+    Args:
+        table: Table/collection to read from.
+        text_field: Column containing the text.
+        id_field: Column used as document source/ID.
+        metadata_fields: Extra columns to include in Document metadata.
+        limit: Max records to fetch (0 = all).
+        offset: Records to skip.
+        filter_empty: Skip records with empty/missing text.
+        entity_labels: Entity types for NER.
+        relation_labels: Relation types for extraction. If None, relex is skipped.
+        relational_store_type: Relational backend ("sqlite", "postgres", "elasticsearch").
+        ner_model: GLiNER model for NER.
+        relex_model: GLiNER-relex model for relation extraction.
+        chunk_method: "sentence", "paragraph", or "fixed".
+        device: "cpu" or "cuda".
+        verbose: Enable verbose logging.
+        json_output: Path to save extracted data as JSON.
+        store_config: A BaseStoreConfig for the graph store. Overrides individual params.
+
+    Returns:
+        PipeContext with all intermediate results.
+    """
+    if store_config is None:
+        store_config = resolve_store_config(
+            store_type=store_type, neo4j_uri=neo4j_uri, neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password, neo4j_database=neo4j_database,
+        )
+
+    builder = BuildConfigBuilder(name="build_graph_from_store")
+    builder.store(store_config)
+
+    # Configure relational store for store_reader
+    relational_kwargs = {"relational_store_type": relational_store_type}
+    if relational_store_type == "sqlite":
+        relational_kwargs["sqlite_path"] = sqlite_path
+    elif relational_store_type == "postgres":
+        relational_kwargs.update({
+            "postgres_host": postgres_host, "postgres_port": postgres_port,
+            "postgres_user": postgres_user, "postgres_password": postgres_password,
+            "postgres_database": postgres_database,
+        })
+    elif relational_store_type == "elasticsearch":
+        relational_kwargs.update({
+            "elasticsearch_url": elasticsearch_url,
+            "elasticsearch_api_key": elasticsearch_api_key,
+            "elasticsearch_index_prefix": elasticsearch_index_prefix,
+        })
+    builder.chunk_store(**relational_kwargs)
+
+    builder.store_reader(
+        table=table, text_field=text_field, id_field=id_field,
+        metadata_fields=metadata_fields, limit=limit, offset=offset,
+        filter_empty=filter_empty,
+    )
+    builder.chunker(method=chunk_method)
+    builder.ner_gliner(
+        model=ner_model, labels=entity_labels,
+        threshold=ner_threshold, device=device,
+    )
+
+    if relation_labels:
+        builder.relex_gliner(
+            model=relex_model, entity_labels=entity_labels,
+            relation_labels=relation_labels, threshold=relex_threshold,
+            device=device,
+        )
+
+    builder.graph_writer(json_output=json_output)
+
+    executor = builder.build(verbose=verbose)
+    return executor.execute({})
 
 
 def query_graph(

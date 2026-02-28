@@ -176,12 +176,12 @@ class TestCommunityDetector:
 
         assert processor._store is None
 
-        with patch("grapsit.modeling.community.create_store") as mock_create:
+        with patch("grapsit.modeling.community.resolve_from_pool_or_create") as mock_create:
             mock_store = MagicMock()
             mock_store.detect_communities.return_value = {}
             mock_create.return_value = mock_store
             processor()
-            mock_create.assert_called_once_with(config)
+            mock_create.assert_called_once_with(config, "graph")
 
 
 # ---------------------------------------------------------------------------
@@ -418,11 +418,9 @@ class TestCommunityEmbedder:
 
         assert processor._vector_store is None
 
-        with patch("grapsit.modeling.community.create_vector_store") as mock_create:
+        with patch("grapsit.modeling.community.resolve_from_pool_or_create") as mock_create:
             processor._ensure_vector_store()
-            mock_create.assert_called_once()
-            call_config = mock_create.call_args[0][0]
-            assert call_config["vector_store_type"] == "faiss"
+            mock_create.assert_called_once_with(config, "vector")
 
 
 # ---------------------------------------------------------------------------
@@ -597,11 +595,14 @@ class TestDetectCommunitiesConvenience:
             )
 
             MockBuilder.assert_called_once_with(name="detect_communities")
+            # Store config is set via builder.store() now
+            mock_builder.store.assert_called_once()
+            store_arg = mock_builder.store.call_args[0][0]
+            assert store_arg.uri == "bolt://test:7687"
             mock_builder.detector.assert_called_once()
             detector_kwargs = mock_builder.detector.call_args
             assert detector_kwargs.kwargs["method"] == "louvain"
             assert detector_kwargs.kwargs["levels"] == 2
-            assert detector_kwargs.kwargs["neo4j_uri"] == "bolt://test:7687"
 
             # No api_key → no summarizer/embedder
             mock_builder.summarizer.assert_not_called()
@@ -643,20 +644,20 @@ class TestStoreNewMethods:
     """Test new store methods on BaseGraphStore (default NotImplementedError)."""
 
     def test_base_store_write_community_hierarchy(self):
-        from grapsit.store.base import BaseGraphStore
+        from grapsit.store.graph.base import BaseGraphStore
         # Can't instantiate ABC, but can test the method exists
         assert hasattr(BaseGraphStore, "write_community_hierarchy")
 
     def test_base_store_get_top_entities_by_degree(self):
-        from grapsit.store.base import BaseGraphStore
+        from grapsit.store.graph.base import BaseGraphStore
         assert hasattr(BaseGraphStore, "get_top_entities_by_degree")
 
     def test_base_store_update_community_embedding(self):
-        from grapsit.store.base import BaseGraphStore
+        from grapsit.store.graph.base import BaseGraphStore
         assert hasattr(BaseGraphStore, "update_community_embedding")
 
     def test_base_store_get_inter_community_edges(self):
-        from grapsit.store.base import BaseGraphStore
+        from grapsit.store.graph.base import BaseGraphStore
         assert hasattr(BaseGraphStore, "get_inter_community_edges")
 
 
@@ -665,7 +666,7 @@ class TestNeo4jStoreNewMethods:
 
     @pytest.fixture
     def neo4j_store(self):
-        from grapsit.store.neo4j_store import Neo4jGraphStore
+        from grapsit.store.graph.neo4j_store import Neo4jGraphStore
         store = Neo4jGraphStore.__new__(Neo4jGraphStore)
         store.uri = "bolt://test:7687"
         store.user = "neo4j"

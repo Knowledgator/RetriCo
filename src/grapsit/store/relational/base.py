@@ -53,6 +53,22 @@ class BaseRelationalStore(ABC):
         ...
 
     @abstractmethod
+    def get_all_records(
+        self, table: str, limit: int = 0, offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve all records from a table with optional pagination.
+
+        Args:
+            table: Table/collection name.
+            limit: Maximum number of records to return (0 = no limit).
+            offset: Number of records to skip.
+
+        Returns:
+            List of record dicts.
+        """
+        ...
+
+    @abstractmethod
     def delete_records(self, table: str, record_ids: List[str]):
         """Delete records by ID.
 

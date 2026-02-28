@@ -19,6 +19,9 @@ from .vector.base import BaseVectorStore
 # -- Relational stores (new in store/relational/) ----------------------------
 from .relational import create_relational_store, relational_store_registry
 from .relational.base import BaseRelationalStore
+from .relational.sqlite_store import SqliteRelationalStore
+from .relational.postgres_store import PostgresRelationalStore
+from .relational.elasticsearch_store import ElasticsearchRelationalStore
 
 # -- Registry class ----------------------------------------------------------
 from .registry import StoreRegistry
@@ -30,6 +33,9 @@ from .config import (
     BaseVectorStoreConfig, InMemoryVectorConfig, FaissVectorConfig,
     QdrantVectorConfig, GraphDBVectorConfig,
     resolve_vector_store_config, extract_vector_store_kwargs,
+    BaseRelationalStoreConfig, SqliteRelationalConfig,
+    PostgresRelationalConfig, ElasticsearchRelationalConfig,
+    resolve_relational_store_config, extract_relational_store_kwargs,
 )
 
 # -- Pool --------------------------------------------------------------------
@@ -53,6 +59,9 @@ __all__ = [
     "vector_store_registry",
     # Relational stores
     "BaseRelationalStore",
+    "SqliteRelationalStore",
+    "PostgresRelationalStore",
+    "ElasticsearchRelationalStore",
     "create_relational_store",
     "relational_store_registry",
     # Registry
@@ -72,6 +81,13 @@ __all__ = [
     "GraphDBVectorConfig",
     "resolve_vector_store_config",
     "extract_vector_store_kwargs",
+    # Relational store configs
+    "BaseRelationalStoreConfig",
+    "SqliteRelationalConfig",
+    "PostgresRelationalConfig",
+    "ElasticsearchRelationalConfig",
+    "resolve_relational_store_config",
+    "extract_relational_store_kwargs",
     # Pool
     "StorePool",
     "resolve_from_pool_or_create",

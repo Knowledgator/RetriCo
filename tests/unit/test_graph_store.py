@@ -29,7 +29,7 @@ class TestNeo4jGraphStore:
         mock_neo4j_store.write_relation(rel, "e1", "e2")
 
     def test_sanitize_label(self):
-        from grapsit.store.neo4j_store import _sanitize_label
+        from grapsit.store.graph.neo4j_store import _sanitize_label
         assert _sanitize_label("born in") == "BORN_IN"
         assert _sanitize_label("works-at") == "WORKS_AT"
         assert _sanitize_label("123test") == "_123TEST"
@@ -86,7 +86,7 @@ class TestBaseGraphStoreDefaults:
     """Verify new methods raise NotImplementedError on a minimal concrete subclass."""
 
     def _make_store(self):
-        from grapsit.store.base import BaseGraphStore
+        from grapsit.store.graph.base import BaseGraphStore
 
         class MinimalStore(BaseGraphStore):
             def setup_indexes(self): pass

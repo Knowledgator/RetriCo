@@ -10,6 +10,7 @@ from .dag import DAGExecutor
 from ..store.config import (
     BaseStoreConfig, Neo4jConfig,
     BaseVectorStoreConfig,
+    BaseRelationalStoreConfig,
     resolve_store_config, extract_store_kwargs, _STORE_FLAT_KEYS,
 )
 from ..store.pool import StorePool
@@ -55,6 +56,7 @@ class _BuilderBase:
         # Named store registries for the pool
         self._graph_stores: Dict[str, dict] = {}
         self._vector_stores: Dict[str, dict] = {}
+        self._relational_stores: Dict[str, dict] = {}
 
     # -- store setters -------------------------------------------------------
 
@@ -108,19 +110,30 @@ class _BuilderBase:
 
     def chunk_store(
         self,
+        config: BaseRelationalStoreConfig = None,
         type: str = "sqlite",
+        name: str = "default",
         **kwargs,
     ) -> "_BuilderBase":
-        """Set builder-level chunk/document store config (planned).
+        """Set builder-level chunk/document store config.
 
-        Components that need a chunk store (keyword retriever, chunk retriever)
+        Components that need a chunk store (graph_writer, keyword_retriever)
         inherit this unless overridden.
 
         Args:
-            type: Chunk store backend — ``"sqlite"`` or ``"postgres"``.
-            **kwargs: Backend-specific params (e.g. ``path``, ``dsn``).
+            config: A ``BaseRelationalStoreConfig`` subclass.
+            type: Relational store backend — ``"sqlite"``, ``"postgres"``, or ``"elasticsearch"``.
+            name: Pool name for the store (default: from config or ``"default"``).
+            **kwargs: Backend-specific params (e.g. ``sqlite_path``, ``postgres_host``).
         """
-        self._chunk_store_config = {"chunk_store_type": type, **kwargs}
+        if isinstance(config, BaseRelationalStoreConfig):
+            pool_name = name if name != "default" else config.name
+            flat = config.to_flat_dict()
+        else:
+            pool_name = name
+            flat = {"relational_store_type": type, **kwargs}
+        self._chunk_store_config = flat
+        self._relational_stores[pool_name] = flat
         return self
 
     # -- internal helpers ----------------------------------------------------
@@ -145,6 +158,12 @@ class _BuilderBase:
         base.update(overrides)
         return base
 
+    def _effective_relational_store(self, **overrides) -> dict:
+        """Resolve relational store config: explicit overrides > builder-level > empty."""
+        base = dict(self._chunk_store_config) if self._chunk_store_config else {}
+        base.update(overrides)
+        return base
+
     def _inherit_store(self, source_config: dict, target_config: dict):
         """Inherit store keys from source into target (if not already set)."""
         for key in _STORE_FLAT_KEYS:
@@ -163,13 +182,15 @@ class _BuilderBase:
 
     def _build_pool(self) -> Optional[StorePool]:
         """Build a StorePool from registered named stores (if any)."""
-        if not self._graph_stores and not self._vector_stores:
+        if not self._graph_stores and not self._vector_stores and not self._relational_stores:
             return None
         pool = StorePool()
         for name, cfg in self._graph_stores.items():
             pool.register_graph(name, cfg)
         for name, cfg in self._vector_stores.items():
             pool.register_vector(name, cfg)
+        for name, cfg in self._relational_stores.items():
+            pool.register_relational(name, cfg)
         return pool
 
     def save(self, filepath: str) -> None:
@@ -186,6 +207,8 @@ class _BuilderBase:
             stores["graph"] = dict(self._graph_stores)
         if self._vector_stores:
             stores["vector"] = dict(self._vector_stores)
+        if self._relational_stores:
+            stores["relational"] = dict(self._relational_stores)
         return stores or None
 
     def get_config(self) -> Dict[str, Any]:
@@ -235,6 +258,8 @@ class _GraphWriterMixin:
         store_config: BaseStoreConfig = None,
         setup_indexes: bool = True,
         json_output: str = None,
+        chunk_table: str = None,
+        document_table: str = None,
         **kwargs,
     ):
         store = self._effective_store(store_config, **kwargs) or Neo4jConfig()
@@ -242,6 +267,16 @@ class _GraphWriterMixin:
         self._writer_config["setup_indexes"] = setup_indexes
         if json_output is not None:
             self._writer_config["json_output"] = json_output
+        if chunk_table is not None:
+            self._writer_config["chunk_table"] = chunk_table
+        if document_table is not None:
+            self._writer_config["document_table"] = document_table
+        # Merge relational store config so graph_writer can create/resolve it
+        relational = self._effective_relational_store()
+        if relational:
+            for k, v in relational.items():
+                if k not in self._writer_config:
+                    self._writer_config[k] = v
         self._writer_config.update(kwargs)
         return self
 
@@ -308,6 +343,7 @@ class BuildConfigBuilder(_BuilderBase,
 
     def __init__(self, name: str = "build_pipeline", description: str = None):
         super().__init__(name, description)
+        self._store_reader_config: Optional[Dict[str, Any]] = None
         self._chunker_config: Optional[Dict[str, Any]] = None
         self._ner_config: Optional[Dict[str, Any]] = None
         self._ner_type: str = "ner_gliner"
@@ -318,6 +354,44 @@ class BuildConfigBuilder(_BuilderBase,
         self._writer_config: Optional[Dict[str, Any]] = None
         self._chunk_embedder_config: Optional[Dict[str, Any]] = None
         self._entity_embedder_config: Optional[Dict[str, Any]] = None
+
+    def store_reader(
+        self,
+        table: str = "documents",
+        text_field: str = "text",
+        id_field: str = "id",
+        metadata_fields: List[str] = None,
+        limit: int = 0,
+        offset: int = 0,
+        filter_empty: bool = True,
+        **kwargs,
+    ) -> "BuildConfigBuilder":
+        """Configure a store_reader node that pulls texts from a relational store.
+
+        When set, the chunker reads from the store_reader output instead of ``$input``.
+
+        Args:
+            table: Table/collection name to read from.
+            text_field: Column containing the text.
+            id_field: Column used as document source/ID.
+            metadata_fields: Extra columns to include in Document metadata.
+            limit: Max records (0 = all).
+            offset: Records to skip.
+            filter_empty: Skip records with empty/missing text.
+            **kwargs: Relational store overrides (``relational_store_type``, etc.).
+        """
+        relational = self._effective_relational_store(**kwargs)
+        self._store_reader_config = {
+            "table": table,
+            "text_field": text_field,
+            "id_field": id_field,
+            "metadata_fields": metadata_fields or [],
+            "limit": limit,
+            "offset": offset,
+            "filter_empty": filter_empty,
+            **relational,
+        }
+        return self
 
     def chunker(
         self,
@@ -438,17 +512,41 @@ class BuildConfigBuilder(_BuilderBase,
         if not self._writer_config:
             self._writer_config = {}
 
-        nodes = [
-            {
-                "id": "chunker",
-                "processor": "chunker",
-                "inputs": {
-                    "texts": {"source": "$input", "fields": "texts"},
-                },
-                "output": {"key": "chunker_result"},
-                "config": self._chunker_config,
-            },
-        ]
+        has_store_reader = self._store_reader_config is not None
+        nodes: List[Dict[str, Any]] = []
+
+        if has_store_reader:
+            nodes.append({
+                "id": "store_reader",
+                "processor": "store_reader",
+                "inputs": {},
+                "output": {"key": "store_reader_result"},
+                "config": self._store_reader_config,
+            })
+
+        # Chunker reads from store_reader when present, else from $input
+        if has_store_reader:
+            chunker_inputs = {
+                "texts": {"source": "store_reader_result", "fields": "texts"},
+                "documents": {"source": "store_reader_result", "fields": "documents"},
+            }
+            chunker_requires = ["store_reader"]
+        else:
+            chunker_inputs = {
+                "texts": {"source": "$input", "fields": "texts"},
+            }
+            chunker_requires = []
+
+        chunker_node: Dict[str, Any] = {
+            "id": "chunker",
+            "processor": "chunker",
+            "inputs": chunker_inputs,
+            "output": {"key": "chunker_result"},
+            "config": self._chunker_config,
+        }
+        if chunker_requires:
+            chunker_node["requires"] = chunker_requires
+        nodes.append(chunker_node)
 
         has_ner = self._ner_config is not None
         has_linker = self._has_linker
@@ -869,6 +967,48 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         self._retriever_config.update({
             "max_path_length": max_path_length,
             "max_pairs": max_pairs,
+        })
+        self._retriever_config.update(kwargs)
+        return self
+
+    def keyword_retriever(
+        self,
+        top_k: int = 10,
+        chunk_table: str = "chunks",
+        relational_store_type: str = "sqlite",
+        expand_entities: bool = False,
+        max_hops: int = 1,
+        store_config: BaseStoreConfig = None,
+        **kwargs,
+    ) -> "QueryConfigBuilder":
+        """Configure keyword (full-text search) retrieval strategy.
+
+        By default returns matched chunks directly (no graph store needed).
+        Set ``expand_entities=True`` to also look up entities in matched chunks
+        and build a full subgraph via the graph store.
+
+        Args:
+            top_k: Number of chunks to retrieve.
+            chunk_table: Table name for chunk records in the relational store.
+            relational_store_type: Backend type (``"sqlite"``, ``"postgres"``, ``"elasticsearch"``).
+            expand_entities: Look up entities in matched chunks and build a
+                subgraph via graph store (default: ``False``).
+            max_hops: Subgraph expansion depth when ``expand_entities=True``.
+            store_config: Explicit graph store config (only used when
+                ``expand_entities=True``).
+            **kwargs: Additional config keys (e.g. ``sqlite_path``, graph store overrides).
+        """
+        self._retriever_type = "keyword_retriever"
+        if expand_entities:
+            self._retriever_config = self._effective_store_flat(store_config, **kwargs)
+        else:
+            self._retriever_config = {}
+        self._retriever_config.update({
+            "top_k": top_k,
+            "chunk_table": chunk_table,
+            "relational_store_type": relational_store_type,
+            "expand_entities": expand_entities,
+            "max_hops": max_hops,
         })
         self._retriever_config.update(kwargs)
         return self

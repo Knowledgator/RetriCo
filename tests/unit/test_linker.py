@@ -290,7 +290,7 @@ class TestEntityLinkerProcessor:
             mock_executor = MagicMock()
             mock_glinker.ProcessorFactory.create_simple.return_value = mock_executor
 
-            with patch("grapsit.store.neo4j_store.GraphDatabase") as mock_gdb:
+            with patch("grapsit.store.graph.neo4j_store.GraphDatabase") as mock_gdb:
                 mock_driver = MagicMock()
                 mock_session = MagicMock()
 

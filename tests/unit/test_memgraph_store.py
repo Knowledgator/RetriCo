@@ -9,7 +9,7 @@ from grapsit.models.entity import Entity
 @pytest.fixture
 def mock_memgraph_store():
     """A mocked MemgraphGraphStore."""
-    from grapsit.store.memgraph_store import MemgraphGraphStore
+    from grapsit.store.graph.memgraph_store import MemgraphGraphStore
     store = MemgraphGraphStore(uri="bolt://localhost:7687")
 
     mock_session = MagicMock()
@@ -29,19 +29,19 @@ def mock_memgraph_store():
 
 class TestMemgraphInheritance:
     def test_is_subclass_of_neo4j(self):
-        from grapsit.store.neo4j_store import Neo4jGraphStore
-        from grapsit.store.memgraph_store import MemgraphGraphStore
+        from grapsit.store.graph.neo4j_store import Neo4jGraphStore
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
         assert issubclass(MemgraphGraphStore, Neo4jGraphStore)
 
     def test_is_subclass_of_base(self):
-        from grapsit.store.base import BaseGraphStore
-        from grapsit.store.memgraph_store import MemgraphGraphStore
+        from grapsit.store.graph.base import BaseGraphStore
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
         assert issubclass(MemgraphGraphStore, BaseGraphStore)
 
 
 class TestMemgraphDefaults:
     def test_default_params(self):
-        from grapsit.store.memgraph_store import MemgraphGraphStore
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
         store = MemgraphGraphStore()
         assert store.uri == "bolt://localhost:7687"
         assert store.user == ""
@@ -49,7 +49,7 @@ class TestMemgraphDefaults:
         assert store.database == "memgraph"
 
     def test_lazy_connection(self):
-        from grapsit.store.memgraph_store import MemgraphGraphStore
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
         store = MemgraphGraphStore()
         assert store._driver is None
 
@@ -181,7 +181,7 @@ class TestMemgraphInheritedBehavior:
 class TestCreateStoreMemgraph:
     def test_create_store_memgraph(self):
         from grapsit.store import create_store
-        from grapsit.store.memgraph_store import MemgraphGraphStore
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
         store = create_store({
             "store_type": "memgraph",
             "memgraph_uri": "bolt://myhost:7687",
@@ -205,5 +205,5 @@ class TestCreateStoreMemgraph:
 
     def test_create_store_error_message_includes_memgraph(self):
         from grapsit.store import create_store
-        with pytest.raises(ValueError, match="memgraph"):
+        with pytest.raises(KeyError, match="memgraph"):
             create_store({"store_type": "sqlite"})

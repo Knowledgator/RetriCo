@@ -42,7 +42,7 @@ def _make_mock_glinker_executor(linked_entities=None):
 
 
 class TestBuildPipelineWithLinker:
-    @patch("grapsit.construct.graph_writer.create_store")
+    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
     @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
     def test_ner_plus_linker_pipeline(self, mock_ner_load, mock_create_store):
         """Test chunker -> NER -> linker -> graph_writer."""
@@ -91,7 +91,7 @@ class TestBuildPipelineWithLinker:
         assert "Q937" in entity_map
         assert "Q3012" in entity_map
 
-    @patch("grapsit.construct.graph_writer.create_store")
+    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
     def test_linker_only_pipeline(self, mock_create_store):
         """Test chunker -> linker -> graph_writer (no NER, end-to-end)."""
         mock_store = MagicMock()
@@ -122,7 +122,7 @@ class TestBuildPipelineWithLinker:
         writer_result = result.get("writer_result")
         assert writer_result["entity_count"] == 2
 
-    @patch("grapsit.construct.graph_writer.create_store")
+    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
     @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
     def test_ner_linker_relex_pipeline(self, mock_ner_load, mock_create_store):
         """Test chunker -> NER -> linker -> relex -> graph_writer."""

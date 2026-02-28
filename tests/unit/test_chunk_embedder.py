@@ -106,17 +106,16 @@ class TestChunkEmbedder:
         result = proc(chunks=sample_chunks)
         assert result["embedded_count"] == 2
 
-    @patch("grapsit.construct.chunk_embedder.create_store")
+    @patch("grapsit.construct.chunk_embedder.resolve_from_pool_or_create")
     @patch("grapsit.construct.chunk_embedder.create_embedding_model")
-    @patch("grapsit.construct.chunk_embedder.create_vector_store")
-    def test_lazy_initialization(self, mock_cvs, mock_cem, mock_cs, sample_chunks):
+    def test_lazy_initialization(self, mock_cem, mock_resolve, sample_chunks):
         mock_em = MagicMock()
         type(mock_em).dimension = PropertyMock(return_value=128)
         mock_em.encode.return_value = [[0.5] * 128, [0.6] * 128]
         mock_cem.return_value = mock_em
+        mock_graph = MagicMock()
         mock_vs = MagicMock()
-        mock_cvs.return_value = mock_vs
-        mock_cs.return_value = MagicMock()
+        mock_resolve.side_effect = lambda cfg, cat: mock_graph if cat == "graph" else mock_vs
 
         proc = self._make_processor({
             "embedding_method": "sentence_transformer",
@@ -127,9 +126,8 @@ class TestChunkEmbedder:
 
         result = proc(chunks=sample_chunks)
         assert result["embedded_count"] == 2
-        mock_cs.assert_called_once()
+        assert mock_resolve.call_count == 2  # graph + vector
         mock_cem.assert_called_once()
-        mock_cvs.assert_called_once()
 
     def test_processor_registration(self):
         from grapsit.core.registry import processor_registry
