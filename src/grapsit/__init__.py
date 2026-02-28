@@ -10,6 +10,9 @@ from . import modeling as _modeling  # noqa: F401
 from .core.dag import DAGExecutor, PipeContext
 from .core.factory import ProcessorFactory
 from .core.builders import BuildConfigBuilder, QueryConfigBuilder, IngestConfigBuilder, CommunityConfigBuilder, KGModelingConfigBuilder
+from .core.registry import (
+    processor_registry, construct_registry, query_registry, modeling_registry,
+)
 from .models import Document, Chunk, Entity, EntityMention, Relation, KGTriple, Subgraph, QueryResult
 from .store import (
     BaseGraphStore, Neo4jGraphStore, FalkorDBGraphStore, MemgraphGraphStore,
@@ -62,6 +65,38 @@ def register_relational_store(name: str, factory):
     relational_store_registry.register(name, factory)
 
 
+# -- Processor registration convenience functions -----------------------------
+
+def register_construct_processor(name: str, factory):
+    """Register a custom construct (build pipeline) processor.
+
+    Args:
+        name: Processor name (used in pipeline config).
+        factory: Callable ``(config_dict, pipeline) -> processor``.
+    """
+    construct_registry.register(name, factory)
+
+
+def register_query_processor(name: str, factory):
+    """Register a custom query pipeline processor.
+
+    Args:
+        name: Processor name (used in pipeline config).
+        factory: Callable ``(config_dict, pipeline) -> processor``.
+    """
+    query_registry.register(name, factory)
+
+
+def register_modeling_processor(name: str, factory):
+    """Register a custom modeling processor.
+
+    Args:
+        name: Processor name (used in pipeline config).
+        factory: Callable ``(config_dict, pipeline) -> processor``.
+    """
+    modeling_registry.register(name, factory)
+
+
 __all__ = [
     # Public API
     "build_graph",
@@ -105,6 +140,14 @@ __all__ = [
     "register_graph_store",
     "register_vector_store",
     "register_relational_store",
+    # Processor registries
+    "processor_registry",
+    "construct_registry",
+    "query_registry",
+    "modeling_registry",
+    "register_construct_processor",
+    "register_query_processor",
+    "register_modeling_processor",
     "BaseStoreConfig",
     "Neo4jConfig",
     "FalkorDBConfig",

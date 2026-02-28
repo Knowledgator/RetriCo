@@ -4,7 +4,8 @@ from typing import Any, Dict, List
 import json
 import logging
 
-from ..core.registry import processor_registry
+from ..core.registry import query_registry
+from ..llm.prompts import TOOL_RETRIEVER_SYSTEM_PROMPT
 from ..models.entity import Entity
 from ..models.relation import Relation
 from ..models.graph import Subgraph
@@ -90,7 +91,12 @@ class ToolRetrieverProcessor(BaseRetriever):
         relation_types: List[str] — relation types in the graph (for schema prompt)
         max_tool_rounds: int — max agentic loop iterations (default: 3)
         store_type, neo4j_uri, etc. — passed to create_store
+        system_prompt: str — override default tool retriever system prompt.
+            Available placeholder: {schema_prompt}.
     """
+
+    default_inputs = {"query": "$input.query"}
+    default_output = "tool_retriever_result"
 
     # Maximum number of result records returned per tool call
     MAX_RESULTS_PER_CALL = 50
@@ -102,6 +108,7 @@ class ToolRetrieverProcessor(BaseRetriever):
         self.max_tool_rounds: int = config_dict.get("max_tool_rounds", 3)
         self.entity_types: List[str] = config_dict.get("entity_types", [])
         self.relation_types: List[str] = config_dict.get("relation_types", [])
+        self._system_prompt_template = config_dict.get("system_prompt", TOOL_RETRIEVER_SYSTEM_PROMPT)
         self._llm = None
 
     def _ensure_llm(self):
@@ -137,24 +144,12 @@ class ToolRetrieverProcessor(BaseRetriever):
             self.entity_types, self.relation_types
         )
 
+        system_content = self._system_prompt_template.format(
+            schema_prompt=schema_prompt,
+        )
+
         messages: List[Dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a knowledge graph query agent. Use the available tools "
-                    "to find information relevant to the user's question.\n\n"
-                    f"{schema_prompt}\n\n"
-                    "IMPORTANT: Entity nodes only have these properties: id, label, "
-                    "entity_type. Do NOT use property filters for attributes like "
-                    "'location', 'founded_year', etc. — they do not exist. Instead:\n"
-                    "- Use search_entity to find entities by label text.\n"
-                    "- Use get_entity_relations and get_neighbors to discover "
-                    "connections between entities.\n"
-                    "- Use find_shortest_path to find paths between two entities.\n\n"
-                    "Call tools to search the graph. When you have enough information, "
-                    "respond with a final text summary."
-                ),
-            },
+            {"role": "system", "content": system_content},
             {"role": "user", "content": query},
         ]
 
@@ -288,6 +283,6 @@ class ToolRetrieverProcessor(BaseRetriever):
                     ))
 
 
-@processor_registry.register("tool_retriever")
+@query_registry.register("tool_retriever")
 def create_tool_retriever(config_dict: dict, pipeline=None):
     return ToolRetrieverProcessor(config_dict, pipeline)

@@ -3,7 +3,7 @@
 from typing import Any, Dict, List
 import logging
 
-from ..core.registry import processor_registry
+from ..core.registry import query_registry
 from ..models.entity import EntityMention
 from ..models.graph import Subgraph
 from .base_retriever import BaseRetriever
@@ -29,6 +29,9 @@ class EntityEmbeddingRetrieverProcessor(BaseRetriever):
         vector_store_type, etc. — passed to create_vector_store
         store_type, neo4j_uri, etc. — passed to create_store
     """
+
+    default_inputs = {"entities": "parser_result.entities"}
+    default_output = "entity_embedding_retriever_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -72,6 +75,6 @@ class EntityEmbeddingRetrieverProcessor(BaseRetriever):
         return {"subgraph": self._raw_to_subgraph(raw)}
 
 
-@processor_registry.register("entity_embedding_retriever")
+@query_registry.register("entity_embedding_retriever")
 def create_entity_embedding_retriever(config_dict: dict, pipeline=None):
     return EntityEmbeddingRetrieverProcessor(config_dict, pipeline)

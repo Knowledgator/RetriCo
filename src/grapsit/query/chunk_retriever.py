@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import query_registry
 from ..models.document import Chunk
 from ..models.graph import Subgraph
 
@@ -26,6 +26,9 @@ class ChunkRetrieverProcessor(BaseProcessor):
             "tail" — only tail entities from scored triples
             "both" — explicit alias for "all"
     """
+
+    default_inputs = {"subgraph": "retriever_result.subgraph"}
+    default_output = "chunk_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -116,6 +119,6 @@ class ChunkRetrieverProcessor(BaseProcessor):
         }
 
 
-@processor_registry.register("chunk_retriever")
+@query_registry.register("chunk_retriever")
 def create_chunk_retriever(config_dict: dict, pipeline=None):
     return ChunkRetrieverProcessor(config_dict, pipeline)

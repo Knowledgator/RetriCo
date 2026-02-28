@@ -5,9 +5,13 @@ import logging
 import uuid
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import modeling_registry
 from ..store.pool import resolve_from_pool_or_create
 from ..llm.openai_client import OpenAIClient
+from ..llm.prompts import (
+    COMMUNITY_SUMMARIZER_SYSTEM_PROMPT,
+    COMMUNITY_SUMMARIZER_USER_PROMPT_TEMPLATE,
+)
 from ..modeling.embeddings import create_embedding_model
 from ..store.vector.graph_db import GraphDBVectorStore as _GraphDBVectorStore
 
@@ -34,6 +38,9 @@ class CommunityDetectorProcessor(BaseProcessor):
         resolution: float — resolution parameter for Louvain (default: 1.0).
         Store params: store_type, neo4j_uri, etc.
     """
+
+    default_inputs = {}
+    default_output = "detector_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -145,13 +152,21 @@ class CommunitySummarizerProcessor(BaseProcessor):
         temperature: float — LLM temperature (default: 0.3).
         max_completion_tokens: int — max tokens (default: 4096).
         Store params: store_type, neo4j_uri, etc.
+        system_prompt: str — override default community summarizer system prompt.
+        user_prompt_template: str — override default community summarizer user prompt.
+            Available placeholder: {context}.
     """
+
+    default_inputs = {}
+    default_output = "summarizer_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
         self._store = None
         self._llm = None
         self.top_k = config_dict.get("top_k", 10)
+        self._system_prompt = config_dict.get("system_prompt", COMMUNITY_SUMMARIZER_SYSTEM_PROMPT)
+        self._user_prompt_template = config_dict.get("user_prompt_template", COMMUNITY_SUMMARIZER_USER_PROMPT_TEMPLATE)
 
     def _ensure_store(self):
         if self._store is None:
@@ -234,19 +249,10 @@ class CommunitySummarizerProcessor(BaseProcessor):
 
     def _generate_summary(self, context: str) -> tuple:
         """Use LLM to generate a title and summary for a community."""
-        prompt = (
-            "You are analyzing a community of entities in a knowledge graph. "
-            "Based on the following entities and their relationships, provide:\n"
-            "1. A short title (max 10 words) describing the community theme\n"
-            "2. A concise summary (2-3 sentences) of what this community represents\n\n"
-            f"Entities and relationships:\n{context}\n\n"
-            "Respond in this exact format:\n"
-            "TITLE: <title>\n"
-            "SUMMARY: <summary>"
-        )
+        prompt = self._user_prompt_template.format(context=context)
 
         response = self._llm.complete([
-            {"role": "system", "content": "You are a knowledge graph analyst."},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": prompt},
         ])
 
@@ -277,6 +283,9 @@ class CommunityEmbedderProcessor(BaseProcessor):
         Store params: store_type, neo4j_uri, etc.
         Additional embedding/vector store params passed through.
     """
+
+    default_inputs = {}
+    default_output = "embedder_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -361,16 +370,16 @@ class CommunityEmbedderProcessor(BaseProcessor):
 
 # -- Processor registration --------------------------------------------------
 
-@processor_registry.register("community_detector")
+@modeling_registry.register("community_detector")
 def create_community_detector(config_dict: dict, pipeline=None):
     return CommunityDetectorProcessor(config_dict, pipeline)
 
 
-@processor_registry.register("community_summarizer")
+@modeling_registry.register("community_summarizer")
 def create_community_summarizer(config_dict: dict, pipeline=None):
     return CommunitySummarizerProcessor(config_dict, pipeline)
 
 
-@processor_registry.register("community_embedder")
+@modeling_registry.register("community_embedder")
 def create_community_embedder(config_dict: dict, pipeline=None):
     return CommunityEmbedderProcessor(config_dict, pipeline)

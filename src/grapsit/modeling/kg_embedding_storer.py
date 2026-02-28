@@ -6,7 +6,7 @@ import logging
 import os
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import modeling_registry
 from ..store.pool import resolve_from_pool_or_create
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,13 @@ class KGEmbeddingStorerProcessor(BaseProcessor):
         Store params: store_type, neo4j_uri, etc. (needed if store_to_graph=True).
         Vector store params: use_gpu, qdrant_url, etc.
     """
+
+    default_inputs = {
+        "model": "kg_trainer_result.model",
+        "entity_to_id": "triple_reader_result.entity_to_id",
+        "relation_to_id": "triple_reader_result.relation_to_id",
+    }
+    default_output = "embedding_storer_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -142,6 +149,6 @@ class KGEmbeddingStorerProcessor(BaseProcessor):
         }
 
 
-@processor_registry.register("kg_embedding_storer")
+@modeling_registry.register("kg_embedding_storer")
 def create_kg_embedding_storer(config_dict: dict, pipeline=None):
     return KGEmbeddingStorerProcessor(config_dict, pipeline)

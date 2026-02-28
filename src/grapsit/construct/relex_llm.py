@@ -6,51 +6,18 @@ import re
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..llm.openai_client import OpenAIClient
+from ..llm.prompts import (
+    RELEX_SYSTEM_PROMPT,
+    RELEX_STANDALONE_PROMPT_TEMPLATE,
+    RELEX_WITH_ENTITIES_PROMPT_TEMPLATE,
+)
 from ..models.entity import EntityMention
 from ..models.relation import Relation
 from ..models.document import Chunk
 
 logger = logging.getLogger(__name__)
-
-_SYSTEM_PROMPT = (
-    "You are a relation extraction system. "
-    "Extract relationships between entities in the given text and return them as JSON."
-)
-
-_STANDALONE_PROMPT_TEMPLATE = """\
-Extract all entities and relationships from the text below.
-
-{entity_labels_instruction}
-{relation_labels_instruction}
-
-Text:
-\"\"\"{text}\"\"\"
-
-Return a JSON object with two fields:
-- "entities": array of {{"text": str, "label": str}}
-- "relations": array of {{"head": str, "tail": str, "relation": str}}
-
-Where "head" and "tail" are the exact entity text as it appears in the text.
-Return ONLY the JSON object, no other text."""
-
-_WITH_ENTITIES_PROMPT_TEMPLATE = """\
-Given the entities already extracted from the text, find relationships between them.
-
-{relation_labels_instruction}
-
-Entities found:
-{entities_list}
-
-Text:
-\"\"\"{text}\"\"\"
-
-Return a JSON array of relationship objects:
-{{"head": str, "tail": str, "relation": str}}
-
-Where "head" and "tail" are the exact entity text from the list above.
-Return ONLY the JSON array, no other text."""
 
 # JSON schemas for structured output mode.
 _RELATION_ITEM_SCHEMA = {
@@ -198,12 +165,27 @@ class RelexLLMProcessor(BaseProcessor):
         structured_output: bool — use JSON schema constraints (default: True).
             Eliminates JSON parse errors on models that support it (OpenAI, vLLM).
             Falls back to json_object mode automatically if unsupported.
+        system_prompt: str — override default relex system prompt.
+        standalone_prompt_template: str — override default standalone user prompt.
+            Available placeholders: {entity_labels_instruction}, {relation_labels_instruction}, {text}.
+        with_entities_prompt_template: str — override default with-entities user prompt.
+            Available placeholders: {relation_labels_instruction}, {entities_list}, {text}.
     """
+
+    default_inputs = {"chunks": "ner_result.chunks", "entities": "ner_result.entities"}
+    default_output = "relex_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
         self.entity_labels: List[str] = config_dict.get("entity_labels", [])
         self.relation_labels: List[str] = config_dict.get("relation_labels", [])
+        self._system_prompt = config_dict.get("system_prompt", RELEX_SYSTEM_PROMPT)
+        self._standalone_prompt_template = config_dict.get(
+            "standalone_prompt_template", RELEX_STANDALONE_PROMPT_TEMPLATE
+        )
+        self._with_entities_prompt_template = config_dict.get(
+            "with_entities_prompt_template", RELEX_WITH_ENTITIES_PROMPT_TEMPLATE
+        )
         self.structured_output: bool = config_dict.get("structured_output", True)
         self._structured_failed: bool = False
         self._client: Optional[OpenAIClient] = None
@@ -270,13 +252,13 @@ class RelexLLMProcessor(BaseProcessor):
     ) -> tuple:
         """Extract entities + relations in one LLM call."""
         ent_instr, rel_instr = self._label_instructions()
-        prompt = _STANDALONE_PROMPT_TEMPLATE.format(
+        prompt = self._standalone_prompt_template.format(
             entity_labels_instruction=ent_instr,
             relation_labels_instruction=rel_instr,
             text=text,
         )
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": prompt},
         ]
 
@@ -327,13 +309,13 @@ class RelexLLMProcessor(BaseProcessor):
     ) -> List[Relation]:
         """Extract only relations given pre-extracted entities."""
         _, rel_instr = self._label_instructions()
-        prompt = _WITH_ENTITIES_PROMPT_TEMPLATE.format(
+        prompt = self._with_entities_prompt_template.format(
             relation_labels_instruction=rel_instr,
             entities_list=_format_entities_list(entities),
             text=text,
         )
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": prompt},
         ]
 
@@ -440,6 +422,6 @@ def _normalize_mentions(items: List[Any], chunk_id: str) -> List[EntityMention]:
     return result
 
 
-@processor_registry.register("relex_llm")
+@construct_registry.register("relex_llm")
 def create_relex_llm(config_dict: dict, pipeline=None):
     return RelexLLMProcessor(config_dict, pipeline)

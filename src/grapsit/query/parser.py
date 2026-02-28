@@ -4,7 +4,12 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import query_registry
+from ..llm.prompts import (
+    QUERY_PARSER_SYSTEM_PROMPT,
+    QUERY_PARSER_USER_PROMPT_TEMPLATE,
+    QUERY_PARSER_TOOL_SYSTEM_PROMPT,
+)
 from ..models.entity import EntityMention
 
 logger = logging.getLogger(__name__)
@@ -27,7 +32,17 @@ class QueryParserProcessor(BaseProcessor):
         base_url: str — API base URL
         model: str — model name (default: "gpt-4o-mini")
         temperature: float — sampling temperature (default: 0.1)
+        system_prompt: str — override default query parser system prompt.
+        user_prompt_template: str — override default query parser user prompt.
+            Available placeholders: {labels_instruction}, {label_constraint}, {query}.
+
+    Tool-calling specific:
+        tool_system_prompt: str — override default tool-calling system prompt.
+            Available placeholder: {schema_info} (appended if present).
     """
+
+    default_inputs = {"query": "$input.query"}
+    default_output = "parser_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -35,6 +50,9 @@ class QueryParserProcessor(BaseProcessor):
         self.labels: List[str] = config_dict.get("labels", [])
         self._model = None  # GLiNER model
         self._client = None  # OpenAI client
+        self._system_prompt = config_dict.get("system_prompt", QUERY_PARSER_SYSTEM_PROMPT)
+        self._user_prompt_template = config_dict.get("user_prompt_template", QUERY_PARSER_USER_PROMPT_TEMPLATE)
+        self._tool_system_prompt = config_dict.get("tool_system_prompt", QUERY_PARSER_TOOL_SYSTEM_PROMPT)
 
     def _load_gliner(self):
         if self._model is None:
@@ -100,18 +118,13 @@ class QueryParserProcessor(BaseProcessor):
             labels_instruction = "Identify all named entities and assign an appropriate type."
             label_constraint = ""
 
-        prompt = (
-            f"Extract all named entities, key concepts, and important terms from this query.\n\n"
-            f"{labels_instruction}\n\n"
-            f"Query: \"{query}\"\n\n"
-            f"Return a JSON object with an \"entities\" key containing an array of objects with:\n"
-            f'- "text": the entity or concept text as it appears in the query\n'
-            f'- "label": the entity type{label_constraint}\n\n'
-            f"IMPORTANT: Extract domain-specific terms, concepts, and topics — not just proper nouns.\n"
-            f"Return ONLY valid JSON."
+        prompt = self._user_prompt_template.format(
+            labels_instruction=labels_instruction,
+            label_constraint=label_constraint,
+            query=query,
         )
         messages = [
-            {"role": "system", "content": "You are an entity and concept extraction system. Extract named entities, key concepts, scientific terms, and domain-specific terminology from queries."},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": prompt},
         ]
 
@@ -180,18 +193,7 @@ class QueryParserProcessor(BaseProcessor):
             schema_lines.append(f"Relation types: {', '.join(relation_labels)}")
         schema_info = "\n".join(schema_lines) if schema_lines else ""
 
-        system_prompt = (
-            "You are a knowledge graph query decomposer. "
-            "Given a natural language question, decompose it into one or more "
-            "triple patterns by calling the search_triples tool.\n\n"
-            "Each call specifies a (head, relation, tail) pattern where unknown "
-            "parts should be null.\n\n"
-            "Examples:\n"
-            '- "Where was Einstein born?" → search_triples(head="Einstein", relation="born_in", tail=null)\n'
-            '- "Who works at MIT?" → search_triples(head=null, relation="works_at", tail="MIT")\n'
-            '- "What is the relationship between Einstein and Bohr?" → '
-            'search_triples(head="Einstein", relation=null, tail="Bohr")\n'
-        )
+        system_prompt = self._tool_system_prompt
         if schema_info:
             system_prompt += f"\nKnowledge Graph Schema:\n{schema_info}\n"
 
@@ -258,6 +260,6 @@ class QueryParserProcessor(BaseProcessor):
         return {"query": query, "entities": entities}
 
 
-@processor_registry.register("query_parser")
+@query_registry.register("query_parser")
 def create_query_parser(config_dict: dict, pipeline=None):
     return QueryParserProcessor(config_dict, pipeline)

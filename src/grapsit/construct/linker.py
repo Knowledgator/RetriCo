@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..models.document import Chunk
 from ..models.entity import EntityMention
 
@@ -26,6 +26,9 @@ class EntityLinkerProcessor(BaseProcessor):
         entities: KB entities — file path (str) or list of dicts
         neo4j_uri/user/password/database: load KB from Neo4j
     """
+
+    default_inputs = {"entities": "ner_result.entities", "chunks": "chunker_result.chunks"}
+    default_output = "linker_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -374,6 +377,6 @@ def _apply_links(mentions, linked_map: Dict[str, str]):
     return result
 
 
-@processor_registry.register("entity_linker")
+@construct_registry.register("entity_linker")
 def create_entity_linker(config_dict: dict, pipeline=None):
     return EntityLinkerProcessor(config_dict, pipeline)

@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..models.document import Chunk, Document
 from ..models.entity import Entity, EntityMention
 from ..models.relation import Relation
@@ -31,6 +31,14 @@ class GraphWriterProcessor(BaseProcessor):
         json_output: str (default: None) — path to save extracted data as JSON
             in the ingest-ready format (compatible with ``ingest_data()``).
     """
+
+    default_inputs = {
+        "entities": "relex_result.entities",
+        "relations": "relex_result.relations",
+        "chunks": "chunker_result.chunks",
+        "documents": "chunker_result.documents",
+    }
+    default_output = "writer_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -275,6 +283,6 @@ class GraphWriterProcessor(BaseProcessor):
         logger.info(f"Saved {len(json_entities)} entities and {len(json_relations)} relations to {self.json_output}")
 
 
-@processor_registry.register("graph_writer")
+@construct_registry.register("graph_writer")
 def create_graph_writer(config_dict: dict, pipeline=None):
     return GraphWriterProcessor(config_dict, pipeline)

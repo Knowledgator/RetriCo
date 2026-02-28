@@ -4,7 +4,7 @@ from typing import Any, Dict
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import modeling_registry
 from ..store.pool import resolve_from_pool_or_create
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,9 @@ class KGTripleReaderProcessor(BaseProcessor):
         random_seed: int — random seed for splitting (default: 42).
         Store params: store_type, neo4j_uri, etc.
     """
+
+    default_inputs = {}
+    default_output = "triple_reader_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -87,6 +90,6 @@ def _triples_to_array(triples):
     return np.array(triples, dtype=str)
 
 
-@processor_registry.register("kg_triple_reader")
+@modeling_registry.register("kg_triple_reader")
 def create_kg_triple_reader(config_dict: dict, pipeline=None):
     return KGTripleReaderProcessor(config_dict, pipeline)

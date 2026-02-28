@@ -6,7 +6,7 @@ import uuid
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..models.document import Chunk, Document
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,9 @@ class ChunkerProcessor(BaseProcessor):
         chunk_size: int — max chars per chunk for fixed mode (default: 512)
         overlap: int — char overlap for fixed mode (default: 50)
     """
+
+    default_inputs = {"texts": "$input.texts"}
+    default_output = "chunker_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -104,6 +107,6 @@ class ChunkerProcessor(BaseProcessor):
         return chunks
 
 
-@processor_registry.register("chunker")
+@construct_registry.register("chunker")
 def create_chunker(config_dict: dict, pipeline=None):
     return ChunkerProcessor(config_dict, pipeline)

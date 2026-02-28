@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..models.entity import EntityMention
 from ..models.document import Chunk
 
@@ -22,6 +22,9 @@ class NERGLiNERProcessor(BaseProcessor):
         device: str — "cpu" or "cuda" (default: "cpu")
         flat_ner: bool — flatten nested entities (default: True)
     """
+
+    default_inputs = {"chunks": "chunker_result.chunks"}
+    default_output = "ner_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -87,6 +90,6 @@ class NERGLiNERProcessor(BaseProcessor):
         return {"entities": all_mentions, "chunks": chunks}
 
 
-@processor_registry.register("ner_gliner")
+@construct_registry.register("ner_gliner")
 def create_ner_gliner(config_dict: dict, pipeline=None):
     return NERGLiNERProcessor(config_dict, pipeline)

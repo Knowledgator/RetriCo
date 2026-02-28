@@ -6,7 +6,7 @@ import logging
 import os
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import modeling_registry
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,9 @@ class KGScorerProcessor(BaseProcessor):
         neo4j_uri, neo4j_user, neo4j_password, neo4j_database, store_type,
         falkordb_host, falkordb_port, falkordb_graph, etc.
     """
+
+    default_inputs = {"subgraph": "retriever_result.subgraph"}
+    default_output = "kg_scorer_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -500,6 +503,6 @@ def _extract_entity_labels(entities) -> List[str]:
     return [l for l in labels if l]
 
 
-@processor_registry.register("kg_scorer")
+@modeling_registry.register("kg_scorer")
 def create_kg_scorer(config_dict: dict, pipeline=None):
     return KGScorerProcessor(config_dict, pipeline)

@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 import itertools
 import logging
 
-from ..core.registry import processor_registry
+from ..core.registry import query_registry
 from ..models.entity import Entity, EntityMention
 from ..models.relation import Relation
 from ..models.graph import Subgraph
@@ -24,6 +24,9 @@ class PathRetrieverProcessor(BaseRetriever):
         max_pairs: int — maximum number of entity pairs to query (default: 10)
         store_type, neo4j_uri, etc. — passed to create_store
     """
+
+    default_inputs = {"entities": "parser_result.entities"}
+    default_output = "path_retriever_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -114,6 +117,6 @@ class PathRetrieverProcessor(BaseRetriever):
         }
 
 
-@processor_registry.register("path_retriever")
+@query_registry.register("path_retriever")
 def create_path_retriever(config_dict: dict, pipeline=None):
     return PathRetrieverProcessor(config_dict, pipeline)

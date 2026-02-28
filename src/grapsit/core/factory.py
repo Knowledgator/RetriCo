@@ -42,11 +42,16 @@ class ProcessorFactory:
             for name, data in node_cfg.get("inputs", {}).items():
                 inputs[name] = InputConfig(**data)
 
+            # output and id are optional — filled from processor defaults
+            output_cfg = node_cfg.get("output")
+            output = OutputConfig(**output_cfg) if output_cfg else OutputConfig(key="")
+            node_id = node_cfg.get("id", node_cfg["processor"])
+
             node = PipeNode(
-                id=node_cfg["id"],
+                id=node_id,
                 processor=node_cfg["processor"],
                 inputs=inputs,
-                output=OutputConfig(**node_cfg["output"]),
+                output=output,
                 requires=node_cfg.get("requires", []),
                 config=node_cfg.get("config", {}),
                 schema=node_cfg.get("schema"),

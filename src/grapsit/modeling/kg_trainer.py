@@ -4,7 +4,7 @@ from typing import Any, Dict
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import modeling_registry
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,9 @@ class KGTrainerProcessor(BaseProcessor):
         device: str — "cpu" or "cuda" (default: "cpu").
         use_tqdm: bool — show progress bar (default: True).
     """
+
+    default_inputs = {"training": "triple_reader_result.training"}
+    default_output = "kg_trainer_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -93,6 +96,6 @@ class KGTrainerProcessor(BaseProcessor):
         }
 
 
-@processor_registry.register("kg_trainer")
+@modeling_registry.register("kg_trainer")
 def create_kg_trainer(config_dict: dict, pipeline=None):
     return KGTrainerProcessor(config_dict, pipeline)

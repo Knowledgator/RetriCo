@@ -3,7 +3,7 @@
 from typing import Any, Dict
 import logging
 
-from ..core.registry import processor_registry
+from ..core.registry import query_registry
 from ..models.graph import Subgraph
 from .base_retriever import BaseRetriever
 
@@ -25,6 +25,9 @@ class CommunityRetrieverProcessor(BaseRetriever):
         vector_store_type, etc. — passed to create_vector_store
         store_type, neo4j_uri, etc. — passed to create_store
     """
+
+    default_inputs = {"query": "$input.query"}
+    default_output = "community_retriever_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -71,6 +74,6 @@ class CommunityRetrieverProcessor(BaseRetriever):
         return {"subgraph": self._raw_to_subgraph(raw)}
 
 
-@processor_registry.register("community_retriever")
+@query_registry.register("community_retriever")
 def create_community_retriever(config_dict: dict, pipeline=None):
     return CommunityRetrieverProcessor(config_dict, pipeline)

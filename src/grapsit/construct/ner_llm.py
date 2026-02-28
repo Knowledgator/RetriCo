@@ -6,31 +6,13 @@ import re
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..llm.openai_client import OpenAIClient
+from ..llm.prompts import NER_SYSTEM_PROMPT, NER_USER_PROMPT_TEMPLATE
 from ..models.entity import EntityMention
 from ..models.document import Chunk
 
 logger = logging.getLogger(__name__)
-
-_SYSTEM_PROMPT = (
-    "You are a named entity recognition system. "
-    "Extract entities from the given text and return them as JSON."
-)
-
-_USER_PROMPT_TEMPLATE = """\
-Extract all named entities from the text below.
-
-{labels_instruction}
-
-Text:
-\"\"\"{text}\"\"\"
-
-Return a JSON array of objects with these fields:
-- "text": the exact entity text as it appears
-- "label": the entity type{label_constraint}
-
-Return ONLY the JSON array, no other text."""
 
 # JSON schema for structured output mode.
 _NER_SCHEMA = {
@@ -121,11 +103,19 @@ class NERLLMProcessor(BaseProcessor):
         structured_output: bool — use JSON schema constraints (default: True).
             Eliminates JSON parse errors on models that support it (OpenAI, vLLM).
             Falls back to json_object mode automatically if unsupported.
+        system_prompt: str — override default NER system prompt.
+        user_prompt_template: str — override default NER user prompt template.
+            Available placeholders: {labels_instruction}, {label_constraint}, {text}.
     """
+
+    default_inputs = {"chunks": "chunker_result.chunks"}
+    default_output = "ner_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
         self.labels: List[str] = config_dict.get("labels", [])
+        self._system_prompt = config_dict.get("system_prompt", NER_SYSTEM_PROMPT)
+        self._user_prompt_template = config_dict.get("user_prompt_template", NER_USER_PROMPT_TEMPLATE)
         self.structured_output: bool = config_dict.get("structured_output", True)
         self._structured_failed: bool = False
         self._client: Optional[OpenAIClient] = None
@@ -179,13 +169,13 @@ class NERLLMProcessor(BaseProcessor):
             )
             label_constraint = ""
 
-        prompt = _USER_PROMPT_TEMPLATE.format(
+        prompt = self._user_prompt_template.format(
             labels_instruction=labels_instruction,
             label_constraint=label_constraint,
             text=text,
         )
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": prompt},
         ]
 
@@ -238,6 +228,6 @@ class NERLLMProcessor(BaseProcessor):
         return {"entities": all_mentions, "chunks": chunks}
 
 
-@processor_registry.register("ner_llm")
+@construct_registry.register("ner_llm")
 def create_ner_llm(config_dict: dict, pipeline=None):
     return NERLLMProcessor(config_dict, pipeline)

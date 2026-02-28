@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..models.relation import Relation
 from ..models.entity import EntityMention
 from ..models.document import Chunk
@@ -101,6 +101,9 @@ class RelexGLiNERProcessor(BaseProcessor):
         batch_size: int — inference batch size (default: 8)
         device: str — "cpu" or "cuda"
     """
+
+    default_inputs = {"chunks": "ner_result.chunks", "entities": "ner_result.entities"}
+    default_output = "relex_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -227,6 +230,6 @@ class RelexGLiNERProcessor(BaseProcessor):
         return {"relations": all_relations, "entities": all_entities, "chunks": chunks}
 
 
-@processor_registry.register("relex_gliner")
+@construct_registry.register("relex_gliner")
 def create_relex_gliner(config_dict: dict, pipeline=None):
     return RelexGLiNERProcessor(config_dict, pipeline)

@@ -63,7 +63,10 @@ class PipeNode(BaseModel):
     id: str = Field(..., description="Unique node identifier")
     processor: str = Field(..., description="Processor name from registry")
     inputs: Dict[str, InputConfig] = Field(default_factory=dict)
-    output: OutputConfig = Field(..., description="Output specification")
+    output: OutputConfig = Field(
+        default_factory=lambda: OutputConfig(key=""),
+        description="Output specification (filled from processor defaults if empty)",
+    )
     requires: List[str] = Field(default_factory=list)
     config: Dict[str, Any] = Field(default_factory=dict)
     schema_: Optional[Dict[str, Any]] = Field(None, alias="schema")
@@ -353,6 +356,19 @@ class FieldResolver:
 # ============================================================================
 
 
+def _parse_source_expr(expr: str) -> InputConfig:
+    """Parse ``'chunker_result.chunks'`` into an ``InputConfig``.
+
+    If the expression contains a dot, the part before the first dot is the
+    source and the rest is the fields path.  Otherwise the whole string is
+    treated as the source with no field extraction.
+    """
+    if "." in expr:
+        source, fields = expr.split(".", 1)
+        return InputConfig(source=source, fields=fields)
+    return InputConfig(source=expr)
+
+
 class DAGPipeline(BaseModel):
     """DAG pipeline configuration."""
     name: str
@@ -371,13 +387,15 @@ class DAGExecutor:
         self.dependency_graph: Dict[str, List[str]] = defaultdict(list)
         self.reverse_graph: Dict[str, Set[str]] = defaultdict(set)
         self.processors: Dict[str, Any] = {}
-        self._build_dependency_graph()
+        self._index_nodes()
         self._initialize_processors()
+        self._build_dependency_graph()
 
-    def _build_dependency_graph(self):
+    def _index_nodes(self):
         for node in self.pipeline.nodes:
             self.nodes_map[node.id] = node
 
+    def _build_dependency_graph(self):
         for node in self.pipeline.nodes:
             for dep_id in node.requires:
                 self.dependency_graph[dep_id].append(node.id)
@@ -403,6 +421,15 @@ class DAGExecutor:
                 factory = processor_registry.get(node.processor)
                 processor = factory(config_dict=config, pipeline=None)
                 self.processors[node_id] = processor
+
+                # Fill missing inputs/output from processor class defaults
+                if not node.inputs and getattr(processor, "default_inputs", None):
+                    node.inputs = {
+                        k: _parse_source_expr(v)
+                        for k, v in processor.default_inputs.items()
+                    }
+                if node.output.key == "" and getattr(processor, "default_output", ""):
+                    node.output = OutputConfig(key=processor.default_output)
             except Exception as e:
                 raise RuntimeError(
                     f"Failed to create processor '{node.processor}' for node '{node_id}': {e}"

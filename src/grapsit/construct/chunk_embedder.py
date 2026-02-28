@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..store.pool import resolve_from_pool_or_create
 from ..modeling.embeddings import create_embedding_model
 from ..store.vector.graph_db import GraphDBVectorStore as _GraphDBVectorStore
@@ -27,6 +27,9 @@ class ChunkEmbedderProcessor(BaseProcessor):
         Store params: store_type, neo4j_uri, etc. (for persisting embeddings on nodes).
         Additional embedding/vector store params passed through.
     """
+
+    default_inputs = {"chunks": "chunker_result.chunks"}
+    default_output = "chunk_embedder_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -102,6 +105,6 @@ class ChunkEmbedderProcessor(BaseProcessor):
         }
 
 
-@processor_registry.register("chunk_embedder")
+@construct_registry.register("chunk_embedder")
 def create_chunk_embedder(config_dict: dict, pipeline=None):
     return ChunkEmbedderProcessor(config_dict, pipeline)

@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..models.document import Document
 from ..store.pool import resolve_from_pool_or_create
 
@@ -29,6 +29,9 @@ class StoreReaderProcessor(BaseProcessor):
     Output:
         ``{"texts": List[str], "documents": List[Document], "source_records": List[Dict]}``
     """
+
+    default_inputs = {}
+    default_output = "store_reader_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -102,6 +105,6 @@ class StoreReaderProcessor(BaseProcessor):
         }
 
 
-@processor_registry.register("store_reader")
+@construct_registry.register("store_reader")
 def create_store_reader(config_dict: dict, pipeline=None):
     return StoreReaderProcessor(config_dict, pipeline)

@@ -4,7 +4,7 @@ from typing import Any, Dict
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import query_registry
 from ..models.document import Chunk
 from ..models.entity import Entity
 from ..models.relation import Relation
@@ -39,6 +39,9 @@ class KeywordRetrieverProcessor(BaseProcessor):
         store_type, neo4j_uri, etc. — passed to create_store (graph, only
             when expand_entities=True)
     """
+
+    default_inputs = {"query": "$input.query"}
+    default_output = "keyword_retriever_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -146,6 +149,6 @@ class KeywordRetrieverProcessor(BaseProcessor):
         return {"subgraph": self._raw_to_subgraph(raw, chunks)}
 
 
-@processor_registry.register("keyword_retriever")
+@query_registry.register("keyword_retriever")
 def create_keyword_retriever(config_dict: dict, pipeline=None):
     return KeywordRetrieverProcessor(config_dict, pipeline)

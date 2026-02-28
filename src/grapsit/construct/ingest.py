@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..models.entity import EntityMention
 from ..models.relation import Relation
 
@@ -79,6 +79,9 @@ class DataIngestProcessor(BaseProcessor):
             "documents": List[Document],
         }
     """
+
+    default_inputs = {"entities": "$input.entities", "relations": "$input.relations"}
+    default_output = "ingest_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -236,6 +239,6 @@ class DataIngestProcessor(BaseProcessor):
         }
 
 
-@processor_registry.register("data_ingest")
+@construct_registry.register("data_ingest")
 def create_data_ingest(config_dict: dict, pipeline=None):
     return DataIngestProcessor(config_dict, pipeline)

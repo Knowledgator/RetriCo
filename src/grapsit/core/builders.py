@@ -57,6 +57,8 @@ class _BuilderBase:
         self._graph_stores: Dict[str, dict] = {}
         self._vector_stores: Dict[str, dict] = {}
         self._relational_stores: Dict[str, dict] = {}
+        # Custom nodes added via add_node()
+        self._custom_nodes: List[dict] = []
 
     # -- store setters -------------------------------------------------------
 
@@ -193,6 +195,47 @@ class _BuilderBase:
             pool.register_relational(name, cfg)
         return pool
 
+    def add_node(
+        self,
+        processor: str,
+        *,
+        id: str = None,
+        inputs: Dict[str, str] = None,
+        output: str = None,
+        requires: List[str] = None,
+        **config,
+    ) -> "_BuilderBase":
+        """Add a custom processor node to the pipeline.
+
+        Args:
+            processor: Registry name (e.g. ``"ner_spacy"``).
+            id: Node ID (defaults to processor name).
+            inputs: Override input mappings ``{"param": "source.field"}``.
+                Omit to use the processor's ``default_inputs``.
+            output: Override output key.
+                Omit to use the processor's ``default_output``.
+            requires: Explicit dependency node IDs.
+            **config: Processor configuration kwargs.
+        """
+        node: Dict[str, Any] = {"processor": processor, "config": config}
+        if id is not None:
+            node["id"] = id
+        if inputs is not None:
+            node["inputs"] = {
+                k: (
+                    {"source": v.split(".", 1)[0], "fields": v.split(".", 1)[1]}
+                    if "." in v
+                    else {"source": v}
+                )
+                for k, v in inputs.items()
+            }
+        if output is not None:
+            node["output"] = {"key": output}
+        if requires is not None:
+            node["requires"] = requires
+        self._custom_nodes.append(node)
+        return self
+
     def save(self, filepath: str) -> None:
         """Save config to YAML."""
         config = _strip_non_serializable(self.get_config())
@@ -210,6 +253,19 @@ class _BuilderBase:
         if self._relational_stores:
             stores["relational"] = dict(self._relational_stores)
         return stores or None
+
+    def _build_result(self, nodes: List[dict]) -> Dict[str, Any]:
+        """Assemble final config dict from nodes, custom nodes, and stores."""
+        nodes.extend(self._custom_nodes)
+        result: Dict[str, Any] = {
+            "name": self.name,
+            "description": self.description,
+            "nodes": nodes,
+        }
+        stores = self._stores_section()
+        if stores:
+            result["stores"] = stores
+        return result
 
     def get_config(self) -> Dict[str, Any]:
         raise NotImplementedError
@@ -664,15 +720,7 @@ class BuildConfigBuilder(_BuilderBase,
                 "config": embedder_config,
             })
 
-        result = {
-            "name": self.name,
-            "description": self.description,
-            "nodes": nodes,
-        }
-        stores = self._stores_section()
-        if stores:
-            result["stores"] = stores
-        return result
+        return self._build_result(nodes)
 
 
 class IngestConfigBuilder(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
@@ -774,15 +822,7 @@ class IngestConfigBuilder(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
                 "config": embedder_config,
             })
 
-        result = {
-            "name": self.name,
-            "description": self.description,
-            "nodes": nodes,
-        }
-        stores = self._stores_section()
-        if stores:
-            result["stores"] = stores
-        return result
+        return self._build_result(nodes)
 
 
 class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
@@ -1170,15 +1210,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
                     "config": self._reasoner_config,
                 })
 
-            result = {
-                "name": self.name,
-                "description": self.description,
-                "nodes": nodes,
-            }
-            stores = self._stores_section()
-            if stores:
-                result["stores"] = stores
-            return result
+            return self._build_result(nodes)
 
         # Standard pipeline
         if has_parser:
@@ -1283,15 +1315,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
                 "config": self._kg_scorer_config,
             })
 
-        result = {
-            "name": self.name,
-            "description": self.description,
-            "nodes": nodes,
-        }
-        stores = self._stores_section()
-        if stores:
-            result["stores"] = stores
-        return result
+        return self._build_result(nodes)
 
 
 class CommunityConfigBuilder(_BuilderBase):
@@ -1416,15 +1440,7 @@ class CommunityConfigBuilder(_BuilderBase):
                 "config": embedder_full,
             })
 
-        result = {
-            "name": self.name,
-            "description": self.description,
-            "nodes": nodes,
-        }
-        stores = self._stores_section()
-        if stores:
-            result["stores"] = stores
-        return result
+        return self._build_result(nodes)
 
 
 class KGModelingConfigBuilder(_BuilderBase):
@@ -1563,12 +1579,4 @@ class KGModelingConfigBuilder(_BuilderBase):
                 "config": storer_full,
             })
 
-        result = {
-            "name": self.name,
-            "description": self.description,
-            "nodes": nodes,
-        }
-        stores = self._stores_section()
-        if stores:
-            result["stores"] = stores
-        return result
+        return self._build_result(nodes)

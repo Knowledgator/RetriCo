@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
 from ..store.pool import resolve_from_pool_or_create
 from ..modeling.embeddings import create_embedding_model
 from ..store.vector.graph_db import GraphDBVectorStore as _GraphDBVectorStore
@@ -28,6 +28,9 @@ class EntityEmbedderProcessor(BaseProcessor):
         Store params: store_type, neo4j_uri, etc. (for persisting embeddings on nodes).
         Additional embedding/vector store params passed through.
     """
+
+    default_inputs = {"entity_map": "writer_result.entity_map"}
+    default_output = "entity_embedder_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -103,6 +106,6 @@ class EntityEmbedderProcessor(BaseProcessor):
         }
 
 
-@processor_registry.register("entity_embedder")
+@construct_registry.register("entity_embedder")
 def create_entity_embedder(config_dict: dict, pipeline=None):
     return EntityEmbedderProcessor(config_dict, pipeline)
