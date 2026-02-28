@@ -3,9 +3,9 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from ..models.document import Chunk, Document
-from ..models.entity import Entity, EntityMention
-from ..models.relation import Relation
+from ...models.document import Chunk, Document
+from ...models.entity import Entity, EntityMention
+from ...models.relation import Relation
 
 
 class BaseGraphStore(ABC):

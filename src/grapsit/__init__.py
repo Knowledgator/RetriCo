@@ -11,17 +11,56 @@ from .core.dag import DAGExecutor, PipeContext
 from .core.factory import ProcessorFactory
 from .core.builders import BuildConfigBuilder, QueryConfigBuilder, IngestConfigBuilder, CommunityConfigBuilder, KGModelingConfigBuilder
 from .models import Document, Chunk, Entity, EntityMention, Relation, KGTriple, Subgraph, QueryResult
-from .store.base import BaseGraphStore
-from .store.neo4j_store import Neo4jGraphStore
-from .store.falkordb_store import FalkorDBGraphStore
-from .store.memgraph_store import MemgraphGraphStore
-from .store import create_store
+from .store import (
+    BaseGraphStore, Neo4jGraphStore, FalkorDBGraphStore, MemgraphGraphStore,
+    create_store, create_graph_store, graph_store_registry,
+    BaseVectorStore, create_vector_store, vector_store_registry,
+    BaseRelationalStore, create_relational_store, relational_store_registry,
+    BaseStoreConfig, Neo4jConfig, FalkorDBConfig, MemgraphConfig,
+    resolve_store_config,
+    BaseVectorStoreConfig, InMemoryVectorConfig, FaissVectorConfig,
+    QdrantVectorConfig, GraphDBVectorConfig,
+    StorePool,
+)
 from .llm import BaseLLMClient, OpenAIClient
 
 from typing import Dict, List, Any, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# -- Store registration convenience functions --------------------------------
+
+def register_graph_store(name: str, factory):
+    """Register a custom graph store backend.
+
+    Args:
+        name: Store type name (used in ``store_type`` config key).
+        factory: Callable that takes a config dict and returns a BaseGraphStore.
+    """
+    graph_store_registry.register(name, factory)
+
+
+def register_vector_store(name: str, factory):
+    """Register a custom vector store backend.
+
+    Args:
+        name: Store type name (used in ``vector_store_type`` config key).
+        factory: Callable that takes a config dict and returns a BaseVectorStore.
+    """
+    vector_store_registry.register(name, factory)
+
+
+def register_relational_store(name: str, factory):
+    """Register a custom relational store backend.
+
+    Args:
+        name: Store type name (used in ``relational_store_type`` config key).
+        factory: Callable that takes a config dict and returns a BaseRelationalStore.
+    """
+    relational_store_registry.register(name, factory)
+
 
 __all__ = [
     # Public API
@@ -54,6 +93,27 @@ __all__ = [
     "FalkorDBGraphStore",
     "MemgraphGraphStore",
     "create_store",
+    "create_graph_store",
+    "graph_store_registry",
+    "BaseVectorStore",
+    "create_vector_store",
+    "vector_store_registry",
+    "BaseRelationalStore",
+    "create_relational_store",
+    "relational_store_registry",
+    "register_graph_store",
+    "register_vector_store",
+    "register_relational_store",
+    "BaseStoreConfig",
+    "Neo4jConfig",
+    "FalkorDBConfig",
+    "MemgraphConfig",
+    "BaseVectorStoreConfig",
+    "InMemoryVectorConfig",
+    "FaissVectorConfig",
+    "QdrantVectorConfig",
+    "GraphDBVectorConfig",
+    "StorePool",
     # LLM
     "BaseLLMClient",
     "OpenAIClient",
@@ -94,6 +154,7 @@ def build_graph(
     embedding_method: str = "sentence_transformer",
     embedding_model_name: str = "all-MiniLM-L6-v2",
     vector_store_type: str = "in_memory",
+    store_config: BaseStoreConfig = None,
 ) -> PipeContext:
     """Build a knowledge graph from texts in one call.
 
@@ -113,11 +174,24 @@ def build_graph(
         device: "cpu" or "cuda".
         verbose: Enable verbose logging.
         json_output: Path to save extracted data as JSON (ingest-ready format).
+        store_config: A BaseStoreConfig object (Neo4jConfig, FalkorDBConfig, etc.).
+            If provided, overrides individual store params.
 
     Returns:
         PipeContext with all intermediate results.
     """
+    if store_config is None:
+        store_config = resolve_store_config(
+            store_type=store_type, neo4j_uri=neo4j_uri, neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password, neo4j_database=neo4j_database,
+            falkordb_host=falkordb_host, falkordb_port=falkordb_port,
+            falkordb_graph=falkordb_graph, memgraph_uri=memgraph_uri,
+            memgraph_user=memgraph_user, memgraph_password=memgraph_password,
+            memgraph_database=memgraph_database,
+        )
+
     builder = BuildConfigBuilder(name="build_graph")
+    builder.store(store_config)
     builder.chunker(method=chunk_method)
     builder.ner_gliner(model=ner_model, labels=entity_labels, threshold=ner_threshold, device=device)
 
@@ -141,21 +215,7 @@ def build_graph(
             device=device,
         )
 
-    builder.graph_writer(
-        neo4j_uri=neo4j_uri,
-        neo4j_user=neo4j_user,
-        neo4j_password=neo4j_password,
-        neo4j_database=neo4j_database,
-        store_type=store_type,
-        falkordb_host=falkordb_host,
-        falkordb_port=falkordb_port,
-        falkordb_graph=falkordb_graph,
-        memgraph_uri=memgraph_uri,
-        memgraph_user=memgraph_user,
-        memgraph_password=memgraph_password,
-        memgraph_database=memgraph_database,
-        json_output=json_output,
-    )
+    builder.graph_writer(json_output=json_output)
 
     if embed_chunks:
         builder.chunk_embedder(
@@ -203,6 +263,7 @@ def query_graph(
     memgraph_database: str = "memgraph",
     retrieval_strategy: str = "entity",
     retriever_kwargs: Dict[str, Any] = None,
+    store_config: BaseStoreConfig = None,
 ) -> QueryResult:
     """Query a knowledge graph in one call.
 
@@ -224,11 +285,24 @@ def query_graph(
             "chunk_embedding", "entity_embedding", "tool", or "path".
         retriever_kwargs: Extra kwargs passed to the retriever builder method
             (e.g. top_k, vector_index_name, max_tool_rounds).
+        store_config: A BaseStoreConfig object (Neo4jConfig, FalkorDBConfig, etc.).
+            If provided, overrides individual store params.
 
     Returns:
         QueryResult with subgraph, answer, and metadata.
     """
+    if store_config is None:
+        store_config = resolve_store_config(
+            store_type=store_type, neo4j_uri=neo4j_uri, neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password, neo4j_database=neo4j_database,
+            falkordb_host=falkordb_host, falkordb_port=falkordb_port,
+            falkordb_graph=falkordb_graph, memgraph_uri=memgraph_uri,
+            memgraph_user=memgraph_user, memgraph_password=memgraph_password,
+            memgraph_database=memgraph_database,
+        )
+
     builder = QueryConfigBuilder(name="query_graph")
+    builder.store(store_config)
 
     if retriever_kwargs is None:
         retriever_kwargs = {}
@@ -237,22 +311,6 @@ def query_graph(
     _ENTITY_STRATEGIES = {"entity", "entity_embedding", "path"}
     # kg_scored uses tool-calling parser (needs api_key, not entity_labels)
     _TOOL_PARSER_STRATEGIES = {"kg_scored"}
-
-    # Common store kwargs
-    store_kwargs = dict(
-        store_type=store_type,
-        neo4j_uri=neo4j_uri,
-        neo4j_user=neo4j_user,
-        neo4j_password=neo4j_password,
-        neo4j_database=neo4j_database,
-        falkordb_host=falkordb_host,
-        falkordb_port=falkordb_port,
-        falkordb_graph=falkordb_graph,
-        memgraph_uri=memgraph_uri,
-        memgraph_user=memgraph_user,
-        memgraph_password=memgraph_password,
-        memgraph_database=memgraph_database,
-    )
 
     if retrieval_strategy in _TOOL_PARSER_STRATEGIES:
         if api_key is None:
@@ -293,35 +351,29 @@ def query_graph(
             if linker_entities:
                 linker_kw["entities"] = linker_entities
             if linker_neo4j:
-                linker_kw["neo4j_uri"] = neo4j_uri
-                linker_kw["neo4j_user"] = neo4j_user
-                linker_kw["neo4j_password"] = neo4j_password
-                linker_kw["neo4j_database"] = neo4j_database
+                linker_kw["store_config"] = store_config
             builder.linker(**linker_kw)
 
     # Configure retriever based on strategy
     if retrieval_strategy == "entity":
-        builder.retriever(max_hops=max_hops, **store_kwargs)
+        builder.retriever(max_hops=max_hops)
     elif retrieval_strategy == "community":
-        builder.community_retriever(**store_kwargs, **retriever_kwargs)
+        builder.community_retriever(**retriever_kwargs)
     elif retrieval_strategy == "chunk_embedding":
-        builder.chunk_embedding_retriever(**store_kwargs, **retriever_kwargs)
+        builder.chunk_embedding_retriever(**retriever_kwargs)
     elif retrieval_strategy == "entity_embedding":
-        builder.entity_embedding_retriever(**store_kwargs, **retriever_kwargs)
+        builder.entity_embedding_retriever(**retriever_kwargs)
     elif retrieval_strategy == "tool":
         tool_kw = dict(retriever_kwargs)
         if api_key is not None and "api_key" not in tool_kw:
             tool_kw["api_key"] = api_key
         if "model" not in tool_kw:
             tool_kw["model"] = model
-        builder.tool_retriever(**store_kwargs, **tool_kw)
+        builder.tool_retriever(**tool_kw)
     elif retrieval_strategy == "path":
-        builder.path_retriever(**store_kwargs, **retriever_kwargs)
+        builder.path_retriever(**retriever_kwargs)
     elif retrieval_strategy == "kg_scored":
-        # kg_scored: tool parser → kg_scorer (no separate retriever)
-        scorer_kw = dict(retriever_kwargs)
-        scorer_kw.update(store_kwargs)
-        builder.kg_scorer(**scorer_kw)
+        builder.kg_scorer(**retriever_kwargs)
     else:
         raise ValueError(
             f"Unknown retrieval_strategy: {retrieval_strategy!r}. "
@@ -371,6 +423,7 @@ def ingest_data(
     memgraph_database: str = "memgraph",
     json_output: str = None,
     verbose: bool = False,
+    store_config: BaseStoreConfig = None,
 ) -> PipeContext:
     """Ingest pre-structured entities and relations into the graph database.
 
@@ -388,6 +441,7 @@ def ingest_data(
         store_type: Graph store backend ("neo4j", "falkordb", "memgraph").
         json_output: Path to also save data as JSON (ingest-ready format).
         verbose: Enable verbose logging.
+        store_config: A BaseStoreConfig object. If provided, overrides individual store params.
 
     Returns:
         PipeContext with writer_result containing entity_count, relation_count.
@@ -410,22 +464,19 @@ def ingest_data(
     if relations is None:
         relations = []
 
+    if store_config is None:
+        store_config = resolve_store_config(
+            store_type=store_type, neo4j_uri=neo4j_uri, neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password, neo4j_database=neo4j_database,
+            falkordb_host=falkordb_host, falkordb_port=falkordb_port,
+            falkordb_graph=falkordb_graph, memgraph_uri=memgraph_uri,
+            memgraph_user=memgraph_user, memgraph_password=memgraph_password,
+            memgraph_database=memgraph_database,
+        )
+
     builder = IngestConfigBuilder(name="ingest_data")
-    builder.graph_writer(
-        neo4j_uri=neo4j_uri,
-        neo4j_user=neo4j_user,
-        neo4j_password=neo4j_password,
-        neo4j_database=neo4j_database,
-        store_type=store_type,
-        falkordb_host=falkordb_host,
-        falkordb_port=falkordb_port,
-        falkordb_graph=falkordb_graph,
-        memgraph_uri=memgraph_uri,
-        memgraph_user=memgraph_user,
-        memgraph_password=memgraph_password,
-        memgraph_database=memgraph_database,
-        json_output=json_output,
-    )
+    builder.store(store_config)
+    builder.graph_writer(json_output=json_output)
 
     executor = builder.build(verbose=verbose)
     return executor.execute({"entities": entities, "relations": relations})
@@ -455,6 +506,7 @@ def detect_communities(
     model_name: str = "all-MiniLM-L6-v2",
     vector_store_type: str = "in_memory",
     verbose: bool = False,
+    store_config: BaseStoreConfig = None,
 ) -> PipeContext:
     """Detect communities in an existing knowledge graph.
 
@@ -477,28 +529,28 @@ def detect_communities(
         model_name: Embedding model name.
         vector_store_type: "in_memory", "faiss", or "qdrant".
         verbose: Enable verbose logging.
+        store_config: A BaseStoreConfig object. If provided, overrides individual store params.
 
     Returns:
         PipeContext with detector_result and optionally summarizer_result,
         embedder_result.
     """
+    if store_config is None:
+        store_config = resolve_store_config(
+            store_type=store_type, neo4j_uri=neo4j_uri, neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password, neo4j_database=neo4j_database,
+            falkordb_host=falkordb_host, falkordb_port=falkordb_port,
+            falkordb_graph=falkordb_graph, memgraph_uri=memgraph_uri,
+            memgraph_user=memgraph_user, memgraph_password=memgraph_password,
+            memgraph_database=memgraph_database,
+        )
+
     builder = CommunityConfigBuilder(name="detect_communities")
+    builder.store(store_config)
     builder.detector(
         method=method,
         levels=levels,
         resolution=resolution,
-        store_type=store_type,
-        neo4j_uri=neo4j_uri,
-        neo4j_user=neo4j_user,
-        neo4j_password=neo4j_password,
-        neo4j_database=neo4j_database,
-        falkordb_host=falkordb_host,
-        falkordb_port=falkordb_port,
-        falkordb_graph=falkordb_graph,
-        memgraph_uri=memgraph_uri,
-        memgraph_user=memgraph_user,
-        memgraph_password=memgraph_password,
-        memgraph_database=memgraph_database,
     )
 
     if api_key is not None:
@@ -542,6 +594,7 @@ def train_kg_model(
     memgraph_password: str = "",
     memgraph_database: str = "memgraph",
     verbose: bool = False,
+    store_config: BaseStoreConfig = None,
 ) -> PipeContext:
     """Train KG embeddings using PyKEEN in one call.
 
@@ -569,29 +622,29 @@ def train_kg_model(
         neo4j_database: Neo4j database name.
         store_type: Graph store backend.
         verbose: Enable verbose logging.
+        store_config: A BaseStoreConfig object. If provided, overrides individual store params.
 
     Returns:
         PipeContext with reader_result, trainer_result, storer_result.
     """
+    if store_config is None:
+        store_config = resolve_store_config(
+            store_type=store_type, neo4j_uri=neo4j_uri, neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password, neo4j_database=neo4j_database,
+            falkordb_host=falkordb_host, falkordb_port=falkordb_port,
+            falkordb_graph=falkordb_graph, memgraph_uri=memgraph_uri,
+            memgraph_user=memgraph_user, memgraph_password=memgraph_password,
+            memgraph_database=memgraph_database,
+        )
+
     builder = KGModelingConfigBuilder(name="train_kg_model")
+    builder.store(store_config)
     builder.triple_reader(
         source=source,
         tsv_path=tsv_path,
         train_ratio=train_ratio,
         val_ratio=val_ratio,
         test_ratio=test_ratio,
-        store_type=store_type,
-        neo4j_uri=neo4j_uri,
-        neo4j_user=neo4j_user,
-        neo4j_password=neo4j_password,
-        neo4j_database=neo4j_database,
-        falkordb_host=falkordb_host,
-        falkordb_port=falkordb_port,
-        falkordb_graph=falkordb_graph,
-        memgraph_uri=memgraph_uri,
-        memgraph_user=memgraph_user,
-        memgraph_password=memgraph_password,
-        memgraph_database=memgraph_database,
     )
     builder.trainer(
         model=model,

@@ -6,7 +6,7 @@ import logging
 
 import numpy as np
 
-from .vector_base import BaseVectorStore
+from .base import BaseVectorStore
 
 logger = logging.getLogger(__name__)
 

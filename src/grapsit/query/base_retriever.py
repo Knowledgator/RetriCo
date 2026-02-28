@@ -27,10 +27,10 @@ class BaseRetriever(BaseProcessor):
         self._vector_store = None
 
     def _ensure_store(self):
-        """Lazily create the graph store via ``create_store(config)``."""
+        """Lazily create the graph store (shared from pool if available)."""
         if self._store is None:
-            from ..store import create_store
-            self._store = create_store(self.config_dict)
+            from ..store.pool import resolve_from_pool_or_create
+            self._store = resolve_from_pool_or_create(self.config_dict, "graph")
 
     def _ensure_embedding_model(self):
         """Lazily create the embedding model via ``create_embedding_model(config)``."""
@@ -39,10 +39,10 @@ class BaseRetriever(BaseProcessor):
             self._embedding_model = create_embedding_model(self.config_dict)
 
     def _ensure_vector_store(self):
-        """Lazily create the vector store via ``create_vector_store(config)``."""
+        """Lazily create the vector store (shared from pool if available)."""
         if self._vector_store is None:
-            from ..store.vector import create_vector_store
-            self._vector_store = create_vector_store(self.config_dict)
+            from ..store.pool import resolve_from_pool_or_create
+            self._vector_store = resolve_from_pool_or_create(self.config_dict, "vector")
 
     def _lookup_entity(self, mention: EntityMention) -> Optional[Dict[str, Any]]:
         """Look up an entity by linked_entity_id first, then by label."""
@@ -70,13 +70,18 @@ class BaseRetriever(BaseProcessor):
                 entity_type=ent_dict.get("entity_type", ""),
             ))
 
+        # Build ID → label map so relations show entity names, not IDs
+        id_to_label = {e.id: e.label for e in sg_entities}
+
         sg_relations = []
         for rel_dict in raw.get("relations", []):
             if rel_dict is None or rel_dict.get("type") is None:
                 continue
+            head_id = rel_dict.get("head", "")
+            tail_id = rel_dict.get("tail", "")
             sg_relations.append(Relation(
-                head_text=rel_dict.get("head", ""),
-                tail_text=rel_dict.get("tail", ""),
+                head_text=id_to_label.get(head_id, head_id),
+                tail_text=id_to_label.get(tail_id, tail_id),
                 relation_type=rel_dict.get("type", ""),
                 score=rel_dict.get("score", 0.0) or 0.0,
             ))

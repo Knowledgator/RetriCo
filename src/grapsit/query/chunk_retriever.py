@@ -35,8 +35,8 @@ class ChunkRetrieverProcessor(BaseProcessor):
 
     def _ensure_store(self):
         if self._store is None:
-            from ..store import create_store
-            self._store = create_store(self.config_dict)
+            from ..store.pool import resolve_from_pool_or_create
+            self._store = resolve_from_pool_or_create(self.config_dict, "graph")
 
     def _select_entities(self, subgraph: Subgraph, scored_triples: Any = None):
         """Select which entities to retrieve chunks for based on chunk_entity_source."""

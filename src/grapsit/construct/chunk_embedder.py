@@ -5,10 +5,9 @@ import logging
 
 from ..core.base import BaseProcessor
 from ..core.registry import processor_registry
-from ..store import create_store
+from ..store.pool import resolve_from_pool_or_create
 from ..modeling.embeddings import create_embedding_model
-from ..store.vector import create_vector_store
-from ..store.vector_graph import GraphDBVectorStore as _GraphDBVectorStore
+from ..store.vector.graph_db import GraphDBVectorStore as _GraphDBVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +36,7 @@ class ChunkEmbedderProcessor(BaseProcessor):
 
     def _ensure_store(self):
         if self._store is None:
-            self._store = create_store(self.config_dict)
+            self._store = resolve_from_pool_or_create(self.config_dict, "graph")
 
     def _ensure_embedding_model(self):
         if self._embedding_model is None:
@@ -52,20 +51,7 @@ class ChunkEmbedderProcessor(BaseProcessor):
 
     def _ensure_vector_store(self):
         if self._vector_store is None:
-            vector_config = {
-                "vector_store_type": self.config_dict.get("vector_store_type", "in_memory"),
-            }
-            _VECTOR_PASSTHROUGH_KEYS = (
-                "use_gpu", "qdrant_url", "qdrant_api_key", "qdrant_path", "prefer_grpc",
-                # graph_db backend needs graph store connection params
-                "store_type", "neo4j_uri", "neo4j_user", "neo4j_password", "neo4j_database",
-                "falkordb_host", "falkordb_port", "falkordb_graph",
-                "memgraph_uri", "memgraph_user", "memgraph_password", "memgraph_database",
-            )
-            for key in _VECTOR_PASSTHROUGH_KEYS:
-                if key in self.config_dict:
-                    vector_config[key] = self.config_dict[key]
-            self._vector_store = create_vector_store(vector_config)
+            self._vector_store = resolve_from_pool_or_create(self.config_dict, "vector")
 
     def __call__(self, *, chunks: List = None, **kwargs) -> Dict[str, Any]:
         if not chunks:

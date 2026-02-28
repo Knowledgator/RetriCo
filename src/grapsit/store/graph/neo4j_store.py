@@ -6,9 +6,9 @@ import logging
 from neo4j import GraphDatabase
 
 from .base import BaseGraphStore
-from ..models.document import Chunk, Document
-from ..models.entity import Entity, EntityMention
-from ..models.relation import Relation
+from ...models.document import Chunk, Document
+from ...models.entity import Entity, EntityMention
+from ...models.relation import Relation
 
 logger = logging.getLogger(__name__)
 
@@ -227,8 +227,16 @@ class Neo4jGraphStore(BaseGraphStore):
         return [r["e"] for r in records]
 
     def get_entity_by_label(self, label: str) -> Optional[Dict[str, Any]]:
+        # Exact match (case-insensitive)
         records = self._run(
             "MATCH (e:Entity) WHERE toLower(e.label) = toLower($label) RETURN e",
+            {"label": label},
+        )
+        if records:
+            return records[0]["e"]
+        # Fallback: index-friendly STARTS WITH on raw label (no toLower to avoid full scan)
+        records = self._run(
+            "MATCH (e:Entity) WHERE e.label STARTS WITH $label RETURN e LIMIT 1",
             {"label": label},
         )
         if records:

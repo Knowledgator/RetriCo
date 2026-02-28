@@ -7,6 +7,12 @@ from pathlib import Path
 
 from .factory import ProcessorFactory
 from .dag import DAGExecutor
+from ..store.config import (
+    BaseStoreConfig, Neo4jConfig,
+    BaseVectorStoreConfig,
+    resolve_store_config, extract_store_kwargs, _STORE_FLAT_KEYS,
+)
+from ..store.pool import StorePool
 
 # Types that are safe to serialize to YAML
 _YAML_SAFE_TYPES = (str, int, float, bool, type(None))
@@ -25,31 +31,283 @@ def _strip_non_serializable(obj):
     return obj
 
 
-class BuildConfigBuilder:
+class _BuilderBase:
+    """Common infrastructure for all pipeline builders.
+
+    Provides three builder-level store setters — one per database category:
+
+    * ``graph_store(config)`` — graph database (Neo4j, FalkorDB, Memgraph)
+    * ``vector_store(type, **kw)`` — vector database (in_memory, faiss, qdrant)
+    * ``chunk_store(type, **kw)`` — relational chunk storage (sqlite, postgres — planned)
+
+    ``store()`` is a convenience alias for ``graph_store()``.
+
+    Component methods inherit the builder-level config when no explicit
+    override is provided.
+    """
+
+    def __init__(self, name: str, description: str = None):
+        self.name = name
+        self.description = description or f"{name} — auto-generated"
+        self._store_config: Optional[BaseStoreConfig] = None
+        self._vector_store_config: Optional[Dict[str, Any]] = None
+        self._chunk_store_config: Optional[Dict[str, Any]] = None
+        # Named store registries for the pool
+        self._graph_stores: Dict[str, dict] = {}
+        self._vector_stores: Dict[str, dict] = {}
+
+    # -- store setters -------------------------------------------------------
+
+    def store(self, config: BaseStoreConfig = None, **kwargs) -> "_BuilderBase":
+        """Set builder-level graph store config (alias for ``graph_store()``)."""
+        return self.graph_store(config, **kwargs)
+
+    def graph_store(self, config: BaseStoreConfig = None, name: str = None, **kwargs) -> "_BuilderBase":
+        """Set builder-level graph database config.
+
+        All components that need a graph store inherit this unless overridden.
+
+        Args:
+            config: A ``BaseStoreConfig`` subclass (``Neo4jConfig``, ``FalkorDBConfig``, etc.).
+            name: Pool name for the store (default: from config or ``"default"``).
+            **kwargs: Legacy flat-key overrides (``neo4j_uri=...``, ``store_type=...``, etc.).
+        """
+        resolved = resolve_store_config(config, **kwargs)
+        pool_name = name or getattr(resolved, "name", "default")
+        self._store_config = resolved
+        self._graph_stores[pool_name] = resolved.to_flat_dict()
+        return self
+
+    def vector_store(
+        self,
+        config: BaseVectorStoreConfig = None,
+        type: str = "in_memory",
+        name: str = "default",
+        **kwargs,
+    ) -> "_BuilderBase":
+        """Set builder-level vector store config.
+
+        Components that need a vector store (embedders, embedding retrievers)
+        inherit this unless overridden.
+
+        Args:
+            config: A ``BaseVectorStoreConfig`` subclass.
+            type: Vector store backend — ``"in_memory"``, ``"faiss"``, or ``"qdrant"``.
+            name: Pool name for the store (default: from config or ``"default"``).
+            **kwargs: Backend-specific params (e.g. ``qdrant_url``, ``use_gpu``).
+        """
+        if isinstance(config, BaseVectorStoreConfig):
+            pool_name = name if name != "default" else config.name
+            flat = config.to_flat_dict()
+        else:
+            pool_name = name
+            flat = {"vector_store_type": type, **kwargs}
+        self._vector_store_config = flat
+        self._vector_stores[pool_name] = flat
+        return self
+
+    def chunk_store(
+        self,
+        type: str = "sqlite",
+        **kwargs,
+    ) -> "_BuilderBase":
+        """Set builder-level chunk/document store config (planned).
+
+        Components that need a chunk store (keyword retriever, chunk retriever)
+        inherit this unless overridden.
+
+        Args:
+            type: Chunk store backend — ``"sqlite"`` or ``"postgres"``.
+            **kwargs: Backend-specific params (e.g. ``path``, ``dsn``).
+        """
+        self._chunk_store_config = {"chunk_store_type": type, **kwargs}
+        return self
+
+    # -- internal helpers ----------------------------------------------------
+
+    def _effective_store(self, store_config=None, **kwargs) -> Optional[BaseStoreConfig]:
+        """Resolve graph store: explicit > builder-level > None."""
+        store_kwargs = extract_store_kwargs(kwargs)
+        if store_config is not None or store_kwargs:
+            return resolve_store_config(store_config, **store_kwargs)
+        return self._store_config
+
+    def _effective_store_flat(self, store_config=None, **kwargs) -> dict:
+        """Resolve graph store and return flat dict (with Neo4j defaults as fallback)."""
+        store = self._effective_store(store_config, **kwargs)
+        if store is not None:
+            return store.to_flat_dict()
+        return Neo4jConfig().to_flat_dict()
+
+    def _effective_vector_store(self, **overrides) -> dict:
+        """Resolve vector store config: explicit overrides > builder-level > empty."""
+        base = dict(self._vector_store_config) if self._vector_store_config else {}
+        base.update(overrides)
+        return base
+
+    def _inherit_store(self, source_config: dict, target_config: dict):
+        """Inherit store keys from source into target (if not already set)."""
+        for key in _STORE_FLAT_KEYS:
+            if key not in target_config and key in source_config:
+                target_config[key] = source_config[key]
+
+    # -- build / save --------------------------------------------------------
+
+    def build(self, verbose: bool = False) -> DAGExecutor:
+        """Build and return a DAGExecutor."""
+        config = self.get_config()
+        pool = self._build_pool()
+        return ProcessorFactory.create_from_dict(
+            config, verbose=verbose, store_pool=pool,
+        )
+
+    def _build_pool(self) -> Optional[StorePool]:
+        """Build a StorePool from registered named stores (if any)."""
+        if not self._graph_stores and not self._vector_stores:
+            return None
+        pool = StorePool()
+        for name, cfg in self._graph_stores.items():
+            pool.register_graph(name, cfg)
+        for name, cfg in self._vector_stores.items():
+            pool.register_vector(name, cfg)
+        return pool
+
+    def save(self, filepath: str) -> None:
+        """Save config to YAML."""
+        config = _strip_non_serializable(self.get_config())
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+    def _stores_section(self) -> Optional[Dict[str, Any]]:
+        """Build the ``stores`` section for get_config() output."""
+        stores: Dict[str, Any] = {}
+        if self._graph_stores:
+            stores["graph"] = dict(self._graph_stores)
+        if self._vector_stores:
+            stores["vector"] = dict(self._vector_stores)
+        return stores or None
+
+    def get_config(self) -> Dict[str, Any]:
+        raise NotImplementedError
+
+
+class _LinkerMixin:
+    """Adds linker() method to builders."""
+
+    _has_linker: bool
+    _linker_config: Optional[Dict[str, Any]]
+
+    def linker(
+        self,
+        executor: Any = None,
+        model: str = "knowledgator/gliner-linker-large-v1.0",
+        threshold: float = 0.5,
+        entities: Any = None,
+        store_config: BaseStoreConfig = None,
+        **kwargs,
+    ):
+        self._has_linker = True
+        self._linker_config = {
+            "model": model,
+            "threshold": threshold,
+        }
+        if executor is not None:
+            self._linker_config["executor"] = executor
+        if entities is not None:
+            self._linker_config["entities"] = entities
+        # Only inject store config if explicitly provided at this level
+        store = self._effective_store(store_config, **kwargs)
+        if store_config is not None or extract_store_kwargs(dict(kwargs)):
+            self._linker_config.update(store.to_flat_dict())
+        # Pass remaining non-store kwargs
+        self._linker_config.update(kwargs)
+        return self
+
+
+class _GraphWriterMixin:
+    """Adds graph_writer() method to builders."""
+
+    _writer_config: Optional[Dict[str, Any]]
+
+    def graph_writer(
+        self,
+        store_config: BaseStoreConfig = None,
+        setup_indexes: bool = True,
+        json_output: str = None,
+        **kwargs,
+    ):
+        store = self._effective_store(store_config, **kwargs) or Neo4jConfig()
+        self._writer_config = store.to_flat_dict()
+        self._writer_config["setup_indexes"] = setup_indexes
+        if json_output is not None:
+            self._writer_config["json_output"] = json_output
+        self._writer_config.update(kwargs)
+        return self
+
+
+class _EmbedderMixin:
+    """Adds chunk_embedder() and entity_embedder() methods."""
+
+    _chunk_embedder_config: Optional[Dict[str, Any]]
+    _entity_embedder_config: Optional[Dict[str, Any]]
+
+    def chunk_embedder(
+        self,
+        embedding_method: str = "sentence_transformer",
+        model_name: str = "all-MiniLM-L6-v2",
+        vector_store_type: str = None,
+        vector_index_name: str = "chunk_embeddings",
+        **extra,
+    ):
+        vs = self._effective_vector_store()
+        self._chunk_embedder_config = {
+            "embedding_method": embedding_method,
+            "model_name": model_name,
+            "vector_store_type": vector_store_type or vs.get("vector_store_type", "in_memory"),
+            "vector_index_name": vector_index_name,
+            **extra,
+        }
+        return self
+
+    def entity_embedder(
+        self,
+        embedding_method: str = "sentence_transformer",
+        model_name: str = "all-MiniLM-L6-v2",
+        vector_store_type: str = None,
+        vector_index_name: str = "entity_embeddings",
+        **extra,
+    ):
+        vs = self._effective_vector_store()
+        self._entity_embedder_config = {
+            "embedding_method": embedding_method,
+            "model_name": model_name,
+            "vector_store_type": vector_store_type or vs.get("vector_store_type", "in_memory"),
+            "vector_index_name": vector_index_name,
+            **extra,
+        }
+        return self
+
+class BuildConfigBuilder(_BuilderBase, 
+                         _LinkerMixin, 
+                         _GraphWriterMixin, 
+                         _EmbedderMixin):
     """Declarative builder for graph-building pipeline configs.
 
     Usage::
 
         builder = BuildConfigBuilder(name="my_graph")
+        builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687"))
         builder.chunker(method="sentence")
-        builder.ner_gliner(model="urchade/gliner_multi-v2.1", labels=["person", "org"])
-        builder.relex_gliner(
-            model="knowledgator/gliner-relex-large-v0.5",
-            entity_labels=["person", "org"],
-            relation_labels=["works_at", "founded"],
-        )
-        builder.graph_writer(neo4j_uri="bolt://localhost:7687")
+        builder.ner_gliner(labels=["person", "org"])
+        builder.graph_writer()  # inherits store from builder
 
-        # Get executor directly
         executor = builder.build()
-
-        # Or save to YAML
         builder.save("configs/my_graph.yaml")
     """
 
     def __init__(self, name: str = "build_pipeline", description: str = None):
-        self.name = name
-        self.description = description or f"{name} — auto-generated"
+        super().__init__(name, description)
         self._chunker_config: Optional[Dict[str, Any]] = None
         self._ner_config: Optional[Dict[str, Any]] = None
         self._ner_type: str = "ner_gliner"
@@ -76,7 +334,7 @@ class BuildConfigBuilder:
 
     def ner_gliner(
         self,
-        model: str = "urchade/gliner_multi-v2.1",
+        model: str = "knowledgator/gliner-multitask-large-v0.5",
         labels: List[str] = None,
         threshold: float = 0.3,
         batch_size: int = 8,
@@ -118,52 +376,6 @@ class BuildConfigBuilder:
             self._ner_config["base_url"] = base_url
         return self
 
-    def linker(
-        self,
-        executor: Any = None,
-        model: str = "knowledgator/gliner-linker-large-v1.0",
-        threshold: float = 0.5,
-        entities: Any = None,
-        store_type: str = None,
-        neo4j_uri: str = None,
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        falkordb_host: str = None,
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = None,
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
-    ) -> "BuildConfigBuilder":
-        self._has_linker = True
-        self._linker_config = {
-            "model": model,
-            "threshold": threshold,
-        }
-        if executor is not None:
-            self._linker_config["executor"] = executor
-        if entities is not None:
-            self._linker_config["entities"] = entities
-        if store_type is not None:
-            self._linker_config["store_type"] = store_type
-        if neo4j_uri is not None:
-            self._linker_config["neo4j_uri"] = neo4j_uri
-            self._linker_config["neo4j_user"] = neo4j_user
-            self._linker_config["neo4j_password"] = neo4j_password
-            self._linker_config["neo4j_database"] = neo4j_database
-        if falkordb_host is not None:
-            self._linker_config["falkordb_host"] = falkordb_host
-            self._linker_config["falkordb_port"] = falkordb_port
-            self._linker_config["falkordb_graph"] = falkordb_graph
-        if memgraph_uri is not None:
-            self._linker_config["memgraph_uri"] = memgraph_uri
-            self._linker_config["memgraph_user"] = memgraph_user
-            self._linker_config["memgraph_password"] = memgraph_password
-            self._linker_config["memgraph_database"] = memgraph_database
-        return self
-
     def relex_gliner(
         self,
         model: str = "knowledgator/gliner-relex-large-v0.5",
@@ -192,7 +404,7 @@ class BuildConfigBuilder:
         self,
         api_key: str = None,
         base_url: str = None,
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-5-mini",
         entity_labels: List[str] = None,
         relation_labels: List[str] = None,
         temperature: float = 0.1,
@@ -212,76 +424,6 @@ class BuildConfigBuilder:
             self._relex_config["api_key"] = api_key
         if base_url is not None:
             self._relex_config["base_url"] = base_url
-        return self
-
-    def graph_writer(
-        self,
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        setup_indexes: bool = True,
-        store_type: str = "neo4j",
-        falkordb_host: str = "localhost",
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = "bolt://localhost:7687",
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
-        json_output: str = None,
-    ) -> "BuildConfigBuilder":
-        self._writer_config = {
-            "store_type": store_type,
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "neo4j_password": neo4j_password,
-            "neo4j_database": neo4j_database,
-            "setup_indexes": setup_indexes,
-            "falkordb_host": falkordb_host,
-            "falkordb_port": falkordb_port,
-            "falkordb_graph": falkordb_graph,
-            "memgraph_uri": memgraph_uri,
-            "memgraph_user": memgraph_user,
-            "memgraph_password": memgraph_password,
-            "memgraph_database": memgraph_database,
-        }
-        if json_output is not None:
-            self._writer_config["json_output"] = json_output
-        return self
-
-    def chunk_embedder(
-        self,
-        embedding_method: str = "sentence_transformer",
-        model_name: str = "all-MiniLM-L6-v2",
-        vector_store_type: str = "in_memory",
-        vector_index_name: str = "chunk_embeddings",
-        **extra,
-    ) -> "BuildConfigBuilder":
-        self._chunk_embedder_config = {
-            "embedding_method": embedding_method,
-            "model_name": model_name,
-            "vector_store_type": vector_store_type,
-            "vector_index_name": vector_index_name,
-            **extra,
-        }
-        return self
-
-    def entity_embedder(
-        self,
-        embedding_method: str = "sentence_transformer",
-        model_name: str = "all-MiniLM-L6-v2",
-        vector_store_type: str = "in_memory",
-        vector_index_name: str = "entity_embeddings",
-        **extra,
-    ) -> "BuildConfigBuilder":
-        self._entity_embedder_config = {
-            "embedding_method": embedding_method,
-            "model_name": model_name,
-            "vector_store_type": vector_store_type,
-            "vector_index_name": vector_index_name,
-            **extra,
-        }
         return self
 
     def get_config(self) -> Dict[str, Any]:
@@ -342,7 +484,6 @@ class BuildConfigBuilder:
             })
 
         # Determine the entity source after NER/linker
-        # Priority: linker > ner (linker output has linked_entity_id)
         if has_linker:
             entity_source_before_relex = "linker_result"
         elif has_ner:
@@ -398,7 +539,6 @@ class BuildConfigBuilder:
 
         # Optional embedder nodes (run after graph_writer)
         if self._chunk_embedder_config is not None:
-            # Inherit store params from writer config
             embedder_config = dict(self._writer_config)
             embedder_config.update(self._chunk_embedder_config)
             nodes.append({
@@ -426,85 +566,52 @@ class BuildConfigBuilder:
                 "config": embedder_config,
             })
 
-        return {
+        result = {
             "name": self.name,
             "description": self.description,
             "nodes": nodes,
         }
-
-    def build(self, verbose: bool = False) -> DAGExecutor:
-        """Build and return a DAGExecutor."""
-        return ProcessorFactory.create_from_dict(self.get_config(), verbose=verbose)
-
-    def save(self, filepath: str) -> None:
-        """Save config to YAML."""
-        config = _strip_non_serializable(self.get_config())
-        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-        with open(filepath, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        stores = self._stores_section()
+        if stores:
+            result["stores"] = stores
+        return result
 
 
-class IngestConfigBuilder:
+class IngestConfigBuilder(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
     """Declarative builder for raw data ingest pipelines.
 
     Writes pre-structured entities and relations directly to the graph database,
-    bypassing chunking, NER, and relation extraction.
+    bypassing NER and relation extraction.
 
     Usage::
 
         builder = IngestConfigBuilder(name="my_ingest")
-        builder.graph_writer(neo4j_uri="bolt://localhost:7687")
+        builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687"))
+        builder.graph_writer()
         executor = builder.build()
         result = executor.execute({
-            "entities": [
-                {"text": "Einstein", "label": "person"},
-                {"text": "Ulm", "label": "location"},
-            ],
-            "relations": [
-                {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
-            ],
+            "entities": [{"text": "Einstein", "label": "person"}],
+            "relations": [{"head": "Einstein", "tail": "Ulm", "type": "born_in"}],
         })
     """
 
     def __init__(self, name: str = "ingest_pipeline", description: str = None):
-        self.name = name
-        self.description = description or f"{name} — auto-generated"
+        super().__init__(name, description)
         self._writer_config: Optional[Dict[str, Any]] = None
+        self._ingest_config: Dict[str, Any] = {}
+        self._chunk_embedder_config: Optional[Dict[str, Any]] = None
+        self._entity_embedder_config: Optional[Dict[str, Any]] = None
 
-    def graph_writer(
+    def chunker(
         self,
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        setup_indexes: bool = True,
-        store_type: str = "neo4j",
-        falkordb_host: str = "localhost",
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = "bolt://localhost:7687",
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
-        json_output: str = None,
+        method: str = "sentence",
+        chunk_size: int = 512,
+        overlap: int = 50,
     ) -> "IngestConfigBuilder":
-        self._writer_config = {
-            "store_type": store_type,
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "neo4j_password": neo4j_password,
-            "neo4j_database": neo4j_database,
-            "setup_indexes": setup_indexes,
-            "falkordb_host": falkordb_host,
-            "falkordb_port": falkordb_port,
-            "falkordb_graph": falkordb_graph,
-            "memgraph_uri": memgraph_uri,
-            "memgraph_user": memgraph_user,
-            "memgraph_password": memgraph_password,
-            "memgraph_database": memgraph_database,
-        }
-        if json_output is not None:
-            self._writer_config["json_output"] = json_output
+        """Configure chunking for optional texts input."""
+        self._ingest_config["chunk_method"] = method
+        self._ingest_config["chunk_size"] = chunk_size
+        self._ingest_config["chunk_overlap"] = overlap
         return self
 
     def get_config(self) -> Dict[str, Any]:
@@ -512,16 +619,19 @@ class IngestConfigBuilder:
         if not self._writer_config:
             self._writer_config = {}
 
+        ingest_inputs = {
+            "entities": {"source": "$input", "fields": "entities"},
+            "relations": {"source": "$input", "fields": "relations"},
+            "texts": {"source": "$input", "fields": "texts", "default": None},
+        }
+
         nodes = [
             {
                 "id": "data_ingest",
                 "processor": "data_ingest",
-                "inputs": {
-                    "entities": {"source": "$input", "fields": "entities"},
-                    "relations": {"source": "$input", "fields": "relations"},
-                },
+                "inputs": ingest_inputs,
                 "output": {"key": "ingest_result"},
-                "config": {},
+                "config": dict(self._ingest_config),
             },
             {
                 "id": "graph_writer",
@@ -538,42 +648,63 @@ class IngestConfigBuilder:
             },
         ]
 
-        return {
+        if self._chunk_embedder_config is not None:
+            embedder_config = dict(self._writer_config)
+            embedder_config.update(self._chunk_embedder_config)
+            nodes.append({
+                "id": "chunk_embedder",
+                "processor": "chunk_embedder",
+                "requires": ["graph_writer"],
+                "inputs": {
+                    "chunks": {"source": "ingest_result", "fields": "chunks"},
+                },
+                "output": {"key": "chunk_embedder_result"},
+                "config": embedder_config,
+            })
+
+        if self._entity_embedder_config is not None:
+            embedder_config = dict(self._writer_config)
+            embedder_config.update(self._entity_embedder_config)
+            nodes.append({
+                "id": "entity_embedder",
+                "processor": "entity_embedder",
+                "requires": ["graph_writer"],
+                "inputs": {
+                    "entity_map": {"source": "writer_result", "fields": "entity_map"},
+                },
+                "output": {"key": "entity_embedder_result"},
+                "config": embedder_config,
+            })
+
+        result = {
             "name": self.name,
             "description": self.description,
             "nodes": nodes,
         }
-
-    def build(self, verbose: bool = False) -> DAGExecutor:
-        """Build and return a DAGExecutor."""
-        return ProcessorFactory.create_from_dict(self.get_config(), verbose=verbose)
-
-    def save(self, filepath: str) -> None:
-        """Save config to YAML."""
-        config = _strip_non_serializable(self.get_config())
-        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-        with open(filepath, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        stores = self._stores_section()
+        if stores:
+            result["stores"] = stores
+        return result
 
 
-class QueryConfigBuilder:
+class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
     """Declarative builder for query pipeline configs.
 
     Usage::
 
         builder = QueryConfigBuilder(name="my_query")
+        builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687"))
         builder.query_parser(method="gliner", labels=["person", "location"])
-        builder.retriever(neo4j_uri="bolt://localhost:7687", max_hops=2)
+        builder.retriever(max_hops=2)
         builder.chunk_retriever()
-        builder.reasoner(api_key="...", model="gpt-4o-mini")  # optional
+        builder.reasoner(api_key="...", model="gpt-4o-mini")
 
         executor = builder.build()
         result = executor.execute({"query": "Where was Einstein born?"})
     """
 
     def __init__(self, name: str = "query_pipeline", description: str = None):
-        self.name = name
-        self.description = description or f"{name} — auto-generated"
+        super().__init__(name, description)
         self._parser_config: Optional[Dict[str, Any]] = None
         self._linker_config: Optional[Dict[str, Any]] = None
         self._has_linker: bool = False
@@ -612,84 +743,11 @@ class QueryConfigBuilder:
             self._parser_config["base_url"] = base_url
         return self
 
-    def linker(
-        self,
-        executor: Any = None,
-        model: str = "knowledgator/gliner-linker-large-v1.0",
-        threshold: float = 0.5,
-        entities: Any = None,
-        neo4j_uri: str = None,
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        store_type: str = None,
-        falkordb_host: str = None,
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = None,
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
-    ) -> "QueryConfigBuilder":
-        self._has_linker = True
-        self._linker_config = {
-            "model": model,
-            "threshold": threshold,
-        }
-        if executor is not None:
-            self._linker_config["executor"] = executor
-        if entities is not None:
-            self._linker_config["entities"] = entities
-        if store_type is not None:
-            self._linker_config["store_type"] = store_type
-        if neo4j_uri is not None:
-            self._linker_config["neo4j_uri"] = neo4j_uri
-            self._linker_config["neo4j_user"] = neo4j_user
-            self._linker_config["neo4j_password"] = neo4j_password
-            self._linker_config["neo4j_database"] = neo4j_database
-        if falkordb_host is not None:
-            self._linker_config["falkordb_host"] = falkordb_host
-            self._linker_config["falkordb_port"] = falkordb_port
-            self._linker_config["falkordb_graph"] = falkordb_graph
-        if memgraph_uri is not None:
-            self._linker_config["memgraph_uri"] = memgraph_uri
-            self._linker_config["memgraph_user"] = memgraph_user
-            self._linker_config["memgraph_password"] = memgraph_password
-            self._linker_config["memgraph_database"] = memgraph_database
-        return self
-
-    def retriever(
-        self,
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        max_hops: int = 2,
-        store_type: str = "neo4j",
-        falkordb_host: str = "localhost",
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = "bolt://localhost:7687",
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
-    ) -> "QueryConfigBuilder":
+    def retriever(self, max_hops: int = 2, store_config: BaseStoreConfig = None, **kwargs) -> "QueryConfigBuilder":
         self._retriever_type = "retriever"
-        self._retriever_config = {
-            "store_type": store_type,
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "neo4j_password": neo4j_password,
-            "neo4j_database": neo4j_database,
-            "max_hops": max_hops,
-            "falkordb_host": falkordb_host,
-            "falkordb_port": falkordb_port,
-            "falkordb_graph": falkordb_graph,
-            "memgraph_uri": memgraph_uri,
-            "memgraph_user": memgraph_user,
-            "memgraph_password": memgraph_password,
-            "memgraph_database": memgraph_database,
-        }
+        self._retriever_config = self._effective_store_flat(store_config, **kwargs)
+        self._retriever_config["max_hops"] = max_hops
+        self._retriever_config.update(kwargs)
         return self
 
     def community_retriever(
@@ -699,41 +757,22 @@ class QueryConfigBuilder:
         vector_index_name: str = "community_embeddings",
         embedding_method: str = "sentence_transformer",
         model_name: str = "all-MiniLM-L6-v2",
-        vector_store_type: str = "in_memory",
-        store_type: str = "neo4j",
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        falkordb_host: str = "localhost",
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = "bolt://localhost:7687",
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
+        vector_store_type: str = None,
+        store_config: BaseStoreConfig = None,
+        **kwargs,
     ) -> "QueryConfigBuilder":
         self._retriever_type = "community_retriever"
-        self._retriever_config = {
+        vs = self._effective_vector_store()
+        self._retriever_config = self._effective_store_flat(store_config, **kwargs)
+        self._retriever_config.update({
             "top_k": top_k,
             "max_hops": max_hops,
             "vector_index_name": vector_index_name,
             "embedding_method": embedding_method,
             "model_name": model_name,
-            "vector_store_type": vector_store_type,
-            "store_type": store_type,
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "neo4j_password": neo4j_password,
-            "neo4j_database": neo4j_database,
-            "falkordb_host": falkordb_host,
-            "falkordb_port": falkordb_port,
-            "falkordb_graph": falkordb_graph,
-            "memgraph_uri": memgraph_uri,
-            "memgraph_user": memgraph_user,
-            "memgraph_password": memgraph_password,
-            "memgraph_database": memgraph_database,
-        }
+            "vector_store_type": vector_store_type or vs.get("vector_store_type", "in_memory"),
+        })
+        self._retriever_config.update(kwargs)
         return self
 
     def chunk_embedding_retriever(
@@ -743,41 +782,22 @@ class QueryConfigBuilder:
         vector_index_name: str = "chunk_embeddings",
         embedding_method: str = "sentence_transformer",
         model_name: str = "all-MiniLM-L6-v2",
-        vector_store_type: str = "in_memory",
-        store_type: str = "neo4j",
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        falkordb_host: str = "localhost",
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = "bolt://localhost:7687",
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
+        vector_store_type: str = None,
+        store_config: BaseStoreConfig = None,
+        **kwargs,
     ) -> "QueryConfigBuilder":
         self._retriever_type = "chunk_embedding_retriever"
-        self._retriever_config = {
+        vs = self._effective_vector_store()
+        self._retriever_config = self._effective_store_flat(store_config, **kwargs)
+        self._retriever_config.update({
             "top_k": top_k,
             "max_hops": max_hops,
             "vector_index_name": vector_index_name,
             "embedding_method": embedding_method,
             "model_name": model_name,
-            "vector_store_type": vector_store_type,
-            "store_type": store_type,
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "neo4j_password": neo4j_password,
-            "neo4j_database": neo4j_database,
-            "falkordb_host": falkordb_host,
-            "falkordb_port": falkordb_port,
-            "falkordb_graph": falkordb_graph,
-            "memgraph_uri": memgraph_uri,
-            "memgraph_user": memgraph_user,
-            "memgraph_password": memgraph_password,
-            "memgraph_database": memgraph_database,
-        }
+            "vector_store_type": vector_store_type or vs.get("vector_store_type", "in_memory"),
+        })
+        self._retriever_config.update(kwargs)
         return self
 
     def entity_embedding_retriever(
@@ -787,41 +807,22 @@ class QueryConfigBuilder:
         vector_index_name: str = "entity_embeddings",
         embedding_method: str = "sentence_transformer",
         model_name: str = "all-MiniLM-L6-v2",
-        vector_store_type: str = "in_memory",
-        store_type: str = "neo4j",
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        falkordb_host: str = "localhost",
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = "bolt://localhost:7687",
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
+        vector_store_type: str = None,
+        store_config: BaseStoreConfig = None,
+        **kwargs,
     ) -> "QueryConfigBuilder":
         self._retriever_type = "entity_embedding_retriever"
-        self._retriever_config = {
+        vs = self._effective_vector_store()
+        self._retriever_config = self._effective_store_flat(store_config, **kwargs)
+        self._retriever_config.update({
             "top_k": top_k,
             "max_hops": max_hops,
             "vector_index_name": vector_index_name,
             "embedding_method": embedding_method,
             "model_name": model_name,
-            "vector_store_type": vector_store_type,
-            "store_type": store_type,
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "neo4j_password": neo4j_password,
-            "neo4j_database": neo4j_database,
-            "falkordb_host": falkordb_host,
-            "falkordb_port": falkordb_port,
-            "falkordb_graph": falkordb_graph,
-            "memgraph_uri": memgraph_uri,
-            "memgraph_user": memgraph_user,
-            "memgraph_password": memgraph_password,
-            "memgraph_database": memgraph_database,
-        }
+            "vector_store_type": vector_store_type or vs.get("vector_store_type", "in_memory"),
+        })
+        self._retriever_config.update(kwargs)
         return self
 
     def tool_retriever(
@@ -835,21 +836,12 @@ class QueryConfigBuilder:
         entity_types: List[str] = None,
         relation_types: List[str] = None,
         max_tool_rounds: int = 3,
-        store_type: str = "neo4j",
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        falkordb_host: str = "localhost",
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = "bolt://localhost:7687",
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
+        store_config: BaseStoreConfig = None,
+        **kwargs,
     ) -> "QueryConfigBuilder":
         self._retriever_type = "tool_retriever"
-        self._retriever_config = {
+        self._retriever_config = self._effective_store_flat(store_config, **kwargs)
+        self._retriever_config.update({
             "model": model,
             "temperature": temperature,
             "max_completion_tokens": max_completion_tokens,
@@ -857,19 +849,8 @@ class QueryConfigBuilder:
             "entity_types": entity_types or [],
             "relation_types": relation_types or [],
             "max_tool_rounds": max_tool_rounds,
-            "store_type": store_type,
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "neo4j_password": neo4j_password,
-            "neo4j_database": neo4j_database,
-            "falkordb_host": falkordb_host,
-            "falkordb_port": falkordb_port,
-            "falkordb_graph": falkordb_graph,
-            "memgraph_uri": memgraph_uri,
-            "memgraph_user": memgraph_user,
-            "memgraph_password": memgraph_password,
-            "memgraph_database": memgraph_database,
-        }
+        })
+        self._retriever_config.update(kwargs)
         if api_key is not None:
             self._retriever_config["api_key"] = api_key
         if base_url is not None:
@@ -880,81 +861,32 @@ class QueryConfigBuilder:
         self,
         max_path_length: int = 5,
         max_pairs: int = 10,
-        store_type: str = "neo4j",
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        falkordb_host: str = "localhost",
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = "bolt://localhost:7687",
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
+        store_config: BaseStoreConfig = None,
+        **kwargs,
     ) -> "QueryConfigBuilder":
         self._retriever_type = "path_retriever"
-        self._retriever_config = {
+        self._retriever_config = self._effective_store_flat(store_config, **kwargs)
+        self._retriever_config.update({
             "max_path_length": max_path_length,
             "max_pairs": max_pairs,
-            "store_type": store_type,
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "neo4j_password": neo4j_password,
-            "neo4j_database": neo4j_database,
-            "falkordb_host": falkordb_host,
-            "falkordb_port": falkordb_port,
-            "falkordb_graph": falkordb_graph,
-            "memgraph_uri": memgraph_uri,
-            "memgraph_user": memgraph_user,
-            "memgraph_password": memgraph_password,
-            "memgraph_database": memgraph_database,
-        }
+        })
+        self._retriever_config.update(kwargs)
         return self
 
     def chunk_retriever(
         self,
-        neo4j_uri: str = None,
-        neo4j_user: str = None,
-        neo4j_password: str = None,
-        neo4j_database: str = None,
         max_chunks: int = 0,
         chunk_entity_source: str = "all",
-        store_type: str = None,
-        falkordb_host: str = None,
-        falkordb_port: int = None,
-        falkordb_graph: str = None,
-        memgraph_uri: str = None,
-        memgraph_user: str = None,
-        memgraph_password: str = None,
-        memgraph_database: str = None,
+        store_config: BaseStoreConfig = None,
+        **kwargs,
     ) -> "QueryConfigBuilder":
         self._chunk_config = {"max_chunks": max_chunks, "chunk_entity_source": chunk_entity_source}
-        # Inherit store config from retriever if not explicitly provided
-        if neo4j_uri is not None:
-            self._chunk_config["neo4j_uri"] = neo4j_uri
-        if neo4j_user is not None:
-            self._chunk_config["neo4j_user"] = neo4j_user
-        if neo4j_password is not None:
-            self._chunk_config["neo4j_password"] = neo4j_password
-        if neo4j_database is not None:
-            self._chunk_config["neo4j_database"] = neo4j_database
-        if store_type is not None:
-            self._chunk_config["store_type"] = store_type
-        if falkordb_host is not None:
-            self._chunk_config["falkordb_host"] = falkordb_host
-        if falkordb_port is not None:
-            self._chunk_config["falkordb_port"] = falkordb_port
-        if falkordb_graph is not None:
-            self._chunk_config["falkordb_graph"] = falkordb_graph
-        if memgraph_uri is not None:
-            self._chunk_config["memgraph_uri"] = memgraph_uri
-        if memgraph_user is not None:
-            self._chunk_config["memgraph_user"] = memgraph_user
-        if memgraph_password is not None:
-            self._chunk_config["memgraph_password"] = memgraph_password
-        if memgraph_database is not None:
-            self._chunk_config["memgraph_database"] = memgraph_database
+        if store_config is not None:
+            self._chunk_config.update(store_config.to_flat_dict())
+        store_kw = extract_store_kwargs(kwargs)
+        if store_kw:
+            self._chunk_config.update(store_kw)
+        self._chunk_config.update(kwargs)
         return self
 
     def reasoner(
@@ -990,18 +922,8 @@ class QueryConfigBuilder:
         predict_tails: bool = True,
         predict_heads: bool = False,
         device: str = "cpu",
-        store_type: str = None,
-        neo4j_uri: str = None,
-        neo4j_user: str = None,
-        neo4j_password: str = None,
-        neo4j_database: str = None,
-        falkordb_host: str = None,
-        falkordb_port: int = None,
-        falkordb_graph: str = None,
-        memgraph_uri: str = None,
-        memgraph_user: str = None,
-        memgraph_password: str = None,
-        memgraph_database: str = None,
+        store_config: BaseStoreConfig = None,
+        **kwargs,
     ) -> "QueryConfigBuilder":
         self._kg_scorer_config = {
             "model_name": model_name,
@@ -1015,30 +937,11 @@ class QueryConfigBuilder:
             self._kg_scorer_config["model_path"] = model_path
         if score_threshold is not None:
             self._kg_scorer_config["score_threshold"] = score_threshold
-        if store_type is not None:
-            self._kg_scorer_config["store_type"] = store_type
-        if neo4j_uri is not None:
-            self._kg_scorer_config["neo4j_uri"] = neo4j_uri
-        if neo4j_user is not None:
-            self._kg_scorer_config["neo4j_user"] = neo4j_user
-        if neo4j_password is not None:
-            self._kg_scorer_config["neo4j_password"] = neo4j_password
-        if neo4j_database is not None:
-            self._kg_scorer_config["neo4j_database"] = neo4j_database
-        if falkordb_host is not None:
-            self._kg_scorer_config["falkordb_host"] = falkordb_host
-        if falkordb_port is not None:
-            self._kg_scorer_config["falkordb_port"] = falkordb_port
-        if falkordb_graph is not None:
-            self._kg_scorer_config["falkordb_graph"] = falkordb_graph
-        if memgraph_uri is not None:
-            self._kg_scorer_config["memgraph_uri"] = memgraph_uri
-        if memgraph_user is not None:
-            self._kg_scorer_config["memgraph_user"] = memgraph_user
-        if memgraph_password is not None:
-            self._kg_scorer_config["memgraph_password"] = memgraph_password
-        if memgraph_database is not None:
-            self._kg_scorer_config["memgraph_database"] = memgraph_database
+        # Only inject store if explicitly provided at this level
+        store = self._effective_store(store_config, **kwargs)
+        if store_config is not None or extract_store_kwargs(dict(kwargs)):
+            self._kg_scorer_config.update(store.to_flat_dict())
+        self._kg_scorer_config.update(kwargs)
         return self
 
     def get_config(self) -> Dict[str, Any]:
@@ -1056,8 +959,6 @@ class QueryConfigBuilder:
 
         # Strategies that require entities from a parser
         _ENTITY_STRATEGIES = {"retriever", "entity_embedding_retriever", "path_retriever"}
-        # Strategies that take query directly (no parser needed)
-        _QUERY_STRATEGIES = {"community_retriever", "chunk_embedding_retriever", "tool_retriever"}
 
         if not is_kg_scored:
             needs_parser = self._retriever_type in _ENTITY_STRATEGIES
@@ -1073,16 +974,8 @@ class QueryConfigBuilder:
         # Default chunk retriever inherits store config
         if self._chunk_config is None:
             self._chunk_config = {}
-        inherit_keys = (
-            "store_type", "neo4j_uri", "neo4j_user", "neo4j_password", "neo4j_database",
-            "falkordb_host", "falkordb_port", "falkordb_graph",
-            "memgraph_uri", "memgraph_user", "memgraph_password", "memgraph_database",
-        )
-        # Inherit from retriever config or kg_scorer config
         inherit_source = self._retriever_config or self._kg_scorer_config or {}
-        for key in inherit_keys:
-            if key not in self._chunk_config and key in inherit_source:
-                self._chunk_config[key] = inherit_source[key]
+        self._inherit_store(inherit_source, self._chunk_config)
 
         nodes = []
 
@@ -1137,14 +1030,17 @@ class QueryConfigBuilder:
                     "config": self._reasoner_config,
                 })
 
-            return {
+            result = {
                 "name": self.name,
                 "description": self.description,
                 "nodes": nodes,
             }
+            stores = self._stores_section()
+            if stores:
+                result["stores"] = stores
+            return result
 
         # Standard pipeline
-        # Add parser if configured (needed for entity-based strategies)
         if has_parser:
             nodes.append({
                 "id": "query_parser",
@@ -1173,7 +1069,6 @@ class QueryConfigBuilder:
 
         # Build retriever node based on strategy type
         if self._retriever_type in _ENTITY_STRATEGIES:
-            # Entity-based retriever: needs entities from parser/linker
             if has_linker:
                 entity_source = "linker_result"
                 retriever_requires = ["linker"]
@@ -1192,7 +1087,6 @@ class QueryConfigBuilder:
                 "config": self._retriever_config,
             })
         else:
-            # Query-based retriever: takes query directly
             nodes.append({
                 "id": "retriever",
                 "processor": self._retriever_type,
@@ -1229,7 +1123,6 @@ class QueryConfigBuilder:
             })
 
         if self._kg_scorer_config is not None:
-            # Determine subgraph source and dependencies
             scorer_requires = ["retriever"]
             subgraph_source = "retriever_result"
             if has_parser:
@@ -1250,34 +1143,25 @@ class QueryConfigBuilder:
                 "config": self._kg_scorer_config,
             })
 
-        return {
+        result = {
             "name": self.name,
             "description": self.description,
             "nodes": nodes,
         }
-
-    def build(self, verbose: bool = False) -> DAGExecutor:
-        """Build and return a DAGExecutor."""
-        return ProcessorFactory.create_from_dict(self.get_config(), verbose=verbose)
-
-    def save(self, filepath: str) -> None:
-        """Save config to YAML."""
-        config = _strip_non_serializable(self.get_config())
-        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-        with open(filepath, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        stores = self._stores_section()
+        if stores:
+            result["stores"] = stores
+        return result
 
 
-class CommunityConfigBuilder:
+class CommunityConfigBuilder(_BuilderBase):
     """Declarative builder for community detection pipeline configs.
-
-    Detects communities in an existing knowledge graph, optionally generates
-    LLM summaries, and optionally embeds community summaries.
 
     Usage::
 
         builder = CommunityConfigBuilder(name="my_communities")
-        builder.detector(method="louvain", levels=2, neo4j_uri="bolt://localhost:7687")
+        builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687"))
+        builder.detector(method="louvain", levels=2)
         builder.summarizer(api_key="sk-...", model="gpt-4o-mini")
         builder.embedder(embedding_method="sentence_transformer")
         executor = builder.build()
@@ -1285,8 +1169,7 @@ class CommunityConfigBuilder:
     """
 
     def __init__(self, name: str = "community_pipeline", description: str = None):
-        self.name = name
-        self.description = description or f"{name} — auto-generated"
+        super().__init__(name, description)
         self._detector_config: Optional[Dict[str, Any]] = None
         self._summarizer_config: Optional[Dict[str, Any]] = None
         self._embedder_config: Optional[Dict[str, Any]] = None
@@ -1296,36 +1179,17 @@ class CommunityConfigBuilder:
         method: str = "louvain",
         levels: int = 1,
         resolution: float = 1.0,
-        store_type: str = "neo4j",
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        falkordb_host: str = "localhost",
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = "bolt://localhost:7687",
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
+        store_config: BaseStoreConfig = None,
+        **kwargs,
     ) -> "CommunityConfigBuilder":
+        store = self._effective_store(store_config, **kwargs) or Neo4jConfig()
         self._detector_config = {
             "method": method,
             "levels": levels,
             "resolution": resolution,
-            "store_type": store_type,
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "neo4j_password": neo4j_password,
-            "neo4j_database": neo4j_database,
-            "falkordb_host": falkordb_host,
-            "falkordb_port": falkordb_port,
-            "falkordb_graph": falkordb_graph,
-            "memgraph_uri": memgraph_uri,
-            "memgraph_user": memgraph_user,
-            "memgraph_password": memgraph_password,
-            "memgraph_database": memgraph_database,
         }
+        self._detector_config.update(store.to_flat_dict())
+        self._detector_config.update(kwargs)
         return self
 
     def summarizer(
@@ -1355,13 +1219,14 @@ class CommunityConfigBuilder:
         self,
         embedding_method: str = "sentence_transformer",
         model_name: str = "all-MiniLM-L6-v2",
-        vector_store_type: str = "in_memory",
+        vector_store_type: str = None,
         **extra,
     ) -> "CommunityConfigBuilder":
+        vs = self._effective_vector_store()
         self._embedder_config = {
             "embedding_method": embedding_method,
             "model_name": model_name,
-            "vector_store_type": vector_store_type,
+            "vector_store_type": vector_store_type or vs.get("vector_store_type", "in_memory"),
         }
         self._embedder_config.update(extra)
         return self
@@ -1381,18 +1246,9 @@ class CommunityConfigBuilder:
             },
         ]
 
-        # Inherit store params from detector for downstream processors
-        store_keys = (
-            "store_type", "neo4j_uri", "neo4j_user", "neo4j_password", "neo4j_database",
-            "falkordb_host", "falkordb_port", "falkordb_graph",
-            "memgraph_uri", "memgraph_user", "memgraph_password", "memgraph_database",
-        )
-
         if self._summarizer_config is not None:
             summarizer_full = dict(self._summarizer_config)
-            for key in store_keys:
-                if key not in summarizer_full and key in self._detector_config:
-                    summarizer_full[key] = self._detector_config[key]
+            self._inherit_store(self._detector_config, summarizer_full)
 
             nodes.append({
                 "id": "community_summarizer",
@@ -1405,9 +1261,7 @@ class CommunityConfigBuilder:
 
         if self._embedder_config is not None:
             embedder_full = dict(self._embedder_config)
-            for key in store_keys:
-                if key not in embedder_full and key in self._detector_config:
-                    embedder_full[key] = self._detector_config[key]
+            self._inherit_store(self._detector_config, embedder_full)
 
             embedder_requires = ["community_detector"]
             if self._summarizer_config is not None:
@@ -1422,33 +1276,25 @@ class CommunityConfigBuilder:
                 "config": embedder_full,
             })
 
-        return {
+        result = {
             "name": self.name,
             "description": self.description,
             "nodes": nodes,
         }
-
-    def build(self, verbose: bool = False) -> DAGExecutor:
-        """Build and return a DAGExecutor."""
-        return ProcessorFactory.create_from_dict(self.get_config(), verbose=verbose)
-
-    def save(self, filepath: str) -> None:
-        """Save config to YAML."""
-        config = _strip_non_serializable(self.get_config())
-        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-        with open(filepath, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        stores = self._stores_section()
+        if stores:
+            result["stores"] = stores
+        return result
 
 
-class KGModelingConfigBuilder:
+class KGModelingConfigBuilder(_BuilderBase):
     """Declarative builder for KG embedding training pipelines.
-
-    Reads triples, trains a PyKEEN model, and stores embeddings.
 
     Usage::
 
         builder = KGModelingConfigBuilder(name="my_kg")
-        builder.triple_reader(neo4j_uri="bolt://localhost:7687")
+        builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687"))
+        builder.triple_reader()
         builder.trainer(model="RotatE", epochs=100)
         builder.storer(model_path="kg_model")
         executor = builder.build()
@@ -1456,8 +1302,7 @@ class KGModelingConfigBuilder:
     """
 
     def __init__(self, name: str = "kg_modeling_pipeline", description: str = None):
-        self.name = name
-        self.description = description or f"{name} — auto-generated"
+        super().__init__(name, description)
         self._reader_config: Optional[Dict[str, Any]] = None
         self._trainer_config: Optional[Dict[str, Any]] = None
         self._storer_config: Optional[Dict[str, Any]] = None
@@ -1470,38 +1315,19 @@ class KGModelingConfigBuilder:
         val_ratio: float = 0.1,
         test_ratio: float = 0.1,
         random_seed: int = 42,
-        store_type: str = "neo4j",
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        neo4j_database: str = "neo4j",
-        falkordb_host: str = "localhost",
-        falkordb_port: int = 6379,
-        falkordb_graph: str = "grapsit",
-        memgraph_uri: str = "bolt://localhost:7687",
-        memgraph_user: str = "",
-        memgraph_password: str = "",
-        memgraph_database: str = "memgraph",
+        store_config: BaseStoreConfig = None,
+        **kwargs,
     ) -> "KGModelingConfigBuilder":
+        store = self._effective_store(store_config, **kwargs) or Neo4jConfig()
         self._reader_config = {
             "source": source,
             "train_ratio": train_ratio,
             "val_ratio": val_ratio,
             "test_ratio": test_ratio,
             "random_seed": random_seed,
-            "store_type": store_type,
-            "neo4j_uri": neo4j_uri,
-            "neo4j_user": neo4j_user,
-            "neo4j_password": neo4j_password,
-            "neo4j_database": neo4j_database,
-            "falkordb_host": falkordb_host,
-            "falkordb_port": falkordb_port,
-            "falkordb_graph": falkordb_graph,
-            "memgraph_uri": memgraph_uri,
-            "memgraph_user": memgraph_user,
-            "memgraph_password": memgraph_password,
-            "memgraph_database": memgraph_database,
         }
+        self._reader_config.update(store.to_flat_dict())
+        self._reader_config.update(kwargs)
         if tsv_path is not None:
             self._reader_config["tsv_path"] = tsv_path
         return self
@@ -1536,15 +1362,16 @@ class KGModelingConfigBuilder:
         model_path: str = "kg_model",
         entity_index_name: str = "kg_entity_embeddings",
         relation_index_name: str = "kg_relation_embeddings",
-        vector_store_type: str = "in_memory",
+        vector_store_type: str = None,
         store_to_graph: bool = False,
         **extra,
     ) -> "KGModelingConfigBuilder":
+        vs = self._effective_vector_store()
         self._storer_config = {
             "model_path": model_path,
             "entity_index_name": entity_index_name,
             "relation_index_name": relation_index_name,
-            "vector_store_type": vector_store_type,
+            "vector_store_type": vector_store_type or vs.get("vector_store_type", "in_memory"),
             "store_to_graph": store_to_graph,
         }
         self._storer_config.update(extra)
@@ -1580,16 +1407,8 @@ class KGModelingConfigBuilder:
         ]
 
         if self._storer_config is not None:
-            # Inherit store params from reader for graph DB writes
-            store_keys = (
-                "store_type", "neo4j_uri", "neo4j_user", "neo4j_password", "neo4j_database",
-                "falkordb_host", "falkordb_port", "falkordb_graph",
-                "memgraph_uri", "memgraph_user", "memgraph_password", "memgraph_database",
-            )
             storer_full = dict(self._storer_config)
-            for key in store_keys:
-                if key not in storer_full and key in self._reader_config:
-                    storer_full[key] = self._reader_config[key]
+            self._inherit_store(self._reader_config, storer_full)
 
             nodes.append({
                 "id": "kg_embedding_storer",
@@ -1604,19 +1423,12 @@ class KGModelingConfigBuilder:
                 "config": storer_full,
             })
 
-        return {
+        result = {
             "name": self.name,
             "description": self.description,
             "nodes": nodes,
         }
-
-    def build(self, verbose: bool = False) -> DAGExecutor:
-        """Build and return a DAGExecutor."""
-        return ProcessorFactory.create_from_dict(self.get_config(), verbose=verbose)
-
-    def save(self, filepath: str) -> None:
-        """Save config to YAML."""
-        config = _strip_non_serializable(self.get_config())
-        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-        with open(filepath, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        stores = self._stores_section()
+        if stores:
+            result["stores"] = stores
+        return result

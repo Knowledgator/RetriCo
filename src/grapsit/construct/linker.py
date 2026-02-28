@@ -68,8 +68,8 @@ class EntityLinkerProcessor(BaseProcessor):
         falkordb_host = self.config_dict.get("falkordb_host")
         store_type = self.config_dict.get("store_type")
         if neo4j_uri or falkordb_host or store_type:
-            from ..store import create_store
-            store = create_store(self.config_dict)
+            from ..store.pool import resolve_from_pool_or_create
+            store = resolve_from_pool_or_create(self.config_dict, "graph")
             raw_entities = store.get_all_entities()
             store.close()
 

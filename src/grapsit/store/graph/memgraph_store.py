@@ -8,7 +8,7 @@ import logging
 import uuid
 
 from .neo4j_store import Neo4jGraphStore, _sanitize_label
-from ..models.entity import Entity
+from ...models.entity import Entity
 
 logger = logging.getLogger(__name__)
 

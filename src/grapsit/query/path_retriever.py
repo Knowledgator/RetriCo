@@ -47,6 +47,9 @@ class PathRetrieverProcessor(BaseRetriever):
             record = self._lookup_entity(mention)
             if record is not None:
                 matched.append(record)
+                logger.info(f"Entity matched: {mention.text!r} -> {record.get('label', '?')!r} (id={record.get('id', '?')[:8]}...)")
+            else:
+                logger.info(f"Entity NOT found: {mention.text!r} ({mention.label})")
 
         if len(matched) < 2:
             # Need at least 2 entities for paths; fall back to single entity subgraph

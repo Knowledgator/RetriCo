@@ -5,7 +5,7 @@ import logging
 
 from ..core.base import BaseProcessor
 from ..core.registry import processor_registry
-from ..store import create_store
+from ..store.pool import resolve_from_pool_or_create
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class KGTripleReaderProcessor(BaseProcessor):
 
     def _ensure_store(self):
         if self._store is None:
-            self._store = create_store(self.config_dict)
+            self._store = resolve_from_pool_or_create(self.config_dict, "graph")
 
     def __call__(self, **kwargs) -> Dict[str, Any]:
         try:

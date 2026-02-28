@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 import logging
 import uuid
 
-from .vector_base import BaseVectorStore
+from .base import BaseVectorStore
 
 logger = logging.getLogger(__name__)
 

@@ -101,16 +101,17 @@ class QueryParserProcessor(BaseProcessor):
             label_constraint = ""
 
         prompt = (
-            f"Extract all named entities from this query.\n\n"
+            f"Extract all named entities, key concepts, and important terms from this query.\n\n"
             f"{labels_instruction}\n\n"
             f"Query: \"{query}\"\n\n"
-            f"Return a JSON array of objects with:\n"
-            f'- "text": the exact entity text as it appears\n'
+            f"Return a JSON object with an \"entities\" key containing an array of objects with:\n"
+            f'- "text": the entity or concept text as it appears in the query\n'
             f'- "label": the entity type{label_constraint}\n\n'
-            f"Return ONLY the JSON array, no other text."
+            f"IMPORTANT: Extract domain-specific terms, concepts, and topics — not just proper nouns.\n"
+            f"Return ONLY valid JSON."
         )
         messages = [
-            {"role": "system", "content": "You are a named entity recognition system."},
+            {"role": "system", "content": "You are an entity and concept extraction system. Extract named entities, key concepts, scientific terms, and domain-specific terminology from queries."},
             {"role": "user", "content": prompt},
         ]
 

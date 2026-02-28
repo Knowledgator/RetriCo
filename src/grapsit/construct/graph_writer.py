@@ -10,7 +10,7 @@ from ..core.registry import processor_registry
 from ..models.document import Chunk, Document
 from ..models.entity import Entity, EntityMention
 from ..models.relation import Relation
-from ..store import create_store
+from ..store.pool import resolve_from_pool_or_create
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class GraphWriterProcessor(BaseProcessor):
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
-        self.store = create_store(config_dict)
+        self.store = resolve_from_pool_or_create(config_dict, "graph")
         self.json_output = config_dict.get("json_output", None)
         if config_dict.get("setup_indexes", True):
             try:

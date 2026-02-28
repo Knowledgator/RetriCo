@@ -363,9 +363,10 @@ class DAGPipeline(BaseModel):
 class DAGExecutor:
     """Executes DAG pipeline with topological sort."""
 
-    def __init__(self, pipeline: DAGPipeline, verbose: bool = False):
+    def __init__(self, pipeline: DAGPipeline, verbose: bool = False, store_pool=None):
         self.pipeline = pipeline
         self.verbose = verbose
+        self.store_pool = store_pool
         self.nodes_map: Dict[str, PipeNode] = {}
         self.dependency_graph: Dict[str, List[str]] = defaultdict(list)
         self.reverse_graph: Dict[str, Set[str]] = defaultdict(set)
@@ -395,8 +396,12 @@ class DAGExecutor:
 
         for node_id, node in self.nodes_map.items():
             try:
+                config = dict(node.config)
+                # Inject store pool into every processor's config
+                if self.store_pool is not None:
+                    config["__store_pool__"] = self.store_pool
                 factory = processor_registry.get(node.processor)
-                processor = factory(config_dict=node.config, pipeline=None)
+                processor = factory(config_dict=config, pipeline=None)
                 self.processors[node_id] = processor
             except Exception as e:
                 raise RuntimeError(
@@ -490,3 +495,15 @@ class DAGExecutor:
 
     def _evaluate_condition(self, condition: str, context: PipeContext) -> bool:
         return True
+
+    def close(self):
+        """Close the store pool (if any), releasing all shared connections."""
+        if self.store_pool is not None:
+            self.store_pool.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False

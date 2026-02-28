@@ -7,7 +7,7 @@ Supports Neo4j, FalkorDB, and Memgraph.  The backend is selected via the
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from .vector_base import BaseVectorStore
+from .base import BaseVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +78,13 @@ class GraphDBVectorStore(BaseVectorStore):
 
     def _ensure_store(self):
         if self._graph_store is None:
-            from . import create_store
-
-            self._graph_store = create_store(self._store_config)
+            # Check for injected instance from StorePool
+            injected = self._store_config.get("__graph_store_instance__")
+            if injected is not None:
+                self._graph_store = injected
+            else:
+                from ..graph import create_graph_store
+                self._graph_store = create_graph_store(self._store_config)
 
     def _resolve_index(self, name: str) -> Tuple[str, str]:
         """Return ``(node_label, property_name)`` for an index name."""

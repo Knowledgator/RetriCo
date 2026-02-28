@@ -4,9 +4,9 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from .base import BaseGraphStore
-from ..models.document import Chunk, Document
-from ..models.entity import Entity, EntityMention
-from ..models.relation import Relation
+from ...models.document import Chunk, Document
+from ...models.entity import Entity, EntityMention
+from ...models.relation import Relation
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +32,12 @@ class FalkorDBGraphStore(BaseGraphStore):
         host: str = "localhost",
         port: int = 6379,
         graph: str = "grapsit",
+        query_timeout: int = 0,
     ):
         self.host = host
         self.port = port
         self.graph_name = graph
+        self.query_timeout = query_timeout  # milliseconds, 0 = server default
         self._db = None
         self._graph = None
 
@@ -48,7 +50,10 @@ class FalkorDBGraphStore(BaseGraphStore):
     def _run(self, query: str, parameters: dict = None) -> list:
         self._ensure_connection()
         params = parameters or {}
-        result = self._graph.query(query, params)
+        kwargs = {}
+        if self.query_timeout > 0:
+            kwargs["timeout"] = self.query_timeout
+        result = self._graph.query(query, params, **kwargs)
         return result.result_set
 
     def close(self):
@@ -192,8 +197,16 @@ class FalkorDBGraphStore(BaseGraphStore):
         return [_node_to_dict(row[0]) for row in rows]
 
     def get_entity_by_label(self, label: str) -> Optional[Dict[str, Any]]:
+        # Exact match (case-insensitive)
         rows = self._run(
             "MATCH (e:Entity) WHERE toLower(e.label) = toLower($label) RETURN e",
+            {"label": label},
+        )
+        if rows:
+            return _node_to_dict(rows[0][0])
+        # Fallback: index-friendly STARTS WITH on raw label (no toLower to avoid full scan)
+        rows = self._run(
+            "MATCH (e:Entity) WHERE e.label STARTS WITH $label RETURN e LIMIT 1",
             {"label": label},
         )
         if rows:

@@ -52,10 +52,10 @@ class KGScorerProcessor(BaseProcessor):
         self.device = config_dict.get("device", "cpu")
 
     def _ensure_store(self):
-        """Lazily create the graph store via ``create_store(config)``."""
+        """Lazily create the graph store (shared from pool if available)."""
         if self._store is None:
-            from ..store import create_store
-            self._store = create_store(self.config_dict)
+            from ..store.pool import resolve_from_pool_or_create
+            self._store = resolve_from_pool_or_create(self.config_dict, "graph")
 
     def _load_from_disk(self):
         """Load model, entity_to_id, and relation_to_id from disk."""

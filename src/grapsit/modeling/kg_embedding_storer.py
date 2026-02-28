@@ -7,8 +7,7 @@ import os
 
 from ..core.base import BaseProcessor
 from ..core.registry import processor_registry
-from ..store import create_store
-from ..store.vector import create_vector_store
+from ..store.pool import resolve_from_pool_or_create
 
 logger = logging.getLogger(__name__)
 
@@ -48,21 +47,11 @@ class KGEmbeddingStorerProcessor(BaseProcessor):
 
     def _ensure_store(self):
         if self._store is None:
-            self._store = create_store(self.config_dict)
+            self._store = resolve_from_pool_or_create(self.config_dict, "graph")
 
     def _ensure_vector_store(self):
         if self._vector_store is None:
-            vector_config = {
-                "vector_store_type": self.config_dict.get(
-                    "vector_store_type", "in_memory"
-                ),
-            }
-            for key in (
-                "use_gpu", "qdrant_url", "qdrant_api_key", "qdrant_path", "prefer_grpc",
-            ):
-                if key in self.config_dict:
-                    vector_config[key] = self.config_dict[key]
-            self._vector_store = create_vector_store(vector_config)
+            self._vector_store = resolve_from_pool_or_create(self.config_dict, "vector")
 
     def __call__(self, **kwargs) -> Dict[str, Any]:
         try:
