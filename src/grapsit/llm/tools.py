@@ -515,6 +515,174 @@ def tool_call_to_cypher(
 # Graph schema prompt builder
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Relational (chunk/document) store tools
+# ---------------------------------------------------------------------------
+
+RELATIONAL_FILTER_SCHEMA: Dict[str, Any] = {
+    "type": "array",
+    "description": (
+        "Filters on record fields. Each filter has a field name, "
+        "an operator, and a value. Example: "
+        '[{"field": "document_id", "operator": "eq", "value": "doc_001"}, '
+        '{"field": "index", "operator": "gte", "value": 5}]'
+    ),
+    "items": {
+        "type": "object",
+        "properties": {
+            "field": {
+                "type": "string",
+                "description": "The field name to filter on.",
+            },
+            "operator": {
+                "type": "string",
+                "enum": ["eq", "neq", "gt", "gte", "lt", "lte", "contains", "starts_with"],
+                "description": (
+                    "Comparison operator: eq, neq, gt, gte, lt, lte, "
+                    "contains (substring), starts_with (prefix)."
+                ),
+            },
+            "value": {
+                "description": "The value to compare against.",
+            },
+        },
+        "required": ["field", "operator", "value"],
+    },
+}
+
+RELATIONAL_TOOLS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_chunks",
+            "description": (
+                "Full-text search over stored text chunks. "
+                "Returns the most relevant chunks matching the query."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search text.",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Maximum results to return (default 10).",
+                        "default": 10,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_chunk",
+            "description": "Retrieve a single text chunk by its ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chunk_id": {
+                        "type": "string",
+                        "description": "The chunk ID.",
+                    },
+                },
+                "required": ["chunk_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_records",
+            "description": (
+                "Query records from the chunk/document store with filtering "
+                "and sorting. Use this for structured queries like 'all chunks "
+                "from document X' or 'chunks with index > 5'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table": {
+                        "type": "string",
+                        "description": "Table name (default: 'chunks').",
+                        "default": "chunks",
+                    },
+                    "filters": RELATIONAL_FILTER_SCHEMA,
+                    "sort_by": {
+                        "type": "string",
+                        "description": "Field name to sort by.",
+                    },
+                    "sort_order": {
+                        "type": "string",
+                        "enum": ["asc", "desc"],
+                        "description": "Sort direction (default: 'asc').",
+                        "default": "asc",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default 50).",
+                        "default": 50,
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Pagination offset (default 0).",
+                        "default": 0,
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+]
+
+RELATIONAL_TOOL_NAMES: set = {"search_chunks", "get_chunk", "query_records"}
+
+
+def execute_relational_tool(
+    tool_name: str,
+    args: Dict[str, Any],
+    store: Any,
+    chunk_table: str = "chunks",
+) -> List[Dict[str, Any]]:
+    """Dispatch a relational tool call to the appropriate store method.
+
+    Args:
+        tool_name: One of ``RELATIONAL_TOOL_NAMES``.
+        args: Parsed arguments from the LLM tool call.
+        store: A ``BaseRelationalStore`` instance.
+        chunk_table: Default table name for chunk operations.
+
+    Returns:
+        List of record dicts.
+    """
+    if tool_name == "search_chunks":
+        return store.search(
+            table=chunk_table,
+            query=args["query"],
+            top_k=args.get("top_k", 10),
+        )
+    if tool_name == "get_chunk":
+        record = store.get_record(chunk_table, args["chunk_id"])
+        return [record] if record else []
+    if tool_name == "query_records":
+        return store.query_records(
+            table=args.get("table", chunk_table),
+            filters=args.get("filters"),
+            sort_by=args.get("sort_by"),
+            sort_order=args.get("sort_order", "asc"),
+            limit=args.get("limit", 50),
+            offset=args.get("offset", 0),
+        )
+    raise KeyError(f"Unknown relational tool: {tool_name}")
+
+
+# ---------------------------------------------------------------------------
+# Graph schema prompt builder
+# ---------------------------------------------------------------------------
+
 def build_graph_schema_prompt(
     entity_types: List[str],
     relation_types: List[str],

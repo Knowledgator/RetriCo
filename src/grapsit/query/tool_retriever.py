@@ -5,9 +5,10 @@ import json
 import logging
 
 from ..core.registry import query_registry
-from ..llm.prompts import TOOL_RETRIEVER_SYSTEM_PROMPT
+from ..llm.prompts import TOOL_RETRIEVER_SYSTEM_PROMPT, CHUNK_TOOLS_PROMPT
 from ..models.entity import Entity
 from ..models.relation import Relation
+from ..models.document import Chunk
 from ..models.graph import Subgraph
 from .base_retriever import BaseRetriever
 
@@ -108,8 +109,25 @@ class ToolRetrieverProcessor(BaseRetriever):
         self.max_tool_rounds: int = config_dict.get("max_tool_rounds", 3)
         self.entity_types: List[str] = config_dict.get("entity_types", [])
         self.relation_types: List[str] = config_dict.get("relation_types", [])
+        self.chunk_table: str = config_dict.get("chunk_table", "chunks")
         self._system_prompt_template = config_dict.get("system_prompt", TOOL_RETRIEVER_SYSTEM_PROMPT)
         self._llm = None
+        self._relational_store = None
+
+    def _has_relational_config(self) -> bool:
+        """Return True if a relational store is configured (pool or direct)."""
+        pool = self.config_dict.get("__store_pool__")
+        if pool is not None and pool.has_relational():
+            return True
+        return "relational_store_type" in self.config_dict
+
+    def _ensure_relational_store(self):
+        """Lazily create the relational store (shared from pool if available)."""
+        if self._relational_store is None:
+            from ..store.pool import resolve_from_pool_or_create
+            self._relational_store = resolve_from_pool_or_create(
+                self.config_dict, "relational"
+            )
 
     def _ensure_llm(self):
         """Lazily create the LLM client."""
@@ -135,17 +153,27 @@ class ToolRetrieverProcessor(BaseRetriever):
 
         from ..llm.tools import (
             GRAPH_TOOLS,
+            RELATIONAL_TOOLS,
+            RELATIONAL_TOOL_NAMES,
             tool_call_to_cypher,
+            execute_relational_tool,
             build_graph_schema_prompt,
         )
+
+        # Determine if relational tools should be available
+        has_relational = self._has_relational_config()
+        if has_relational:
+            self._ensure_relational_store()
 
         # Build schema context
         schema_prompt = build_graph_schema_prompt(
             self.entity_types, self.relation_types
         )
 
+        chunk_tools_prompt = CHUNK_TOOLS_PROMPT if has_relational else ""
         system_content = self._system_prompt_template.format(
             schema_prompt=schema_prompt,
+            chunk_tools_prompt=chunk_tools_prompt,
         )
 
         messages: List[Dict[str, Any]] = [
@@ -153,11 +181,17 @@ class ToolRetrieverProcessor(BaseRetriever):
             {"role": "user", "content": query},
         ]
 
+        # Combine tools
+        tools = list(GRAPH_TOOLS)
+        if has_relational:
+            tools.extend(RELATIONAL_TOOLS)
+
         collected_entities: Dict[str, Entity] = {}
         collected_relations: List[Relation] = []
+        collected_chunks: List[Chunk] = []
 
         for _round in range(self.max_tool_rounds):
-            response = self._llm.complete_with_tools(messages, tools=GRAPH_TOOLS)
+            response = self._llm.complete_with_tools(messages, tools=tools)
 
             tool_calls = response.get("tool_calls", [])
             if not tool_calls:
@@ -185,9 +219,17 @@ class ToolRetrieverProcessor(BaseRetriever):
             for tc in tool_calls:
                 results = []
                 try:
-                    cypher, params = tool_call_to_cypher(tc["name"], tc["arguments"])
-                    raw = self._store.run_cypher(cypher, params)
-                    results = _normalize_results(raw)
+                    if tc["name"] in RELATIONAL_TOOL_NAMES:
+                        results = execute_relational_tool(
+                            tc["name"], tc["arguments"],
+                            self._relational_store, self.chunk_table,
+                        )
+                        self._collect_chunks_from_results(results, collected_chunks)
+                    else:
+                        cypher, params = tool_call_to_cypher(tc["name"], tc["arguments"])
+                        raw = self._store.run_cypher(cypher, params)
+                        results = _normalize_results(raw)
+                        self._collect_from_results(results, collected_entities, collected_relations)
                 except Exception as e:
                     results = []
                     messages.append({
@@ -196,9 +238,6 @@ class ToolRetrieverProcessor(BaseRetriever):
                         "content": json.dumps({"error": str(e)}),
                     })
                     continue
-
-                # Collect all results internally (for the subgraph)
-                self._collect_from_results(results, collected_entities, collected_relations)
 
                 # Truncate results sent to the LLM to stay within context limits
                 truncated = results[: self.MAX_RESULTS_PER_CALL]
@@ -220,8 +259,31 @@ class ToolRetrieverProcessor(BaseRetriever):
             "subgraph": Subgraph(
                 entities=list(collected_entities.values()),
                 relations=collected_relations,
+                chunks=collected_chunks,
             )
         }
+
+    @staticmethod
+    def _collect_chunks_from_results(
+        results: List[Dict[str, Any]],
+        chunks: List[Chunk],
+    ):
+        """Extract Chunk objects from relational store results."""
+        seen_ids = {c.id for c in chunks}
+        for record in results:
+            if not isinstance(record, dict):
+                continue
+            chunk_id = record.get("id")
+            if chunk_id and chunk_id not in seen_ids:
+                seen_ids.add(chunk_id)
+                chunks.append(Chunk(
+                    id=chunk_id,
+                    document_id=record.get("document_id", ""),
+                    text=record.get("text", ""),
+                    index=int(record.get("index", 0)),
+                    start_char=int(record.get("start_char", 0)),
+                    end_char=int(record.get("end_char", 0)),
+                ))
 
     def _collect_from_results(
         self,

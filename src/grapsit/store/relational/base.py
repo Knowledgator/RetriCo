@@ -69,6 +69,33 @@ class BaseRelationalStore(ABC):
         ...
 
     @abstractmethod
+    def query_records(
+        self,
+        table: str,
+        filters: Optional[List[Dict[str, Any]]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Query records with filtering and sorting.
+
+        Args:
+            table: Table/collection name.
+            filters: List of filter dicts, each with ``field``, ``operator``,
+                and ``value``. Operators: eq, neq, gt, gte, lt, lte, contains,
+                starts_with.
+            sort_by: Field name to sort results by.
+            sort_order: ``"asc"`` or ``"desc"``.
+            limit: Maximum results to return.
+            offset: Number of records to skip.
+
+        Returns:
+            List of matching record dicts.
+        """
+        ...
+
+    @abstractmethod
     def delete_records(self, table: str, record_ids: List[str]):
         """Delete records by ID.
 

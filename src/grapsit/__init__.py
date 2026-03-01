@@ -564,8 +564,7 @@ def query_graph(
 
 
 def ingest_data(
-    entities: List[Dict[str, Any]],
-    relations: List[Dict[str, Any]] = None,
+    data: List[Dict[str, Any]],
     *,
     neo4j_uri: str = "bolt://localhost:7687",
     neo4j_user: str = "neo4j",
@@ -588,10 +587,9 @@ def ingest_data(
     Bypasses chunking, NER, and relation extraction — writes directly.
 
     Args:
-        entities: List of entity dicts, each with ``text`` and ``label`` keys.
-            Optional keys: ``id`` (explicit ID), ``properties`` (metadata dict).
-        relations: List of relation dicts, each with ``head``, ``tail``, ``type``.
-            Optional keys: ``score``, ``properties``.
+        data: List of dicts, each with ``entities`` (required), ``relations``
+            (optional), and ``text`` (optional) keys.  Each dict groups
+            related entities/relations together, optionally with a source text.
         neo4j_uri: Neo4j bolt URI.
         neo4j_user: Neo4j user.
         neo4j_password: Neo4j password.
@@ -609,19 +607,21 @@ def ingest_data(
         import grapsit
 
         result = grapsit.ingest_data(
-            entities=[
-                {"text": "Einstein", "label": "person"},
-                {"text": "Ulm", "label": "location"},
-            ],
-            relations=[
-                {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+            data=[
+                {
+                    "entities": [
+                        {"text": "Einstein", "label": "person"},
+                        {"text": "Ulm", "label": "location"},
+                    ],
+                    "relations": [
+                        {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+                    ],
+                    "text": "Einstein was born in Ulm.",
+                },
             ],
             neo4j_uri="bolt://localhost:7687",
         )
     """
-    if relations is None:
-        relations = []
-
     if store_config is None:
         store_config = resolve_store_config(
             store_type=store_type, neo4j_uri=neo4j_uri, neo4j_user=neo4j_user,
@@ -637,7 +637,7 @@ def ingest_data(
     builder.graph_writer(json_output=json_output)
 
     executor = builder.build(verbose=verbose)
-    return executor.execute({"entities": entities, "relations": relations})
+    return executor.execute({"data": data})
 
 
 def detect_communities(

@@ -51,6 +51,172 @@ pip install pykeen
 
 Requires Python 3.10+ and a running graph database — [Neo4j](https://neo4j.com/), [FalkorDB](https://www.falkordb.com/), or [Memgraph](https://memgraph.com/).
 
+## Database stores
+
+grapsit uses three categories of database stores — each serves a distinct purpose in the pipeline. You can mix and match backends freely within each category.
+
+### Store categories
+
+| Category | Purpose | Used by | Required? |
+|----------|---------|---------|-----------|
+| **Graph store** | Stores entities, relations, and the knowledge graph structure | `graph_writer`, all retrievers, community detection | Yes — at least one graph store is needed |
+| **Vector store** | Stores embeddings for similarity search | `chunk_embedder`, `entity_embedder`, community embedder, embedding-based retrievers | Only if using embedding-based features |
+| **Relational store** | Stores text chunks and documents in tabular format with full-text search | `graph_writer` (chunk/doc persistence), `store_reader`, `keyword_retriever`, `tool_retriever` (chunk tools) | Only if using chunk storage, keyword search, or store_reader |
+
+### Graph stores
+
+Graph stores hold the knowledge graph — entities as nodes, relations as edges, plus chunk and document nodes.
+
+| Backend | Config class | Python dependency | Startup |
+|---------|-------------|-------------------|---------|
+| [Neo4j](https://neo4j.com/) | `Neo4jConfig` | `neo4j` (included) | `docker run -p 7687:7687 -e NEO4J_AUTH=neo4j/password neo4j` |
+| [FalkorDB](https://www.falkordb.com/) | `FalkorDBConfig` | `falkordb` (optional) | `docker run -p 6379:6379 -it --rm falkordb/falkordb` |
+| [Memgraph](https://memgraph.com/) | `MemgraphConfig` | `neo4j` (shared driver) | `docker run -p 7687:7687 memgraph/memgraph-platform` |
+
+```python
+from grapsit import Neo4jConfig, FalkorDBConfig, MemgraphConfig
+
+# Neo4j
+neo4j_cfg = Neo4jConfig(
+    uri="bolt://localhost:7687",
+    user="neo4j",          # default: "neo4j"
+    password="password",
+    database="neo4j",      # default: "neo4j"
+)
+
+# FalkorDB
+falkor_cfg = FalkorDBConfig(
+    host="localhost",      # default: "localhost"
+    port=6379,             # default: 6379
+    graph="knowledge",     # default: "knowledge_graph"
+)
+
+# Memgraph (uses Bolt protocol, same driver as Neo4j)
+memgraph_cfg = MemgraphConfig(
+    uri="bolt://localhost:7687",
+    user="",               # default: "" (no auth)
+    password="",           # default: "" (no auth)
+)
+```
+
+Or use flat keyword arguments (no config object needed):
+
+```python
+builder.graph_writer(
+    store_type="neo4j",  # or "falkordb", "memgraph"
+    neo4j_uri="bolt://localhost:7687",
+    neo4j_password="password",
+)
+```
+
+### Vector stores
+
+Vector stores hold embeddings for chunks, entities, and community summaries. Used by embedding-based retrieval strategies.
+
+| Backend | Config class | Python dependency | Description |
+|---------|-------------|-------------------|-------------|
+| In-memory | `InMemoryVectorConfig` | — (NumPy) | Process-scoped singleton, cosine similarity. Good for testing. |
+| [FAISS](https://github.com/facebookresearch/faiss) | `FaissVectorConfig` | `faiss-cpu` or `faiss-gpu` | Fast similarity search, CPU or GPU |
+| [Qdrant](https://qdrant.tech/) | `QdrantVectorConfig` | `qdrant-client` | Dedicated vector DB, local or remote |
+| Graph DB native | `GraphDBVectorConfig` | — | Uses the graph store's built-in vector index (Neo4j, FalkorDB) |
+
+```python
+from grapsit import InMemoryVectorConfig, FaissVectorConfig, QdrantVectorConfig, GraphDBVectorConfig
+
+in_mem = InMemoryVectorConfig()
+faiss_cfg = FaissVectorConfig(use_gpu=False)
+qdrant_cfg = QdrantVectorConfig(url="http://localhost:6333", api_key="...")
+graph_vec = GraphDBVectorConfig(graph_store_name="default")  # reuses named graph store's vector index
+```
+
+### Relational stores
+
+Relational stores hold text chunks and documents in a tabular format with full-text search support. They serve multiple purposes:
+- **Chunk/document persistence** — `graph_writer` can write chunks to a relational store alongside the graph
+- **Source reading** — `store_reader` pulls texts from a relational store to feed the build pipeline
+- **Keyword retrieval** — `keyword_retriever` uses full-text search for query-time chunk lookup
+- **Tool retriever chunk tools** — `search_chunks`, `get_chunk`, `query_records` tools for the LLM agent
+
+| Backend | Config class | Python dependency | Full-text search |
+|---------|-------------|-------------------|-----------------|
+| [SQLite](https://www.sqlite.org/) | `SqliteRelationalConfig` | — (stdlib) | FTS5 |
+| [PostgreSQL](https://www.postgresql.org/) | `PostgresRelationalConfig` | `psycopg[binary]` | tsvector + GIN indexes |
+| [Elasticsearch](https://www.elastic.co/) | `ElasticsearchRelationalConfig` | `elasticsearch` | Multi-match queries |
+
+```python
+from grapsit import SqliteRelationalConfig, PostgresRelationalConfig, ElasticsearchRelationalConfig
+
+sqlite_cfg = SqliteRelationalConfig(path="chunks.db")  # or ":memory:" for in-memory
+postgres_cfg = PostgresRelationalConfig(
+    host="localhost",
+    port=5432,
+    user="myuser",
+    password="mypass",
+    database="mydb",
+)
+es_cfg = ElasticsearchRelationalConfig(
+    url="http://localhost:9200",
+    api_key="...",              # optional
+    index_prefix="grapsit_",   # default prefix for ES indices
+)
+```
+
+All relational stores auto-create tables and indexes on first write — no manual schema setup needed.
+
+### Registering stores in a pipeline
+
+Use the builder's `graph_store()`, `vector_store()`, and `chunk_store()` methods to register named stores that are shared across all pipeline nodes:
+
+```python
+from grapsit import BuildConfigBuilder, Neo4jConfig, FaissVectorConfig, SqliteRelationalConfig
+
+builder = BuildConfigBuilder(name="full_pipeline")
+
+# Register named stores (shared across all processors)
+builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687", password="pass"), name="main")
+builder.vector_store(FaissVectorConfig(use_gpu=True), name="embeddings")
+builder.chunk_store(SqliteRelationalConfig(path="chunks.db"), name="chunks")
+
+# Pipeline nodes — no need to repeat connection details
+builder.chunker(method="sentence")
+builder.ner_gliner(labels=["person", "organization", "location"])
+builder.graph_writer()          # uses "main" graph store + "chunks" relational store
+builder.chunk_embedder()        # uses "main" graph store + "embeddings" vector store
+
+with builder.build() as executor:
+    result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+# All connections closed automatically
+```
+
+Without explicit store registration, processors create their own connections from flat config parameters (backward compatible). See [Store pool](#store-pool-shared-connections) for more details on connection sharing.
+
+### Creating stores directly
+
+For programmatic use outside a pipeline:
+
+```python
+from grapsit import create_graph_store, create_vector_store, create_relational_store
+
+# From flat dicts
+graph = create_graph_store({"store_type": "neo4j", "neo4j_uri": "bolt://localhost:7687"})
+vector = create_vector_store({"vector_store_type": "faiss", "use_gpu": True})
+relational = create_relational_store({"relational_store_type": "sqlite", "sqlite_path": "chunks.db"})
+
+# From config objects
+graph = create_graph_store(Neo4jConfig(uri="bolt://localhost:7687").to_flat_dict())
+```
+
+Or import store classes directly:
+
+```python
+from grapsit import Neo4jGraphStore, FalkorDBGraphStore, MemgraphGraphStore
+from grapsit import SqliteRelationalStore, PostgresRelationalStore, ElasticsearchRelationalStore
+
+store = Neo4jGraphStore(uri="bolt://localhost:7687", password="password")
+entity = store.get_entity_by_label("Einstein")
+store.close()
+```
+
 ## Quickstart
 
 One function call to go from raw text to a populated knowledge graph:
@@ -1334,7 +1500,7 @@ executor = builder.build()
 ctx = executor.execute({"query": "What companies did Einstein work at?"})
 ```
 
-The tool retriever uses the same 7 built-in graph tools described in the [LLM function calling](#llm-function-calling-tool-use) section. The LLM sees the graph schema and decides which tools to call — it does **not** generate raw Cypher.
+The tool retriever uses the same 7 built-in graph tools described in the [LLM function calling](#llm-function-calling-tool-use) section. When a relational store is configured (via `chunk_store()` or pool), the 3 [relational tools](#relational-chunkdocument-tools) (`search_chunks`, `get_chunk`, `query_records`) are also available. The LLM sees the graph schema and decides which tools to call — it does **not** generate raw Cypher.
 
 #### Strategy 7: Path-based retrieval
 
@@ -1562,6 +1728,90 @@ Tools that accept filters support a `filters` array for arbitrary property condi
 ```
 
 Supported filter operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`, `starts_with`.
+
+### Relational (chunk/document) tools
+
+When a relational store (SQLite, PostgreSQL, or Elasticsearch) is configured, three additional tools become available for querying stored text chunks and documents:
+
+| Tool | Description |
+|------|------------|
+| `search_chunks` | Full-text search over stored text chunks. Returns the most relevant chunks matching a query string. |
+| `get_chunk` | Retrieve a single text chunk by its ID. |
+| `query_records` | Structured query with filtering, sorting, and pagination. Supports arbitrary field filters (e.g. `document_id = "doc_001"`, `index >= 5`). |
+
+These tools use the same filter syntax as graph tools:
+
+```python
+# "Get all chunks from document doc_001 sorted by index"
+# The LLM would call query_records with:
+{
+    "table": "chunks",
+    "filters": [
+        {"field": "document_id", "operator": "eq", "value": "doc_001"},
+    ],
+    "sort_by": "index",
+    "sort_order": "asc",
+    "limit": 50,
+}
+```
+
+#### Using relational tools with the tool retriever
+
+The tool retriever automatically includes relational tools when a relational store is available (via the store pool or direct config). The LLM agent can then combine graph queries and chunk searches in a single session:
+
+```python
+from grapsit import QueryConfigBuilder
+
+builder = QueryConfigBuilder(name="tool_with_chunks")
+builder.chunk_store(type="sqlite", sqlite_path="chunks.db")
+builder.tool_retriever(
+    api_key="sk-...",
+    model="gpt-4o-mini",
+    neo4j_uri="bolt://localhost:7687",
+    entity_types=["person", "organization", "location"],
+    relation_types=["WORKS_AT", "BORN_IN"],
+    max_tool_rounds=5,
+)
+builder.reasoner(api_key="sk-...", model="gpt-4o-mini")
+executor = builder.build()
+ctx = executor.execute({"query": "What did Einstein publish about relativity?"})
+```
+
+The agent can call `search_entity` to find Einstein in the graph, `get_entity_relations` to find related concepts, and `search_chunks` to find source passages mentioning relativity — all in one agentic loop.
+
+#### Using relational tools directly
+
+You can also dispatch relational tool calls manually:
+
+```python
+from grapsit.llm.tools import RELATIONAL_TOOLS, execute_relational_tool
+from grapsit.store.relational.sqlite_store import SqliteRelationalStore
+
+store = SqliteRelationalStore(path="chunks.db")
+
+# Full-text search
+results = execute_relational_tool("search_chunks", {"query": "relativity", "top_k": 5}, store)
+
+# Get a specific chunk
+results = execute_relational_tool("get_chunk", {"chunk_id": "chunk-001"}, store)
+
+# Structured query with filters
+results = execute_relational_tool("query_records", {
+    "table": "chunks",
+    "filters": [{"field": "document_id", "operator": "eq", "value": "doc_001"}],
+    "sort_by": "index",
+    "limit": 20,
+}, store)
+```
+
+`RELATIONAL_TOOLS` contains the OpenAI function-calling tool definitions, so you can pass them to any LLM alongside `GRAPH_TOOLS`:
+
+```python
+from grapsit.llm.tools import GRAPH_TOOLS, RELATIONAL_TOOLS
+
+all_tools = GRAPH_TOOLS + RELATIONAL_TOOLS
+result = client.complete_with_tools(messages=[...], tools=all_tools)
+```
 
 ### Using `complete_with_tools()`
 
@@ -2481,6 +2731,111 @@ builder.chunk_embedder(
     pinecone_index="my_embeddings",
 )
 ```
+
+### Adding a custom processor
+
+The same registry pattern applies to pipeline processors. There are three category registries — `construct_registry` (build pipeline), `query_registry` (query pipeline), and `modeling_registry` (KG modeling) — plus convenience functions for quick registration.
+
+**Example: custom NER processor**
+
+```python
+import grapsit
+from grapsit.core.base import BaseProcessor
+
+
+class SpacyNERProcessor(BaseProcessor):
+    """NER processor backed by spaCy."""
+
+    def __init__(self, config, pipeline=None):
+        super().__init__(config, pipeline)
+        self._nlp = None
+        self._labels = config.get("labels", [])
+
+    def __call__(self, chunks, **kwargs):
+        if self._nlp is None:
+            import spacy
+            self._nlp = spacy.load(self.config.get("model", "en_core_web_sm"))
+
+        from grapsit.models import EntityMention
+
+        all_entities = []
+        for chunk in chunks:
+            doc = self._nlp(chunk.text)
+            mentions = [
+                EntityMention(
+                    text=ent.text, label=ent.label_.lower(),
+                    start=ent.start_char, end=ent.end_char, score=1.0,
+                )
+                for ent in doc.ents
+                if not self._labels or ent.label_.lower() in self._labels
+            ]
+            all_entities.append(mentions)
+        return {"entities": all_entities, "chunks": chunks}
+
+
+# Register it
+grapsit.register_construct_processor("ner_spacy", lambda config, pipeline=None: SpacyNERProcessor(config, pipeline))
+```
+
+Use the decorator form for more concise registration:
+
+```python
+from grapsit.core.registry import construct_registry
+
+@construct_registry.register("ner_spacy")
+def create_spacy_ner(config, pipeline=None):
+    return SpacyNERProcessor(config, pipeline)
+```
+
+Once registered, the processor works in builder and YAML pipelines:
+
+```python
+# Builder API — use any registered processor by name
+builder = grapsit.BuildConfigBuilder(name="spacy_pipeline")
+builder.chunker(method="sentence")
+builder.add_node(
+    id="ner", processor="ner_spacy",
+    config={"model": "en_core_web_sm", "labels": ["person", "org"]},
+    inputs={"chunks": "chunker_result.chunks"},
+    output="ner_result",
+)
+builder.relex_llm(api_key="sk-...", entity_labels=["person", "org"], relation_labels=["works at"])
+builder.graph_writer(neo4j_uri="bolt://localhost:7687")
+executor = builder.build()
+result = executor.execute({"texts": ["Einstein worked at Princeton."]})
+```
+
+```yaml
+# YAML config — just reference the processor name
+nodes:
+  - id: ner
+    processor: ner_spacy
+    config:
+      model: en_core_web_sm
+      labels: [person, org]
+    inputs:
+      chunks: chunker_result.chunks
+    output: ner_result
+```
+
+**Example: custom retriever**
+
+```python
+from grapsit.core.registry import query_registry
+
+@query_registry.register("my_hybrid_retriever")
+def create_hybrid_retriever(config, pipeline=None):
+    return MyHybridRetriever(config, pipeline)
+```
+
+**Available registries:**
+
+| Registry | Category | Convenience function |
+|----------|----------|---------------------|
+| `grapsit.construct_registry` | Build pipeline (chunker, NER, relex, graph_writer, ...) | `grapsit.register_construct_processor()` |
+| `grapsit.query_registry` | Query pipeline (parser, retrievers, reasoner, ...) | `grapsit.register_query_processor()` |
+| `grapsit.modeling_registry` | KG modeling (community detection, KG training, ...) | `grapsit.register_modeling_processor()` |
+| `grapsit.processor_registry` | Composite — searches all three registries | N/A (use category-specific functions) |
 
 ## Development
 

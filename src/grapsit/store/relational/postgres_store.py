@@ -1,7 +1,7 @@
 """PostgreSQL-backed relational store with tsvector full-text search."""
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import BaseRelationalStore
 
@@ -139,11 +139,12 @@ class PostgresRelationalStore(BaseRelationalStore):
         self, table: str, query: str, top_k: int = 10,
     ) -> List[Dict[str, Any]]:
         self._ensure_connection()
-        # Convert query words to tsquery with & (AND) between words
+        # Convert query words to tsquery with | (OR) between words
+        # so rows matching *any* term are returned, ranked by relevance
         words = query.strip().split()
         if not words:
             return []
-        ts_query = " & ".join(words)
+        ts_query = " | ".join(words)
 
         try:
             cur = self._conn.execute(
@@ -175,6 +176,60 @@ class PostgresRelationalStore(BaseRelationalStore):
         elif offset > 0:
             sql += " OFFSET %s"
             params = [offset]
+        try:
+            cur = self._conn.execute(sql, params)
+        except Exception:
+            return []
+        cols = [desc[0] for desc in cur.description]
+        return [self._deserialize_row(dict(zip(cols, row))) for row in cur]
+
+    @staticmethod
+    def _build_filter_clause(
+        filters: List[Dict[str, Any]],
+    ) -> Tuple[str, List[Any]]:
+        """Build a WHERE clause from filter dicts (PostgreSQL %s params)."""
+        if not filters:
+            return "", []
+        clauses: List[str] = []
+        params: List[Any] = []
+        op_map = {
+            "eq": "=", "neq": "!=", "gt": ">", "gte": ">=",
+            "lt": "<", "lte": "<=",
+        }
+        for f in filters:
+            field = f["field"]
+            operator = f["operator"]
+            value = f["value"]
+            if operator in op_map:
+                clauses.append(f'"{field}" {op_map[operator]} %s')
+                params.append(value)
+            elif operator == "contains":
+                clauses.append(f'"{field}" ILIKE \'%%\' || %s || \'%%\'')
+                params.append(value)
+            elif operator == "starts_with":
+                clauses.append(f'"{field}" ILIKE %s || \'%%\'')
+                params.append(value)
+        if not clauses:
+            return "", []
+        return " WHERE " + " AND ".join(clauses), params
+
+    def query_records(
+        self,
+        table: str,
+        filters: Optional[List[Dict[str, Any]]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        self._ensure_connection()
+        where_sql, params = self._build_filter_clause(filters or [])
+        sql = f'SELECT * FROM "{table}"{where_sql}'
+        if sort_by:
+            direction = "DESC" if sort_order.lower() == "desc" else "ASC"
+            sql += f' ORDER BY "{sort_by}" {direction}'
+        sql += " LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
         try:
             cur = self._conn.execute(sql, params)
         except Exception:

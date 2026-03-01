@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import BaseRelationalStore
 
@@ -125,11 +125,28 @@ class SqliteRelationalStore(BaseRelationalStore):
         row = cur.fetchone()
         return self._deserialize_row(row) if row else None
 
+    @staticmethod
+    def _to_or_query(query: str) -> str:
+        """Convert a plain query into FTS5 OR expression.
+
+        FTS5 defaults to implicit AND — all terms must appear in the same row.
+        For keyword retrieval we want rows matching *any* term, ranked by
+        relevance (rows matching more terms rank higher).
+        """
+        # If the query already contains explicit FTS5 operators, leave it as-is
+        if any(op in query for op in (" OR ", " AND ", " NOT ", '"', "*", "NEAR")):
+            return query
+        tokens = query.split()
+        if len(tokens) <= 1:
+            return query
+        return " OR ".join(tokens)
+
     def search(
         self, table: str, query: str, top_k: int = 10,
     ) -> List[Dict[str, Any]]:
         self._ensure_connection()
         fts_name = f"{table}_fts"
+        fts_query = self._to_or_query(query)
         try:
             cur = self._conn.execute(
                 f'SELECT t.*, "{fts_name}".rank '
@@ -137,7 +154,7 @@ class SqliteRelationalStore(BaseRelationalStore):
                 f'JOIN "{table}" t ON t.rowid = "{fts_name}".rowid '
                 f'WHERE "{fts_name}" MATCH ? '
                 f"ORDER BY rank LIMIT ?",
-                (query, top_k),
+                (fts_query, top_k),
             )
         except sqlite3.OperationalError:
             return []
@@ -160,6 +177,63 @@ class SqliteRelationalStore(BaseRelationalStore):
         elif offset > 0:
             sql += " LIMIT -1 OFFSET ?"
             params = [offset]
+        try:
+            cur = self._conn.execute(sql, params)
+        except sqlite3.OperationalError:
+            return []
+        return [self._deserialize_row(row) for row in cur]
+
+    @staticmethod
+    def _build_filter_clause(
+        filters: List[Dict[str, Any]],
+    ) -> Tuple[str, List[Any]]:
+        """Build a WHERE clause from filter dicts.
+
+        Returns ``(where_sql, params)`` where *where_sql* starts with
+        ``" WHERE ..."`` or is empty when no filters are given.
+        """
+        if not filters:
+            return "", []
+        clauses: List[str] = []
+        params: List[Any] = []
+        op_map = {
+            "eq": "=", "neq": "!=", "gt": ">", "gte": ">=",
+            "lt": "<", "lte": "<=",
+        }
+        for f in filters:
+            field = f["field"]
+            operator = f["operator"]
+            value = f["value"]
+            if operator in op_map:
+                clauses.append(f'"{field}" {op_map[operator]} ?')
+                params.append(value)
+            elif operator == "contains":
+                clauses.append(f'"{field}" LIKE \'%\' || ? || \'%\'')
+                params.append(value)
+            elif operator == "starts_with":
+                clauses.append(f'"{field}" LIKE ? || \'%\'')
+                params.append(value)
+        if not clauses:
+            return "", []
+        return " WHERE " + " AND ".join(clauses), params
+
+    def query_records(
+        self,
+        table: str,
+        filters: Optional[List[Dict[str, Any]]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        self._ensure_connection()
+        where_sql, params = self._build_filter_clause(filters or [])
+        sql = f'SELECT * FROM "{table}"{where_sql}'
+        if sort_by:
+            direction = "DESC" if sort_order.lower() == "desc" else "ASC"
+            sql += f' ORDER BY "{sort_by}" {direction}'
+        sql += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
         try:
             cur = self._conn.execute(sql, params)
         except sqlite3.OperationalError:

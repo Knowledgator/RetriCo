@@ -560,11 +560,8 @@ class BuildConfigBuilder(_BuilderBase,
         """Build configuration dict."""
         if not self._chunker_config:
             self._chunker_config = {"method": "sentence"}
-        if not self._ner_config and not self._relex_config and not self._has_linker:
-            raise ValueError(
-                "NER, linker, or relex config required. "
-                "Call .ner_gliner()/.ner_llm(), .linker(), or .relex_gliner()/.relex_llm() first."
-            )
+        # NER/linker/relex are optional — a chunks-only pipeline
+        # (chunker → graph_writer) is valid for relational-store-only use cases.
         if not self._writer_config:
             self._writer_config = {}
 
@@ -669,15 +666,20 @@ class BuildConfigBuilder(_BuilderBase,
         elif has_linker:
             entity_source = "linker_result"
             writer_requires = ["chunker", "linker"]
-        else:
+        elif has_ner:
             entity_source = "ner_result"
             writer_requires = ["chunker", "ner"]
+        else:
+            entity_source = None
+            writer_requires = ["chunker"]
 
         writer_inputs = {
             "chunks": {"source": "chunker_result", "fields": "chunks"},
             "documents": {"source": "chunker_result", "fields": "documents"},
-            "entities": {"source": entity_source, "fields": "entities"},
         }
+
+        if entity_source:
+            writer_inputs["entities"] = {"source": entity_source, "fields": "entities"}
 
         if has_relex:
             writer_inputs["relations"] = {"source": "relex_result", "fields": "relations"}
@@ -736,8 +738,13 @@ class IngestConfigBuilder(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
         builder.graph_writer()
         executor = builder.build()
         result = executor.execute({
-            "entities": [{"text": "Einstein", "label": "person"}],
-            "relations": [{"head": "Einstein", "tail": "Ulm", "type": "born_in"}],
+            "data": [
+                {
+                    "entities": [{"text": "Einstein", "label": "person"}],
+                    "relations": [{"head": "Einstein", "tail": "Ulm", "type": "born_in"}],
+                    "text": "Einstein was born in Ulm.",  # optional
+                },
+            ]
         })
     """
 
@@ -766,9 +773,7 @@ class IngestConfigBuilder(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
             self._writer_config = {}
 
         ingest_inputs = {
-            "entities": {"source": "$input", "fields": "entities"},
-            "relations": {"source": "$input", "fields": "relations"},
-            "texts": {"source": "$input", "fields": "texts", "default": None},
+            "data": {"source": "$input", "fields": "data"},
         }
 
         nodes = [

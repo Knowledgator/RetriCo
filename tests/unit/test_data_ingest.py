@@ -15,20 +15,28 @@ class TestDataIngestProcessor:
 
     def test_empty_input(self):
         proc = DataIngestProcessor({})
-        result = proc(entities=[], relations=[])
+        result = proc(data=[])
         assert result["entities"] == [[]]
         assert result["relations"] == [[]]
         assert result["chunks"] == []
         assert result["documents"] == []
 
+    def test_none_input_defaults_to_empty(self):
+        proc = DataIngestProcessor({})
+        result = proc()
+        assert result["entities"] == [[]]
+        assert result["relations"] == [[]]
+
     def test_entities_only(self):
         proc = DataIngestProcessor({})
-        result = proc(
-            entities=[
-                {"text": "Einstein", "label": "person"},
-                {"text": "Ulm", "label": "location"},
-            ],
-        )
+        result = proc(data=[
+            {
+                "entities": [
+                    {"text": "Einstein", "label": "person"},
+                    {"text": "Ulm", "label": "location"},
+                ],
+            },
+        ])
         mentions = result["entities"][0]
         assert len(mentions) == 2
         assert isinstance(mentions[0], EntityMention)
@@ -40,34 +48,32 @@ class TestDataIngestProcessor:
 
     def test_entities_with_id(self):
         proc = DataIngestProcessor({})
-        result = proc(
-            entities=[
-                {"text": "Einstein", "label": "person", "id": "Q937"},
-            ],
-        )
+        result = proc(data=[
+            {"entities": [{"text": "Einstein", "label": "person", "id": "Q937"}]},
+        ])
         mention = result["entities"][0][0]
         assert mention.linked_entity_id == "Q937"
 
     def test_entities_with_score(self):
         proc = DataIngestProcessor({})
-        result = proc(
-            entities=[
-                {"text": "Einstein", "label": "person", "score": 0.95},
-            ],
-        )
+        result = proc(data=[
+            {"entities": [{"text": "Einstein", "label": "person", "score": 0.95}]},
+        ])
         assert result["entities"][0][0].score == 0.95
 
     def test_relations(self):
         proc = DataIngestProcessor({})
-        result = proc(
-            entities=[
-                {"text": "Einstein", "label": "person"},
-                {"text": "Ulm", "label": "location"},
-            ],
-            relations=[
-                {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
-            ],
-        )
+        result = proc(data=[
+            {
+                "entities": [
+                    {"text": "Einstein", "label": "person"},
+                    {"text": "Ulm", "label": "location"},
+                ],
+                "relations": [
+                    {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+                ],
+            },
+        ])
         rels = result["relations"][0]
         assert len(rels) == 1
         assert isinstance(rels[0], Relation)
@@ -78,41 +84,125 @@ class TestDataIngestProcessor:
 
     def test_relations_with_metadata(self):
         proc = DataIngestProcessor({})
-        result = proc(
-            entities=[
-                {"text": "Einstein", "label": "person"},
-                {"text": "Ulm", "label": "location"},
-            ],
-            relations=[
-                {
-                    "head": "Einstein",
-                    "tail": "Ulm",
-                    "type": "born_in",
-                    "score": 0.9,
-                    "head_label": "person",
-                    "tail_label": "location",
-                    "properties": {"year": 1879},
-                },
-            ],
-        )
+        result = proc(data=[
+            {
+                "entities": [
+                    {"text": "Einstein", "label": "person"},
+                    {"text": "Ulm", "label": "location"},
+                ],
+                "relations": [
+                    {
+                        "head": "Einstein",
+                        "tail": "Ulm",
+                        "type": "born_in",
+                        "score": 0.9,
+                        "head_label": "person",
+                        "tail_label": "location",
+                        "properties": {"year": 1879},
+                    },
+                ],
+            },
+        ])
         rel = result["relations"][0][0]
         assert rel.score == 0.9
         assert rel.head_label == "person"
         assert rel.tail_label == "location"
         assert rel.properties == {"year": 1879}
 
-    def test_none_inputs_default_to_empty(self):
+    def test_entity_properties(self):
         proc = DataIngestProcessor({})
-        result = proc()
-        assert result["entities"] == [[]]
-        assert result["relations"] == [[]]
+        result = proc(data=[
+            {
+                "entities": [
+                    {
+                        "text": "Einstein",
+                        "label": "person",
+                        "properties": {"birth_year": 1879, "field": "physics"},
+                    },
+                ],
+            },
+        ])
+        mention = result["entities"][0][0]
+        assert mention.properties == {"birth_year": 1879, "field": "physics"}
+
+    def test_entity_properties_flow_to_graph_writer(self):
+        """Verify entity properties survive through the full pipeline."""
+        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+            mock_store = MagicMock()
+            mock_cs.return_value = mock_store
+
+            builder = IngestConfigBuilder()
+            builder.graph_writer(setup_indexes=False)
+            executor = builder.build()
+
+            ctx = executor.execute({
+                "data": [
+                    {
+                        "entities": [
+                            {
+                                "text": "Einstein",
+                                "label": "person",
+                                "properties": {"birth_year": 1879},
+                            },
+                        ],
+                    },
+                ],
+            })
+
+            result = ctx.get("writer_result")
+            entity = list(result["entity_map"].values())[0]
+            assert entity.properties == {"birth_year": 1879}
+
+    def test_item_metadata_on_document(self):
+        """Verify item-level metadata is passed to the Document."""
+        proc = DataIngestProcessor({})
+        result = proc(data=[
+            {
+                "entities": [{"text": "Einstein", "label": "person"}],
+                "text": "Einstein was born in Ulm.",
+                "metadata": {"source": "wikipedia", "language": "en"},
+            },
+        ])
+        assert len(result["documents"]) == 1
+        doc = result["documents"][0]
+        assert doc.metadata == {"source": "wikipedia", "language": "en"}
+
+    def test_item_metadata_ignored_without_text(self):
+        """Metadata is ignored when no text is provided."""
+        proc = DataIngestProcessor({})
+        result = proc(data=[
+            {
+                "entities": [{"text": "Einstein", "label": "person"}],
+                "metadata": {"source": "wikipedia"},
+            },
+        ])
+        assert result["documents"] == []
+
+    def test_multiple_items(self):
+        proc = DataIngestProcessor({})
+        result = proc(data=[
+            {"entities": [{"text": "Einstein", "label": "person"}]},
+            {"entities": [{"text": "Ulm", "label": "location"}]},
+        ])
+        assert len(result["entities"]) == 2
+        assert result["entities"][0][0].text == "Einstein"
+        assert result["entities"][1][0].text == "Ulm"
+
+    def test_item_without_relations(self):
+        proc = DataIngestProcessor({})
+        result = proc(data=[
+            {"entities": [{"text": "Einstein", "label": "person"}]},
+        ])
+        assert result["relations"][0] == []
 
     def test_output_shape_is_list_of_lists(self):
         proc = DataIngestProcessor({})
-        result = proc(
-            entities=[{"text": "A", "label": "x"}],
-            relations=[{"head": "A", "tail": "B", "type": "r"}],
-        )
+        result = proc(data=[
+            {
+                "entities": [{"text": "A", "label": "x"}],
+                "relations": [{"head": "A", "tail": "B", "type": "r"}],
+            },
+        ])
         # graph_writer expects List[List[...]]
         assert isinstance(result["entities"], list)
         assert isinstance(result["entities"][0], list)
@@ -149,8 +239,7 @@ class TestIngestConfigBuilder:
         builder = IngestConfigBuilder()
         config = builder.get_config()
         ingest_node = config["nodes"][0]
-        assert ingest_node["inputs"]["entities"]["source"] == "$input"
-        assert ingest_node["inputs"]["relations"]["source"] == "$input"
+        assert ingest_node["inputs"]["data"]["source"] == "$input"
 
     def test_writer_inputs_from_ingest(self):
         builder = IngestConfigBuilder()
@@ -194,14 +283,24 @@ class TestIngestIntegration:
             executor = builder.build()
 
             ctx = executor.execute({
-                "entities": [
-                    {"text": "Einstein", "label": "person"},
-                    {"text": "Ulm", "label": "location"},
-                    {"text": "Germany", "label": "location"},
-                ],
-                "relations": [
-                    {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
-                    {"head": "Ulm", "tail": "Germany", "type": "located_in"},
+                "data": [
+                    {
+                        "entities": [
+                            {"text": "Einstein", "label": "person"},
+                            {"text": "Ulm", "label": "location"},
+                        ],
+                        "relations": [
+                            {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+                        ],
+                    },
+                    {
+                        "entities": [
+                            {"text": "Germany", "label": "location"},
+                        ],
+                        "relations": [
+                            {"head": "Ulm", "tail": "Germany", "type": "located_in"},
+                        ],
+                    },
                 ],
             })
 
@@ -224,10 +323,9 @@ class TestIngestIntegration:
             executor = builder.build()
 
             ctx = executor.execute({
-                "entities": [
-                    {"text": "Einstein", "label": "person"},
+                "data": [
+                    {"entities": [{"text": "Einstein", "label": "person"}]},
                 ],
-                "relations": [],
             })
 
             result = ctx.get("writer_result")
@@ -244,11 +342,14 @@ class TestIngestIntegration:
             executor = builder.build()
 
             ctx = executor.execute({
-                "entities": [
-                    {"text": "Einstein", "label": "person", "id": "Q937"},
-                    {"text": "Albert Einstein", "label": "person", "id": "Q937"},
+                "data": [
+                    {
+                        "entities": [
+                            {"text": "Einstein", "label": "person", "id": "Q937"},
+                            {"text": "Albert Einstein", "label": "person", "id": "Q937"},
+                        ],
+                    },
                 ],
-                "relations": [],
             })
 
             result = ctx.get("writer_result")
@@ -262,12 +363,16 @@ class TestIngestIntegration:
 
             import grapsit
             ctx = grapsit.ingest_data(
-                entities=[
-                    {"text": "Einstein", "label": "person"},
-                    {"text": "Ulm", "label": "location"},
-                ],
-                relations=[
-                    {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+                data=[
+                    {
+                        "entities": [
+                            {"text": "Einstein", "label": "person"},
+                            {"text": "Ulm", "label": "location"},
+                        ],
+                        "relations": [
+                            {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+                        ],
+                    },
                 ],
             )
 
@@ -290,12 +395,16 @@ class TestJsonExport:
             executor = builder.build()
 
             executor.execute({
-                "entities": [
-                    {"text": "Einstein", "label": "person"},
-                    {"text": "Ulm", "label": "location"},
-                ],
-                "relations": [
-                    {"head": "Einstein", "tail": "Ulm", "type": "born_in", "score": 0.9},
+                "data": [
+                    {
+                        "entities": [
+                            {"text": "Einstein", "label": "person"},
+                            {"text": "Ulm", "label": "location"},
+                        ],
+                        "relations": [
+                            {"head": "Einstein", "tail": "Ulm", "type": "born_in", "score": 0.9},
+                        ],
+                    },
                 ],
             })
 
@@ -326,8 +435,9 @@ class TestJsonExport:
             executor = builder.build()
 
             executor.execute({
-                "entities": [{"text": "Einstein", "label": "person"}],
-                "relations": [],
+                "data": [
+                    {"entities": [{"text": "Einstein", "label": "person"}]},
+                ],
             })
 
             with open(json_path) as f:
@@ -347,11 +457,14 @@ class TestJsonExport:
             executor = builder.build()
 
             executor.execute({
-                "entities": [
-                    {"text": "Einstein", "label": "person", "id": "Q937"},
-                    {"text": "Albert Einstein", "label": "person", "id": "Q937"},
+                "data": [
+                    {
+                        "entities": [
+                            {"text": "Einstein", "label": "person", "id": "Q937"},
+                            {"text": "Albert Einstein", "label": "person", "id": "Q937"},
+                        ],
+                    },
                 ],
-                "relations": [],
             })
 
             with open(json_path) as f:
@@ -372,10 +485,14 @@ class TestJsonExport:
             executor = builder.build()
 
             executor.execute({
-                "entities": [{"text": "Einstein", "label": "person"}],
-                "relations": [
-                    # "Ulm" doesn't exist as entity — should be skipped
-                    {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+                "data": [
+                    {
+                        "entities": [{"text": "Einstein", "label": "person"}],
+                        "relations": [
+                            # "Ulm" doesn't exist as entity — should be skipped
+                            {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+                        ],
+                    },
                 ],
             })
 
@@ -395,8 +512,9 @@ class TestJsonExport:
             executor = builder.build()
 
             executor.execute({
-                "entities": [{"text": "Einstein", "label": "person"}],
-                "relations": [],
+                "data": [
+                    {"entities": [{"text": "Einstein", "label": "person"}]},
+                ],
             })
 
             # No JSON file should exist
@@ -413,8 +531,9 @@ class TestJsonExport:
             executor = builder.build()
 
             executor.execute({
-                "entities": [{"text": "Einstein", "label": "person"}],
-                "relations": [],
+                "data": [
+                    {"entities": [{"text": "Einstein", "label": "person"}]},
+                ],
             })
 
             with open(json_path) as f:
@@ -433,21 +552,30 @@ class TestJsonExport:
             executor = builder.build()
 
             executor.execute({
-                "entities": [
-                    {"text": "Einstein", "label": "person"},
-                    {"text": "Ulm", "label": "location"},
-                ],
-                "relations": [
-                    {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+                "data": [
+                    {
+                        "entities": [
+                            {"text": "Einstein", "label": "person"},
+                            {"text": "Ulm", "label": "location"},
+                        ],
+                        "relations": [
+                            {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
+                        ],
+                    },
                 ],
             })
 
             with open(json_path) as f:
-                data = json.load(f)
+                exported = json.load(f)
 
-            # Feed the JSON back through the ingest processor
+            # Feed the JSON back through the ingest processor as a single item
             proc = DataIngestProcessor({})
-            result = proc(entities=data["entities"], relations=data["relations"])
+            result = proc(data=[
+                {
+                    "entities": exported["entities"],
+                    "relations": exported["relations"],
+                },
+            ])
             assert len(result["entities"][0]) == 2
             assert len(result["relations"][0]) == 1
 

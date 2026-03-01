@@ -160,9 +160,15 @@ entity_type. Do NOT use property filters for attributes like \
 - Use get_entity_relations and get_neighbors to discover \
 connections between entities.
 - Use find_shortest_path to find paths between two entities.
-
+{chunk_tools_prompt}
 Call tools to search the graph. When you have enough information, \
 respond with a final text summary."""
+
+CHUNK_TOOLS_PROMPT = """
+You also have access to a chunk/document store. Use search_chunks \
+for full-text search over source text, get_chunk to retrieve a \
+chunk by ID, and query_records for filtered queries with sorting \
+(e.g. all chunks from a specific document)."""
 
 # ---------------------------------------------------------------------------
 # Community Summarizer

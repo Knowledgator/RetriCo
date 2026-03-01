@@ -42,15 +42,18 @@ class GraphWriterProcessor(BaseProcessor):
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
-        self.store = resolve_from_pool_or_create(config_dict, "graph")
         self.json_output = config_dict.get("json_output", None)
         self.chunk_table = config_dict.get("chunk_table", "chunks")
         self.document_table = config_dict.get("document_table", "documents")
-        if config_dict.get("setup_indexes", True):
-            try:
-                self.store.setup_indexes()
-            except Exception as e:
-                logger.warning(f"Could not setup indexes: {e}")
+        # Graph store is optional — a relational-only pipeline may skip it
+        self.store = None
+        if self._has_graph_config(config_dict):
+            self.store = resolve_from_pool_or_create(config_dict, "graph")
+            if config_dict.get("setup_indexes", True):
+                try:
+                    self.store.setup_indexes()
+                except Exception as e:
+                    logger.warning(f"Could not setup indexes: {e}")
         # Optional relational store for chunk/document storage
         self.relational_store = None
         if self._has_relational_config(config_dict):
@@ -58,6 +61,17 @@ class GraphWriterProcessor(BaseProcessor):
                 self.relational_store = resolve_from_pool_or_create(config_dict, "relational")
             except (ValueError, KeyError) as e:
                 logger.debug(f"No relational store configured: {e}")
+
+    @staticmethod
+    def _has_graph_config(config_dict: dict) -> bool:
+        """Check if config contains graph store configuration."""
+        if config_dict.get("store_type"):
+            return True
+        pool = config_dict.get("__store_pool__")
+        if pool is not None:
+            name = config_dict.get("graph_store_name", "default")
+            return pool.has_graph(name)
+        return False
 
     @staticmethod
     def _has_relational_config(config_dict: dict) -> bool:
@@ -100,15 +114,17 @@ class GraphWriterProcessor(BaseProcessor):
         if relations is None:
             relations = []
 
-        # 1. Write documents
-        for doc in documents:
-            self.store.write_document(doc)
+        # 1. Write documents to graph store (if configured)
+        if self.store is not None:
+            for doc in documents:
+                self.store.write_document(doc)
 
-        # 2. Write chunks + link to documents
-        for chunk in chunks:
-            self.store.write_chunk(chunk)
-            if chunk.document_id:
-                self.store.write_chunk_document_link(chunk.id, chunk.document_id)
+        # 2. Write chunks + link to documents in graph store (if configured)
+        if self.store is not None:
+            for chunk in chunks:
+                self.store.write_chunk(chunk)
+                if chunk.document_id:
+                    self.store.write_chunk_document_link(chunk.id, chunk.document_id)
 
         # 3. Deduplicate entities by canonical name (or linked_entity_id if available)
         entity_map: Dict[str, Entity] = {}  # dedup_key -> Entity
@@ -130,15 +146,21 @@ class GraphWriterProcessor(BaseProcessor):
                     }
                     if mention.linked_entity_id:
                         entity_kwargs["id"] = mention.linked_entity_id
+                    if mention.properties:
+                        entity_kwargs["properties"] = dict(mention.properties)
                     entity_map[key] = Entity(**entity_kwargs)
+                elif mention.properties:
+                    # Merge properties from subsequent mentions
+                    entity_map[key].properties.update(mention.properties)
                 entity_map[key].mentions.append(mention)
 
-        # 4. Write entities + mention links
-        for entity in entity_map.values():
-            self.store.write_entity(entity)
-            for mention in entity.mentions:
-                if mention.chunk_id:
-                    self.store.write_mention_link(entity.id, mention.chunk_id, mention)
+        # 4. Write entities + mention links to graph store (if configured)
+        if self.store is not None:
+            for entity in entity_map.values():
+                self.store.write_entity(entity)
+                for mention in entity.mentions:
+                    if mention.chunk_id:
+                        self.store.write_mention_link(entity.id, mention.chunk_id, mention)
 
         # Build a text-based lookup for relation resolution
         # (entity_map may be keyed by linked_entity_id instead of canonical name)
@@ -161,7 +183,8 @@ class GraphWriterProcessor(BaseProcessor):
                 head_entity = text_to_entity.get(head_key)
                 tail_entity = text_to_entity.get(tail_key)
                 if head_entity and tail_entity:
-                    self.store.write_relation(rel, head_entity.id, tail_entity.id)
+                    if self.store is not None:
+                        self.store.write_relation(rel, head_entity.id, tail_entity.id)
                     rel_count += 1
                 else:
                     logger.debug(

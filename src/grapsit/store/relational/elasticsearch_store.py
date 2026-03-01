@@ -70,19 +70,17 @@ class ElasticsearchRelationalStore(BaseRelationalStore):
         try:
             resp = self._client.search(
                 index=index,
-                query={"match": {"_all": query}},
+                query={
+                    "multi_match": {
+                        "query": query,
+                        "type": "best_fields",
+                        "fields": ["text^2", "document_id"],
+                    }
+                },
                 size=top_k,
             )
         except Exception:
-            # Fallback: multi_match on all fields
-            try:
-                resp = self._client.search(
-                    index=index,
-                    query={"multi_match": {"query": query, "type": "best_fields", "fields": ["*"]}},
-                    size=top_k,
-                )
-            except Exception:
-                return []
+            return []
         results = []
         for hit in resp.get("hits", {}).get("hits", []):
             results.append(hit["_source"])
@@ -107,6 +105,44 @@ class ElasticsearchRelationalStore(BaseRelationalStore):
         for hit in resp.get("hits", {}).get("hits", []):
             results.append(hit["_source"])
         return results
+
+    def query_records(
+        self,
+        table: str,
+        filters: Optional[List[Dict[str, Any]]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        self._ensure_client()
+        index = self._index_name(table)
+        must_clauses: List[Dict[str, Any]] = []
+        for f in (filters or []):
+            field = f["field"]
+            operator = f["operator"]
+            value = f["value"]
+            if operator == "eq":
+                must_clauses.append({"term": {field: value}})
+            elif operator == "neq":
+                must_clauses.append({"bool": {"must_not": [{"term": {field: value}}]}})
+            elif operator == "contains":
+                must_clauses.append({"match": {field: value}})
+            elif operator == "starts_with":
+                must_clauses.append({"prefix": {field: value}})
+            elif operator in ("gt", "gte", "lt", "lte"):
+                must_clauses.append({"range": {field: {operator: value}}})
+
+        query = {"bool": {"must": must_clauses}} if must_clauses else {"match_all": {}}
+        sort = [{sort_by: {"order": sort_order}}] if sort_by else []
+        try:
+            resp = self._client.search(
+                index=index, query=query, sort=sort or None,
+                size=limit, from_=offset,
+            )
+        except Exception:
+            return []
+        return [hit["_source"] for hit in resp.get("hits", {}).get("hits", [])]
 
     def delete_records(self, table: str, record_ids: List[str]):
         if not record_ids:
