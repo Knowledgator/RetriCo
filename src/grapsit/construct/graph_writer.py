@@ -209,7 +209,7 @@ class GraphWriterProcessor(BaseProcessor):
 
         # Export to JSON in ingest-ready format if configured
         if self.json_output:
-            self._save_json(entity_map, text_to_entity, relations)
+            self._save_json(entity_map, text_to_entity, relations, chunks, documents)
 
         return result
 
@@ -251,10 +251,30 @@ class GraphWriterProcessor(BaseProcessor):
         entity_map: Dict[str, Entity],
         text_to_entity: Dict[str, Entity],
         relations: List[List],
+        chunks: List[Chunk],
+        documents: List[Document],
     ) -> None:
-        """Save deduplicated entities and resolved relations to JSON."""
-        # Build entity list in ingest format
-        json_entities = []
+        """Save data in ingest-ready format (compatible with ``ingest_data()``).
+
+        Groups entities and relations by document.  Each document becomes one
+        item in the output list with its source text, metadata, entities, and
+        relations.  Entities/relations not linked to any chunk are collected
+        into a separate item without ``text``.
+        """
+        # Map chunk_id -> document_id, and document_id -> Document
+        chunk_to_doc: Dict[str, str] = {}
+        doc_by_id: Dict[str, Document] = {}
+        for chunk in chunks:
+            if chunk.document_id:
+                chunk_to_doc[chunk.id] = chunk.document_id
+        for doc in documents:
+            doc_by_id[doc.id] = doc
+
+        # Collect entities per document (and unlinked)
+        doc_entities: Dict[str, List[Dict[str, Any]]] = {}  # doc_id -> [entity dicts]
+        unlinked_entities: List[Dict[str, Any]] = []
+        seen_entity_docs: Dict[str, set] = {}  # entity key -> set of doc_ids already added
+
         for entity in entity_map.values():
             entry: Dict[str, Any] = {
                 "text": entity.label,
@@ -264,10 +284,25 @@ class GraphWriterProcessor(BaseProcessor):
                 entry["id"] = entity.id
             if entity.properties:
                 entry["properties"] = entity.properties
-            json_entities.append(entry)
 
-        # Build relation list — only resolved ones (head/tail found)
-        json_relations = []
+            # Find which documents this entity belongs to via its mentions
+            entity_key = entity.label.strip().lower()
+            seen_entity_docs[entity_key] = set()
+            placed = False
+            for mention in entity.mentions:
+                if mention.chunk_id and mention.chunk_id in chunk_to_doc:
+                    doc_id = chunk_to_doc[mention.chunk_id]
+                    if doc_id not in seen_entity_docs[entity_key]:
+                        seen_entity_docs[entity_key].add(doc_id)
+                        doc_entities.setdefault(doc_id, []).append(entry)
+                        placed = True
+            if not placed:
+                unlinked_entities.append(entry)
+
+        # Collect relations per document (and unlinked)
+        doc_relations: Dict[str, List[Dict[str, Any]]] = {}  # doc_id -> [relation dicts]
+        unlinked_relations: List[Dict[str, Any]] = []
+
         for chunk_relations in relations:
             if not isinstance(chunk_relations, list):
                 chunk_relations = [chunk_relations]
@@ -278,32 +313,67 @@ class GraphWriterProcessor(BaseProcessor):
                 tail_key = rel.tail_text.strip().lower()
                 head_entity = text_to_entity.get(head_key)
                 tail_entity = text_to_entity.get(tail_key)
-                if head_entity and tail_entity:
-                    entry: Dict[str, Any] = {
-                        "head": head_entity.label,
-                        "tail": tail_entity.label,
-                        "type": rel.relation_type,
-                        "score": rel.score,
-                    }
-                    if rel.head_label:
-                        entry["head_label"] = rel.head_label
-                    if rel.tail_label:
-                        entry["tail_label"] = rel.tail_label
-                    if rel.properties:
-                        entry["properties"] = rel.properties
-                    json_relations.append(entry)
+                if not (head_entity and tail_entity):
+                    continue
+                entry: Dict[str, Any] = {
+                    "head": head_entity.label,
+                    "tail": tail_entity.label,
+                    "type": rel.relation_type,
+                }
+                if rel.score != 1.0:
+                    entry["score"] = rel.score
+                if rel.head_label:
+                    entry["head_label"] = rel.head_label
+                if rel.tail_label:
+                    entry["tail_label"] = rel.tail_label
+                if rel.properties:
+                    entry["properties"] = rel.properties
 
-        data = {
-            "entities": json_entities,
-            "relations": json_relations,
-        }
+                # Place relation in its document group
+                doc_id = chunk_to_doc.get(rel.chunk_id, "")
+                if doc_id and doc_id in doc_by_id:
+                    doc_relations.setdefault(doc_id, []).append(entry)
+                else:
+                    unlinked_relations.append(entry)
+
+        # Build the output list — one item per document
+        output: List[Dict[str, Any]] = []
+        all_doc_ids = sorted(
+            set(list(doc_entities.keys()) + list(doc_relations.keys())),
+            key=lambda did: next(
+                (c.index for c in chunks if c.document_id == did), 0
+            ),
+        )
+        for doc_id in all_doc_ids:
+            item: Dict[str, Any] = {
+                "entities": doc_entities.get(doc_id, []),
+                "relations": doc_relations.get(doc_id, []),
+            }
+            doc = doc_by_id.get(doc_id)
+            if doc and doc.text:
+                item["text"] = doc.text
+            if doc and doc.metadata:
+                item["metadata"] = doc.metadata
+            output.append(item)
+
+        # Add unlinked entities/relations as a separate item (if any)
+        if unlinked_entities or unlinked_relations:
+            output.append({
+                "entities": unlinked_entities,
+                "relations": unlinked_relations,
+            })
 
         filepath = Path(self.json_output)
         filepath.parent.mkdir(parents=True, exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            json.dump(output, f, indent=2, ensure_ascii=False)
 
-        logger.info(f"Saved {len(json_entities)} entities and {len(json_relations)} relations to {self.json_output}")
+        total_ents = sum(len(item.get("entities", [])) for item in output)
+        total_rels = sum(len(item.get("relations", [])) for item in output)
+        logger.info(
+            f"Saved {len(output)} items ({total_ents} entities, "
+            f"{total_rels} relations) to {self.json_output}"
+        )
 
 
 @construct_registry.register("graph_writer")

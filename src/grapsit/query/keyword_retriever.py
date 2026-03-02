@@ -14,30 +14,45 @@ logger = logging.getLogger(__name__)
 
 
 class KeywordRetrieverProcessor(BaseProcessor):
-    """Retrieve chunks by full-text searching a relational store.
+    """Retrieve chunks by full-text search from a relational store or graph DB.
 
-    Two modes controlled by ``expand_entities`` (default: ``False``):
+    Two search sources controlled by ``search_source``:
 
-    **Chunks-only** (``expand_entities=False``):
-        query -> relational_store.search() -> Subgraph(chunks=[...])
-        Only needs a relational store — no graph store, parser, or embeddings.
+    **Relational** (``search_source="relational"``, default):
+        Uses a relational store (SQLite FTS5, PostgreSQL tsvector, Elasticsearch).
+        Requires a relational store connection.
 
-    **Entity expansion** (``expand_entities=True``):
-        query -> relational_store.search() -> chunks
+    **Graph** (``search_source="graph"``):
+        Uses the graph database's native full-text index (Neo4j Lucene,
+        FalkorDB FTS, Memgraph Tantivy).  The FTS index is created
+        automatically during ``setup_indexes()`` — no extra setup needed.
+
+    Two entity modes controlled by ``expand_entities``:
+
+    **Chunks-only** (``expand_entities=False``, default for relational):
+        query -> search -> Subgraph(chunks=[...])
+        Only needs the search store — no graph store, parser, or embeddings.
+
+    **Entity expansion** (``expand_entities=True``, default for graph):
+        query -> search -> chunks
               -> graph_store.get_entities_for_chunk() -> entity_ids
               -> graph_store.get_subgraph() -> Subgraph(entities, relations, chunks)
-        Additionally requires a graph store connection.
+        Additionally requires a graph store connection (for relational source).
 
     Config keys:
+        search_source: str — ``"relational"`` (default) or ``"graph"``
         top_k: int — number of chunks to retrieve (default: 10)
-        chunk_table: str — table name for chunk records (default: "chunks")
+        chunk_table: str — table name for chunk records (default: "chunks",
+            relational only)
         expand_entities: bool — look up entities in matched chunks and build
-            a full subgraph via the graph store (default: False)
+            a full subgraph via the graph store (default: False for relational,
+            True for graph)
         max_hops: int — subgraph expansion depth when expand_entities=True
             (default: 1)
+        fulltext_index: str — name of the FTS index (default: "chunk_text_idx",
+            graph only)
         relational_store_type, sqlite_path, etc. — passed to create_relational_store
-        store_type, neo4j_uri, etc. — passed to create_store (graph, only
-            when expand_entities=True)
+        store_type, neo4j_uri, etc. — passed to create_store (graph)
     """
 
     default_inputs = {"query": "$input.query"}
@@ -45,10 +60,16 @@ class KeywordRetrieverProcessor(BaseProcessor):
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
+        self.search_source: str = config_dict.get("search_source", "relational")
         self.top_k: int = config_dict.get("top_k", 10)
         self.chunk_table: str = config_dict.get("chunk_table", "chunks")
-        self.expand_entities: bool = config_dict.get("expand_entities", False)
         self.max_hops: int = config_dict.get("max_hops", 1)
+        self.fulltext_index: str = config_dict.get("fulltext_index", "chunk_text_idx")
+        # Default expand_entities depends on search source
+        if "expand_entities" in config_dict:
+            self.expand_entities: bool = config_dict["expand_entities"]
+        else:
+            self.expand_entities = self.search_source == "graph"
         self._relational_store = None
         self._store = None
 
@@ -96,6 +117,20 @@ class KeywordRetrieverProcessor(BaseProcessor):
 
         return Subgraph(entities=sg_entities, relations=sg_relations, chunks=chunks)
 
+    def _search_relational(self, query: str):
+        """Search via relational store full-text search."""
+        self._ensure_relational_store()
+        return self._relational_store.search(
+            self.chunk_table, query, top_k=self.top_k
+        )
+
+    def _search_graph(self, query: str):
+        """Search via graph DB native full-text index."""
+        self._ensure_store()
+        return self._store.fulltext_search_chunks(
+            query, top_k=self.top_k, index_name=self.fulltext_index
+        )
+
     def __call__(self, *, query: str, **kwargs) -> Dict[str, Any]:
         """Find relevant chunks via full-text search.
 
@@ -103,12 +138,10 @@ class KeywordRetrieverProcessor(BaseProcessor):
             {"subgraph": Subgraph} — with chunks always populated; entities
             and relations populated only when ``expand_entities=True``.
         """
-        self._ensure_relational_store()
-
-        # Full-text search for matching chunks
-        results = self._relational_store.search(
-            self.chunk_table, query, top_k=self.top_k
-        )
+        if self.search_source == "graph":
+            results = self._search_graph(query)
+        else:
+            results = self._search_relational(query)
 
         if not results:
             return {"subgraph": Subgraph()}

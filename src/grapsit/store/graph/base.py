@@ -116,6 +116,16 @@ class BaseGraphStore(ABC):
         """Look up a chunk by its ID."""
         raise NotImplementedError
 
+    def fulltext_search_chunks(
+        self, query: str, top_k: int = 10, index_name: str = "chunk_text_idx",
+    ) -> List[Dict[str, Any]]:
+        """Search chunks via graph DB native full-text index.
+
+        Returns:
+            List of chunk dicts, each optionally containing a ``score`` key.
+        """
+        raise NotImplementedError
+
     # -- Path queries --------------------------------------------------------
 
     def get_shortest_paths(
@@ -190,6 +200,111 @@ class BaseGraphStore(ABC):
 
         Returns:
             List of (community_a, community_b, weight) tuples.
+        """
+        raise NotImplementedError
+
+    # -- Mutations -----------------------------------------------------------
+
+    def delete_entity(self, entity_id: str) -> bool:
+        """Delete an entity and all its relationships.
+
+        Returns:
+            True if the entity was found and deleted, False if not found.
+        """
+        raise NotImplementedError
+
+    def delete_relation(self, relation_id: str) -> bool:
+        """Delete a relation by its stored ``id`` property.
+
+        Returns:
+            True if the relation was found and deleted, False if not found.
+        """
+        raise NotImplementedError
+
+    def delete_chunk(self, chunk_id: str) -> bool:
+        """Delete a chunk and its relationships.
+
+        Returns:
+            True if the chunk was found and deleted, False if not found.
+        """
+        raise NotImplementedError
+
+    def update_entity(
+        self,
+        entity_id: str,
+        *,
+        label: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        properties: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Update fields on an existing entity.
+
+        Only provided (non-None) fields are changed. ``properties`` is
+        merged with existing properties (new keys added, existing keys
+        overwritten).
+
+        Returns:
+            True if the entity was found and updated, False if not found.
+        """
+        raise NotImplementedError
+
+    def add_entity(
+        self,
+        label: str,
+        entity_type: str = "",
+        *,
+        properties: Optional[Dict[str, Any]] = None,
+        id: Optional[str] = None,
+    ) -> str:
+        """Create a new entity (CREATE, not MERGE).
+
+        Args:
+            label: Human-readable entity name.
+            entity_type: Category (e.g. ``"person"``).
+            properties: Arbitrary metadata dict.
+            id: Explicit UUID; generated if omitted.
+
+        Returns:
+            The entity's UUID.
+        """
+        raise NotImplementedError
+
+    def add_relation(
+        self,
+        head_id: str,
+        tail_id: str,
+        relation_type: str,
+        *,
+        properties: Optional[Dict[str, Any]] = None,
+        id: Optional[str] = None,
+    ) -> str:
+        """Create a new directed relation between two entities.
+
+        Args:
+            head_id: Source entity UUID.
+            tail_id: Target entity UUID.
+            relation_type: Relation label (will be sanitized).
+            properties: Extra edge properties.
+            id: Explicit UUID; generated if omitted.
+
+        Returns:
+            The relation's UUID.
+
+        Raises:
+            ValueError: If head or tail entity does not exist.
+        """
+        raise NotImplementedError
+
+    def merge_entities(self, source_id: str, target_id: str) -> bool:
+        """Merge *source* entity into *target*, then delete *source*.
+
+        All relationships (MENTIONED_IN, MEMBER_OF, entity-entity) are
+        moved to *target*. Properties from *source* are merged into
+        *target* (target values win on conflict).
+
+        Returns:
+            True if both entities existed and merge completed,
+            False otherwise.
         """
         raise NotImplementedError
 

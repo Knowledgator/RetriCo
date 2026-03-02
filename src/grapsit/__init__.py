@@ -9,7 +9,7 @@ from . import modeling as _modeling  # noqa: F401
 
 from .core.dag import DAGExecutor, PipeContext
 from .core.factory import ProcessorFactory
-from .core.builders import BuildConfigBuilder, QueryConfigBuilder, IngestConfigBuilder, CommunityConfigBuilder, KGModelingConfigBuilder
+from .core.builders import BuildConfigBuilder, QueryConfigBuilder, IngestConfigBuilder, CommunityConfigBuilder, KGModelingConfigBuilder, FusedQueryBuilder
 from .core.registry import (
     processor_registry, construct_registry, query_registry, modeling_registry,
 )
@@ -26,8 +26,9 @@ from .store import (
     StorePool,
 )
 from .llm import BaseLLMClient, OpenAIClient
+from .extraction import GLiNEREngine, LLMExtractionEngine, EntityLinkerEngine, ExtractionResult
 
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 import logging
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,12 @@ __all__ = [
     "ingest_data",
     "detect_communities",
     "train_kg_model",
+    "extract",
+    # Extraction engines
+    "GLiNEREngine",
+    "LLMExtractionEngine",
+    "EntityLinkerEngine",
+    "ExtractionResult",
     # Core
     "DAGExecutor",
     "PipeContext",
@@ -114,6 +121,7 @@ __all__ = [
     "IngestConfigBuilder",
     "CommunityConfigBuilder",
     "KGModelingConfigBuilder",
+    "FusedQueryBuilder",
     # Models
     "Document",
     "Chunk",
@@ -419,8 +427,12 @@ def query_graph(
     memgraph_user: str = "",
     memgraph_password: str = "",
     memgraph_database: str = "memgraph",
-    retrieval_strategy: str = "entity",
+    retrieval_strategy: Union[str, List[str]] = "entity",
     retriever_kwargs: Dict[str, Any] = None,
+    fusion_strategy: str = "union",
+    fusion_top_k: int = 0,
+    fusion_weights: List[float] = None,
+    fusion_min_sources: int = 2,
     store_config: BaseStoreConfig = None,
 ) -> QueryResult:
     """Query a knowledge graph in one call.
@@ -439,10 +451,17 @@ def query_graph(
         api_key: OpenAI API key. If provided, enables LLM reasoner.
         model: LLM model name for reasoner (and LLM parser if ner_method="llm").
         verbose: Enable verbose logging.
-        retrieval_strategy: Strategy name — "entity" (default), "community",
-            "chunk_embedding", "entity_embedding", "tool", or "path".
+        retrieval_strategy: Strategy name or list of names. Single string:
+            "entity" (default), "community", "chunk_embedding",
+            "entity_embedding", "tool", "path", or "keyword".
+            List of strings: triggers multi-retriever fusion.
         retriever_kwargs: Extra kwargs passed to the retriever builder method
             (e.g. top_k, vector_index_name, max_tool_rounds).
+        fusion_strategy: Fusion strategy when using multiple retrievers
+            ("union", "rrf", "weighted", "intersection"). Default: "union".
+        fusion_top_k: Max entities after fusion (0 = all).
+        fusion_weights: Per-retriever weights for "weighted" fusion.
+        fusion_min_sources: Min sources for "intersection" fusion.
         store_config: A BaseStoreConfig object (Neo4jConfig, FalkorDBConfig, etc.).
             If provided, overrides individual store params.
 
@@ -459,95 +478,151 @@ def query_graph(
             memgraph_database=memgraph_database,
         )
 
-    builder = QueryConfigBuilder(name="query_graph")
-    builder.store(store_config)
-
     if retriever_kwargs is None:
         retriever_kwargs = {}
+
+    # Strategy name → builder method name mapping
+    _STRATEGY_TO_METHOD = {
+        "entity": "retriever",
+        "community": "community_retriever",
+        "path": "path_retriever",
+        "chunk_embedding": "chunk_embedding_retriever",
+        "entity_embedding": "entity_embedding_retriever",
+        "tool": "tool_retriever",
+        "keyword": "keyword_retriever",
+    }
 
     # Strategies that need a parser
     _ENTITY_STRATEGIES = {"entity", "entity_embedding", "path"}
     # kg_scored uses tool-calling parser (needs api_key, not entity_labels)
     _TOOL_PARSER_STRATEGIES = {"kg_scored"}
 
-    if retrieval_strategy in _TOOL_PARSER_STRATEGIES:
-        if api_key is None:
-            raise ValueError(
-                f"api_key required for '{retrieval_strategy}' strategy."
-            )
-        parser_kwargs = {
-            "method": "tool",
-            "api_key": api_key,
-            "model": model,
-        }
-        if entity_labels:
-            parser_kwargs["labels"] = entity_labels
-        relation_labels = retriever_kwargs.get("relation_labels")
-        if relation_labels:
-            parser_kwargs["relation_labels"] = relation_labels
-        builder.query_parser(**parser_kwargs)
-    elif retrieval_strategy in _ENTITY_STRATEGIES:
-        if entity_labels is None:
-            raise ValueError(
-                f"entity_labels required for '{retrieval_strategy}' strategy."
-            )
-        parser_kwargs = {"method": ner_method, "labels": entity_labels}
-        if ner_model is not None:
-            parser_kwargs["model"] = ner_model
-        if ner_method == "llm" and api_key is not None:
-            parser_kwargs["api_key"] = api_key
-            parser_kwargs["model"] = model
-        builder.query_parser(**parser_kwargs)
+    # Normalize to list for uniform handling
+    strategies = (
+        retrieval_strategy
+        if isinstance(retrieval_strategy, list)
+        else [retrieval_strategy]
+    )
+    is_multi = len(strategies) > 1
 
-        # Add linker if any linker param is provided
-        if linker_executor or linker_model or linker_entities or linker_neo4j:
-            linker_kw = {"threshold": linker_threshold}
-            if linker_executor:
-                linker_kw["executor"] = linker_executor
-            if linker_model:
-                linker_kw["model"] = linker_model
-            if linker_entities:
-                linker_kw["entities"] = linker_entities
-            if linker_neo4j:
-                linker_kw["store_config"] = store_config
-            builder.linker(**linker_kw)
+    # Determine if any strategy needs entity-based parser
+    needs_entity_parser = any(s in _ENTITY_STRATEGIES for s in strategies)
+    needs_tool_parser = any(s in _TOOL_PARSER_STRATEGIES for s in strategies)
 
-    # Configure retriever based on strategy
-    if retrieval_strategy == "entity":
-        builder.retriever(max_hops=max_hops)
-    elif retrieval_strategy == "community":
-        builder.community_retriever(**retriever_kwargs)
-    elif retrieval_strategy == "chunk_embedding":
-        builder.chunk_embedding_retriever(**retriever_kwargs)
-    elif retrieval_strategy == "entity_embedding":
-        builder.entity_embedding_retriever(**retriever_kwargs)
-    elif retrieval_strategy == "tool":
-        tool_kw = dict(retriever_kwargs)
-        if api_key is not None and "api_key" not in tool_kw:
-            tool_kw["api_key"] = api_key
-        if "model" not in tool_kw:
-            tool_kw["model"] = model
-        builder.tool_retriever(**tool_kw)
-    elif retrieval_strategy == "path":
-        builder.path_retriever(**retriever_kwargs)
-    elif retrieval_strategy == "kg_scored":
-        builder.kg_scorer(**retriever_kwargs)
+    def _configure_retriever(builder, strategy):
+        """Configure a single retriever on a builder."""
+        if strategy == "entity":
+            builder.retriever(max_hops=max_hops)
+        elif strategy == "community":
+            builder.community_retriever(**retriever_kwargs)
+        elif strategy == "chunk_embedding":
+            builder.chunk_embedding_retriever(**retriever_kwargs)
+        elif strategy == "entity_embedding":
+            builder.entity_embedding_retriever(**retriever_kwargs)
+        elif strategy == "tool":
+            tool_kw = dict(retriever_kwargs)
+            if api_key is not None and "api_key" not in tool_kw:
+                tool_kw["api_key"] = api_key
+            if "model" not in tool_kw:
+                tool_kw["model"] = model
+            builder.tool_retriever(**tool_kw)
+        elif strategy == "path":
+            builder.path_retriever(**retriever_kwargs)
+        elif strategy == "keyword":
+            builder.keyword_retriever(**retriever_kwargs)
+        elif strategy == "kg_scored":
+            builder.kg_scorer(**retriever_kwargs)
+        elif strategy in _STRATEGY_TO_METHOD:
+            getattr(builder, _STRATEGY_TO_METHOD[strategy])(**retriever_kwargs)
+        else:
+            raise ValueError(
+                f"Unknown retrieval_strategy: {strategy!r}. "
+                "Expected 'entity', 'community', 'chunk_embedding', "
+                "'entity_embedding', 'tool', 'path', 'keyword', or 'kg_scored'."
+            )
+
+    def _add_parser_and_linker(builder):
+        """Add parser and linker to a builder based on strategy needs."""
+        if needs_tool_parser:
+            if api_key is None:
+                raise ValueError("api_key required for 'kg_scored' strategy.")
+            parser_kwargs = {"method": "tool", "api_key": api_key, "model": model}
+            if entity_labels:
+                parser_kwargs["labels"] = entity_labels
+            relation_labels = retriever_kwargs.get("relation_labels")
+            if relation_labels:
+                parser_kwargs["relation_labels"] = relation_labels
+            builder.query_parser(**parser_kwargs)
+        elif needs_entity_parser:
+            if entity_labels is None:
+                raise ValueError(
+                    "entity_labels required for entity-based retrieval strategies "
+                    f"({', '.join(s for s in strategies if s in _ENTITY_STRATEGIES)})."
+                )
+            parser_kwargs = {"method": ner_method, "labels": entity_labels}
+            if ner_model is not None:
+                parser_kwargs["model"] = ner_model
+            if ner_method == "llm" and api_key is not None:
+                parser_kwargs["api_key"] = api_key
+                parser_kwargs["model"] = model
+            builder.query_parser(**parser_kwargs)
+
+            if linker_executor or linker_model or linker_entities or linker_neo4j:
+                linker_kw = {"threshold": linker_threshold}
+                if linker_executor:
+                    linker_kw["executor"] = linker_executor
+                if linker_model:
+                    linker_kw["model"] = linker_model
+                if linker_entities:
+                    linker_kw["entities"] = linker_entities
+                if linker_neo4j:
+                    linker_kw["store_config"] = store_config
+                builder.linker(**linker_kw)
+
+    if is_multi:
+        # Multi-strategy: create separate builders, combine via FusedQueryBuilder
+        sub_builders = []
+        for strategy in strategies:
+            sb = QueryConfigBuilder(name=f"query_{strategy}")
+            sb.store(store_config)
+            _add_parser_and_linker(sb)
+            _configure_retriever(sb, strategy)
+            sub_builders.append(sb)
+
+        fusion_kw = {"strategy": fusion_strategy, "top_k": fusion_top_k}
+        if fusion_weights:
+            fusion_kw["weights"] = fusion_weights
+        if fusion_strategy == "intersection":
+            fusion_kw["min_sources"] = fusion_min_sources
+
+        fused = FusedQueryBuilder(*sub_builders, name="query_graph", **fusion_kw)
+
+        chunk_kw = {}
+        if "chunk_entity_source" in retriever_kwargs:
+            chunk_kw["chunk_entity_source"] = retriever_kwargs["chunk_entity_source"]
+        fused.chunk_retriever(**chunk_kw)
+
+        if api_key is not None:
+            fused.reasoner(api_key=api_key, model=model)
+
+        executor = fused.build(verbose=verbose)
     else:
-        raise ValueError(
-            f"Unknown retrieval_strategy: {retrieval_strategy!r}. "
-            "Expected 'entity', 'community', 'chunk_embedding', "
-            "'entity_embedding', 'tool', 'path', or 'kg_scored'."
-        )
+        # Single strategy: use QueryConfigBuilder directly (backward compatible)
+        builder = QueryConfigBuilder(name="query_graph")
+        builder.store(store_config)
+        _add_parser_and_linker(builder)
+        _configure_retriever(builder, strategies[0])
 
-    chunk_kw = {}
-    if "chunk_entity_source" in retriever_kwargs:
-        chunk_kw["chunk_entity_source"] = retriever_kwargs["chunk_entity_source"]
-    builder.chunk_retriever(**chunk_kw)
+        chunk_kw = {}
+        if "chunk_entity_source" in retriever_kwargs:
+            chunk_kw["chunk_entity_source"] = retriever_kwargs["chunk_entity_source"]
+        builder.chunk_retriever(**chunk_kw)
 
-    if api_key is not None:
-        builder.reasoner(api_key=api_key, model=model)
+        if api_key is not None:
+            builder.reasoner(api_key=api_key, model=model)
 
-    executor = builder.build(verbose=verbose)
+        executor = builder.build(verbose=verbose)
+
     ctx = executor.execute({"query": query})
 
     # Extract QueryResult from the appropriate output
@@ -819,3 +894,66 @@ def train_kg_model(
     )
     executor = builder.build(verbose=verbose)
     return executor.execute({})
+
+
+def extract(
+    texts: List[str],
+    *,
+    entity_labels: List[str],
+    relation_labels: List[str] = None,
+    method: str = "gliner",
+    ner_model: str = None,
+    relex_model: str = None,
+    device: str = "cpu",
+    api_key: str = None,
+    model: str = "gpt-4o-mini",
+    threshold: float = 0.3,
+    relation_threshold: float = 0.5,
+) -> ExtractionResult:
+    """Extract entities and relations without storing to a database.
+
+    Args:
+        texts: Input texts to process.
+        entity_labels: Entity types for NER.
+        relation_labels: Relation types. If None, only NER is performed.
+        method: "gliner" or "llm".
+        ner_model: Model name for NER (GLiNER model or LLM model).
+        relex_model: Model name for relex (GLiNER-relex model). Only used
+            when method="gliner" and relation_labels are provided.
+        device: "cpu" or "cuda" (GLiNER only).
+        api_key: OpenAI API key (required for method="llm").
+        model: LLM model name (for method="llm").
+        threshold: NER confidence threshold.
+        relation_threshold: Relation extraction threshold (GLiNER only).
+
+    Returns:
+        ExtractionResult with entities and relations.
+    """
+    if method == "gliner":
+        if relation_labels:
+            engine = GLiNEREngine(
+                model=relex_model or "knowledgator/gliner-relex-large-v0.5",
+                labels=entity_labels,
+                relation_labels=relation_labels,
+                threshold=threshold,
+                relation_threshold=relation_threshold,
+                device=device,
+            )
+        else:
+            engine = GLiNEREngine(
+                model=ner_model or "urchade/gliner_multi-v2.1",
+                labels=entity_labels,
+                threshold=threshold,
+                device=device,
+            )
+        return engine.extract(texts)
+    elif method == "llm":
+        engine = LLMExtractionEngine(
+            api_key=api_key,
+            model=model,
+            labels=entity_labels,
+            relation_labels=relation_labels or [],
+        )
+        return engine.extract(texts)
+    else:
+        raise ValueError(f"Unknown method: {method!r}. Expected 'gliner' or 'llm'.")

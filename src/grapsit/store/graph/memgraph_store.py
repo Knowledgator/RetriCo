@@ -40,6 +40,7 @@ class MemgraphGraphStore(Neo4jGraphStore):
             "CREATE INDEX ON :Chunk(document_id)",
             "CREATE INDEX ON :Document(id)",
             "CREATE INDEX ON :Community(id)",
+            "CREATE TEXT INDEX chunk_text_idx ON :Chunk",
         ]
         for q in index_queries:
             try:
@@ -65,6 +66,19 @@ class MemgraphGraphStore(Neo4jGraphStore):
         )
 
     # -- Community detection (MAGE) ------------------------------------------
+
+    def fulltext_search_chunks(self, query: str, top_k: int = 10, index_name: str = "chunk_text_idx"):
+        # Memgraph text search uses text_search.search with the index name
+        escaped = query.replace("\\", "\\\\").replace("'", "\\'")
+        records = self._run(
+            f"""
+            CALL text_search.search('{index_name}', '{escaped}', 'ALL')
+            YIELD node
+            RETURN node LIMIT $top_k
+            """,
+            {"top_k": top_k},
+        )
+        return [r["node"] for r in records]
 
     def detect_communities(self, method: str = "louvain", **params) -> dict:
         """Run community detection using Memgraph MAGE.

@@ -1,7 +1,9 @@
 """Neo4j graph store for knowledge graph persistence."""
 
 from typing import Any, Dict, List, Optional
+import ast
 import logging
+import uuid
 
 from neo4j import GraphDatabase
 
@@ -73,6 +75,7 @@ class Neo4jGraphStore(BaseGraphStore):
             "CREATE CONSTRAINT community_id IF NOT EXISTS FOR (co:Community) REQUIRE co.id IS UNIQUE",
             "CREATE INDEX entity_label IF NOT EXISTS FOR (e:Entity) ON (e.label)",
             "CREATE INDEX chunk_doc IF NOT EXISTS FOR (c:Chunk) ON (c.document_id)",
+            "CREATE FULLTEXT INDEX chunk_text_idx IF NOT EXISTS FOR (n:Chunk) ON EACH [n.text]",
         ]
         for q in queries:
             try:
@@ -318,6 +321,16 @@ class Neo4jGraphStore(BaseGraphStore):
             return records[0]["c"]
         return None
 
+    def fulltext_search_chunks(self, query: str, top_k: int = 10, index_name: str = "chunk_text_idx"):
+        records = self._run(
+            "CALL db.index.fulltext.queryNodes($index_name, $query) "
+            "YIELD node, score "
+            "RETURN node {.*, score: score} AS chunk "
+            "ORDER BY score DESC LIMIT $top_k",
+            {"index_name": index_name, "query": query, "top_k": top_k},
+        )
+        return [r["chunk"] for r in records]
+
     # -- Path queries --------------------------------------------------------
 
     def get_shortest_paths(self, source_id: str, target_id: str, max_length: int = 5) -> list:
@@ -508,6 +521,256 @@ class Neo4jGraphStore(BaseGraphStore):
                 pair = tuple(sorted([head_comm, tail_comm]))
                 edge_counts[pair] += 1
         return [(a, b, w) for (a, b), w in edge_counts.items()]
+
+    # -- Mutations -----------------------------------------------------------
+
+    def delete_entity(self, entity_id: str) -> bool:
+        if self.get_entity_by_id(entity_id) is None:
+            return False
+        self._run("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": entity_id})
+        return True
+
+    def delete_relation(self, relation_id: str) -> bool:
+        records = self._run(
+            """
+            MATCH ()-[r]->()
+            WHERE r.id = $id
+            AND NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF', 'CHILD_OF']
+            DELETE r
+            RETURN count(r) AS cnt
+            """,
+            {"id": relation_id},
+        )
+        return bool(records and records[0].get("cnt", 0) > 0)
+
+    def delete_chunk(self, chunk_id: str) -> bool:
+        if self.get_chunk_by_id(chunk_id) is None:
+            return False
+        self._run("MATCH (c:Chunk {id: $id}) DETACH DELETE c", {"id": chunk_id})
+        return True
+
+    def update_entity(
+        self,
+        entity_id: str,
+        *,
+        label: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        properties: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        existing = self.get_entity_by_id(entity_id)
+        if existing is None:
+            return False
+
+        set_parts = []
+        params: Dict[str, Any] = {"id": entity_id}
+
+        if label is not None:
+            set_parts.append("e.label = $label")
+            params["label"] = label
+        if entity_type is not None:
+            set_parts.append("e.entity_type = $entity_type")
+            params["entity_type"] = entity_type
+        if properties is not None:
+            # Merge with existing properties
+            existing_props: Dict[str, Any] = {}
+            raw = existing.get("properties", "{}")
+            if isinstance(raw, str):
+                try:
+                    existing_props = ast.literal_eval(raw)
+                except (ValueError, SyntaxError):
+                    existing_props = {}
+            elif isinstance(raw, dict):
+                existing_props = raw
+            existing_props.update(properties)
+            set_parts.append("e.properties = $properties")
+            params["properties"] = str(existing_props)
+
+        if not set_parts:
+            return True  # nothing to update, but entity exists
+
+        query = f"MATCH (e:Entity {{id: $id}}) SET {', '.join(set_parts)}"
+        self._run(query, params)
+        return True
+
+    def add_entity(
+        self,
+        label: str,
+        entity_type: str = "",
+        *,
+        properties: Optional[Dict[str, Any]] = None,
+        id: Optional[str] = None,
+    ) -> str:
+        entity_id = id or str(uuid.uuid4())
+        self._run(
+            """
+            CREATE (e:Entity {id: $id, label: $label,
+                              entity_type: $entity_type,
+                              properties: $properties})
+            """,
+            {
+                "id": entity_id,
+                "label": label,
+                "entity_type": entity_type,
+                "properties": str(properties or {}),
+            },
+        )
+        return entity_id
+
+    def add_relation(
+        self,
+        head_id: str,
+        tail_id: str,
+        relation_type: str,
+        *,
+        properties: Optional[Dict[str, Any]] = None,
+        id: Optional[str] = None,
+    ) -> str:
+        if self.get_entity_by_id(head_id) is None:
+            raise ValueError(f"Head entity '{head_id}' does not exist")
+        if self.get_entity_by_id(tail_id) is None:
+            raise ValueError(f"Tail entity '{tail_id}' does not exist")
+
+        rel_id = id or str(uuid.uuid4())
+        rel_type = _sanitize_label(relation_type)
+        props = properties or {}
+        self._run(
+            f"""
+            MATCH (h:Entity {{id: $head_id}})
+            MATCH (t:Entity {{id: $tail_id}})
+            CREATE (h)-[r:`{rel_type}` {{id: $id, properties: $properties}}]->(t)
+            """,
+            {
+                "head_id": head_id,
+                "tail_id": tail_id,
+                "id": rel_id,
+                "properties": str(props),
+            },
+        )
+        return rel_id
+
+    def merge_entities(self, source_id: str, target_id: str) -> bool:
+        if source_id == target_id:
+            return True
+
+        source = self.get_entity_by_id(source_id)
+        if source is None:
+            return False
+        target = self.get_entity_by_id(target_id)
+        if target is None:
+            return False
+
+        # 1. Move MENTIONED_IN edges
+        self._run(
+            """
+            MATCH (s:Entity {id: $src})-[r:MENTIONED_IN]->(c:Chunk)
+            MATCH (t:Entity {id: $tgt})
+            MERGE (t)-[r2:MENTIONED_IN]->(c)
+            SET r2.start = r.start, r2.end = r.end, r2.score = r.score, r2.text = r.text
+            DELETE r
+            """,
+            {"src": source_id, "tgt": target_id},
+        )
+
+        # 2. Move MEMBER_OF edges
+        self._run(
+            """
+            MATCH (s:Entity {id: $src})-[r:MEMBER_OF]->(co:Community)
+            MATCH (t:Entity {id: $tgt})
+            MERGE (t)-[r2:MEMBER_OF]->(co)
+            SET r2.level = r.level
+            DELETE r
+            """,
+            {"src": source_id, "tgt": target_id},
+        )
+
+        # 3. Move outgoing entity-entity relations
+        out_rels = self._run(
+            """
+            MATCH (s:Entity {id: $src})-[r]->(other:Entity)
+            WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF', 'CHILD_OF']
+            RETURN type(r) AS rel_type, r.id AS id, r.score AS score,
+                   r.chunk_id AS chunk_id, other.id AS other_id
+            """,
+            {"src": source_id},
+        )
+        for rec in out_rels:
+            rt = rec["rel_type"]
+            other = rec["other_id"]
+            if other == source_id:
+                other = target_id
+            self._run(
+                f"""
+                MATCH (h:Entity {{id: $head}}), (t:Entity {{id: $tail}})
+                CREATE (h)-[r:`{rt}` {{id: $id, score: $score, chunk_id: $chunk_id}}]->(t)
+                """,
+                {
+                    "head": target_id,
+                    "tail": other,
+                    "id": rec.get("id") or str(uuid.uuid4()),
+                    "score": rec.get("score"),
+                    "chunk_id": rec.get("chunk_id"),
+                },
+            )
+
+        # 4. Move incoming entity-entity relations
+        in_rels = self._run(
+            """
+            MATCH (other:Entity)-[r]->(s:Entity {id: $src})
+            WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF', 'CHILD_OF']
+            RETURN type(r) AS rel_type, r.id AS id, r.score AS score,
+                   r.chunk_id AS chunk_id, other.id AS other_id
+            """,
+            {"src": source_id},
+        )
+        for rec in in_rels:
+            rt = rec["rel_type"]
+            other = rec["other_id"]
+            if other == source_id:
+                other = target_id
+            self._run(
+                f"""
+                MATCH (h:Entity {{id: $head}}), (t:Entity {{id: $tail}})
+                CREATE (h)-[r:`{rt}` {{id: $id, score: $score, chunk_id: $chunk_id}}]->(t)
+                """,
+                {
+                    "head": other,
+                    "tail": target_id,
+                    "id": rec.get("id") or str(uuid.uuid4()),
+                    "score": rec.get("score"),
+                    "chunk_id": rec.get("chunk_id"),
+                },
+            )
+
+        # 5. Merge properties (target wins)
+        source_props: Dict[str, Any] = {}
+        raw = source.get("properties", "{}")
+        if isinstance(raw, str):
+            try:
+                source_props = ast.literal_eval(raw)
+            except (ValueError, SyntaxError):
+                pass
+        elif isinstance(raw, dict):
+            source_props = raw
+
+        target_props: Dict[str, Any] = {}
+        raw = target.get("properties", "{}")
+        if isinstance(raw, str):
+            try:
+                target_props = ast.literal_eval(raw)
+            except (ValueError, SyntaxError):
+                pass
+        elif isinstance(raw, dict):
+            target_props = raw
+
+        merged = {**source_props, **target_props}
+        self._run(
+            "MATCH (e:Entity {id: $id}) SET e.properties = $properties",
+            {"id": target_id, "properties": str(merged)},
+        )
+
+        # 6. Delete source
+        self._run("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": source_id})
+        return True
 
     # -- Danger zone ---------------------------------------------------------
 
