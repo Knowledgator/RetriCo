@@ -40,7 +40,7 @@ class GLiNEREngine:
     def __init__(
         self,
         *,
-        model: str = "urchade/gliner_multi-v2.1",
+        model: str = "gliner-community/gliner_small-v2.5",
         labels: List[str] = None,
         relation_labels: List[str] = None,
         threshold: float = 0.3,
