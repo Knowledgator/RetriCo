@@ -87,6 +87,69 @@ class SentenceTransformerEmbedding(BaseEmbeddingModel):
         return [emb.tolist() for emb in embeddings]
 
 
+class GLiNERBiEncoderEmbedding(BaseEmbeddingModel):
+    """GLiNER bi-encoder embedding model with lazy loading.
+
+    Uses GLiNER's ``encode_labels`` to project texts into the same
+    embedding space as entity type labels, enabling entity-type-aware
+    similarity search.
+
+    Args:
+        model_name: HuggingFace model name or path.
+        device: Device to load model on (e.g. "cpu", "cuda").
+        batch_size: Batch size for encoding.
+    """
+
+    def __init__(
+        self,
+        *,
+        model_name: str = "knowledgator/gliner-bi-base-v2.0",
+        device: Optional[str] = None,
+        batch_size: int = 32,
+    ):
+        self.model_name = model_name
+        self.device = device
+        self.batch_size = batch_size
+        self._model = None
+        self._dimension: Optional[int] = None
+
+    def _ensure_model(self):
+        """Lazily load the GLiNER model."""
+        if self._model is None:
+            try:
+                from gliner import GLiNER
+            except ImportError:
+                raise ImportError(
+                    "gliner package required for GLiNER bi-encoder embeddings. "
+                    "Install with: pip install gliner"
+                )
+
+            kwargs: Dict[str, Any] = {}
+            if self.device is not None:
+                kwargs["map_location"] = self.device
+
+            self._model = GLiNER.from_pretrained(self.model_name, **kwargs)
+            # Probe to determine embedding dimension
+            probe = self._model.encode_labels(["probe"], batch_size=1)
+            self._dimension = len(probe[0])
+            logger.info(
+                f"GLiNER bi-encoder loaded: {self.model_name} "
+                f"(dim={self._dimension})"
+            )
+
+    @property
+    def dimension(self) -> int:
+        self._ensure_model()
+        return self._dimension
+
+    def encode(self, texts: List[str]) -> List[List[float]]:
+        self._ensure_model()
+        embeddings = self._model.encode_labels(
+            texts, batch_size=self.batch_size
+        )
+        return [emb.tolist() for emb in embeddings]
+
+
 class OpenAIEmbedding(BaseEmbeddingModel):
     """OpenAI embedding model with lazy SDK loading.
 
@@ -174,24 +237,36 @@ class OpenAIEmbedding(BaseEmbeddingModel):
         return [item.embedding for item in response.data]
 
 
+_ST_KEYS = {"model_name", "device", "batch_size"}
+_OPENAI_KEYS = {"api_key", "base_url", "model", "dimensions", "timeout", "max_retries"}
+_GLINER_BI_KEYS = {"model_name", "device", "batch_size"}
+
+
 def create_embedding_model(config: dict) -> BaseEmbeddingModel:
     """Factory to create an embedding model from config.
 
     The ``embedding_method`` key selects the backend:
     - ``"sentence_transformer"`` (default): SentenceTransformerEmbedding
     - ``"openai"``: OpenAIEmbedding
+    - ``"gliner_bi_encoder"``: GLiNERBiEncoderEmbedding
 
-    Remaining keys are passed as constructor kwargs.
+    Only recognised constructor keys are forwarded; extra keys (e.g. store
+    params, ``top_k``) are silently ignored.
     """
     config = dict(config)
     method = config.pop("embedding_method", "sentence_transformer")
 
     if method == "sentence_transformer":
-        return SentenceTransformerEmbedding(**config)
+        filtered = {k: v for k, v in config.items() if k in _ST_KEYS}
+        return SentenceTransformerEmbedding(**filtered)
     elif method == "openai":
-        return OpenAIEmbedding(**config)
+        filtered = {k: v for k, v in config.items() if k in _OPENAI_KEYS}
+        return OpenAIEmbedding(**filtered)
+    elif method == "gliner_bi_encoder":
+        filtered = {k: v for k, v in config.items() if k in _GLINER_BI_KEYS}
+        return GLiNERBiEncoderEmbedding(**filtered)
     else:
         raise ValueError(
             f"Unknown embedding_method: {method!r}. "
-            f"Expected 'sentence_transformer' or 'openai'."
+            f"Expected 'sentence_transformer', 'openai', or 'gliner_bi_encoder'."
         )

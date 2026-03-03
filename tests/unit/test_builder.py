@@ -28,10 +28,15 @@ class TestBuildConfigBuilder:
         config = builder.get_config()
         assert len(config["nodes"]) == 4  # chunker, ner, relex, graph_writer
 
-    def test_requires_ner_or_relex(self):
+    def test_chunks_only_pipeline_valid(self):
+        """A pipeline with only chunker + graph_writer is valid (no NER/relex)."""
         builder = BuildConfigBuilder()
-        with pytest.raises(ValueError, match="NER, linker, or relex config required"):
-            builder.get_config()
+        config = builder.get_config()
+        node_ids = [n["id"] for n in config["nodes"]]
+        assert "chunker" in node_ids
+        assert "graph_writer" in node_ids
+        writer_node = next(n for n in config["nodes"] if n["id"] == "graph_writer")
+        assert "entities" not in writer_node["inputs"]
 
     def test_graph_writer_config(self):
         builder = BuildConfigBuilder()

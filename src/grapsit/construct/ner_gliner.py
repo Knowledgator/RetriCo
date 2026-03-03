@@ -4,7 +4,8 @@ from typing import Any, Dict, List
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import construct_registry
+from ..extraction.gliner_engine import GLiNEREngine
 from ..models.entity import EntityMention
 from ..models.document import Chunk
 
@@ -23,23 +24,19 @@ class NERGLiNERProcessor(BaseProcessor):
         flat_ner: bool — flatten nested entities (default: True)
     """
 
+    default_inputs = {"chunks": "chunker_result.chunks"}
+    default_output = "ner_result"
+
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
-        self.model_name: str = config_dict.get("model", "urchade/gliner_multi-v2.1")
-        self.labels: List[str] = config_dict.get("labels", [])
-        self.threshold: float = config_dict.get("threshold", 0.3)
-        self.batch_size: int = config_dict.get("batch_size", 8)
-        self.device: str = config_dict.get("device", "cpu")
-        self.flat_ner: bool = config_dict.get("flat_ner", True)
-        self._model = None
-
-    def _load_model(self):
-        if self._model is None:
-            from gliner import GLiNER
-            logger.info(f"Loading GLiNER model: {self.model_name}")
-            self._model = GLiNER.from_pretrained(self.model_name)
-            if self.device != "cpu":
-                self._model = self._model.to(self.device)
+        self._engine = GLiNEREngine(
+            model=config_dict.get("model", "urchade/gliner_multi-v2.1"),
+            labels=config_dict.get("labels", []),
+            threshold=config_dict.get("threshold", 0.3),
+            batch_size=config_dict.get("batch_size", 8),
+            device=config_dict.get("device", "cpu"),
+            flat_ner=config_dict.get("flat_ner", True),
+        )
 
     def __call__(self, *, chunks: List[Chunk] = None, texts: List[str] = None, **kwargs) -> Dict[str, Any]:
         """Run NER on chunks using batched inference.
@@ -49,44 +46,22 @@ class NERGLiNERProcessor(BaseProcessor):
 
         entities is a list-of-lists aligned with chunks — one list of mentions per chunk.
         """
-        self._load_model()
-
         if chunks is None:
             chunks = []
         if texts is None:
             texts = [c.text for c in chunks]
 
-        # Batched inference — returns List[List[Dict]] aligned with texts
-        entities_batch = self._model.inference(
-            texts=texts,
-            labels=self.labels,
-            threshold=self.threshold,
-            flat_ner=self.flat_ner,
-            batch_size=self.batch_size,
-        )
+        result = self._engine.extract(texts)
 
-        all_mentions: List[List[EntityMention]] = []
-        for i, raw_entities in enumerate(entities_batch):
+        # Assign chunk_id to each mention
+        for i, mentions in enumerate(result.entities):
             chunk_id = chunks[i].id if i < len(chunks) else ""
-            mentions = []
-            for ent in raw_entities:
-                entity_label = ent.get("label", "")
-                generated_label = ent.get("generated_label", None)
-                if generated_label is not None:
-                    entity_label = generated_label[0]
-                mentions.append(EntityMention(
-                    text=ent["text"],
-                    label=entity_label,
-                    start=ent.get("start", 0),
-                    end=ent.get("end", 0),
-                    score=ent.get("score", 0.0),
-                    chunk_id=chunk_id,
-                ))
-            all_mentions.append(mentions)
+            for m in mentions:
+                m.chunk_id = chunk_id
 
-        return {"entities": all_mentions, "chunks": chunks}
+        return {"entities": result.entities, "chunks": chunks}
 
 
-@processor_registry.register("ner_gliner")
+@construct_registry.register("ner_gliner")
 def create_ner_gliner(config_dict: dict, pipeline=None):
     return NERGLiNERProcessor(config_dict, pipeline)

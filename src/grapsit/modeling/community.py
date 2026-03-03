@@ -5,11 +5,15 @@ import logging
 import uuid
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
-from ..store import create_store
+from ..core.registry import modeling_registry
+from ..store.pool import resolve_from_pool_or_create
 from ..llm.openai_client import OpenAIClient
+from ..llm.prompts import (
+    COMMUNITY_SUMMARIZER_SYSTEM_PROMPT,
+    COMMUNITY_SUMMARIZER_USER_PROMPT_TEMPLATE,
+)
 from ..modeling.embeddings import create_embedding_model
-from ..store.vector import create_vector_store
+from ..store.vector.graph_db import GraphDBVectorStore as _GraphDBVectorStore
 
 try:
     import networkx as nx
@@ -35,6 +39,9 @@ class CommunityDetectorProcessor(BaseProcessor):
         Store params: store_type, neo4j_uri, etc.
     """
 
+    default_inputs = {}
+    default_output = "detector_result"
+
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
         self._store = None
@@ -44,7 +51,7 @@ class CommunityDetectorProcessor(BaseProcessor):
 
     def _ensure_store(self):
         if self._store is None:
-            self._store = create_store(self.config_dict)
+            self._store = resolve_from_pool_or_create(self.config_dict, "graph")
 
     def __call__(self, **kwargs) -> Dict[str, Any]:
         self._ensure_store()
@@ -145,17 +152,25 @@ class CommunitySummarizerProcessor(BaseProcessor):
         temperature: float — LLM temperature (default: 0.3).
         max_completion_tokens: int — max tokens (default: 4096).
         Store params: store_type, neo4j_uri, etc.
+        system_prompt: str — override default community summarizer system prompt.
+        user_prompt_template: str — override default community summarizer user prompt.
+            Available placeholder: {context}.
     """
+
+    default_inputs = {}
+    default_output = "summarizer_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
         self._store = None
         self._llm = None
         self.top_k = config_dict.get("top_k", 10)
+        self._system_prompt = config_dict.get("system_prompt", COMMUNITY_SUMMARIZER_SYSTEM_PROMPT)
+        self._user_prompt_template = config_dict.get("user_prompt_template", COMMUNITY_SUMMARIZER_USER_PROMPT_TEMPLATE)
 
     def _ensure_store(self):
         if self._store is None:
-            self._store = create_store(self.config_dict)
+            self._store = resolve_from_pool_or_create(self.config_dict, "graph")
 
     def _ensure_llm(self):
         if self._llm is None:
@@ -234,19 +249,10 @@ class CommunitySummarizerProcessor(BaseProcessor):
 
     def _generate_summary(self, context: str) -> tuple:
         """Use LLM to generate a title and summary for a community."""
-        prompt = (
-            "You are analyzing a community of entities in a knowledge graph. "
-            "Based on the following entities and their relationships, provide:\n"
-            "1. A short title (max 10 words) describing the community theme\n"
-            "2. A concise summary (2-3 sentences) of what this community represents\n\n"
-            f"Entities and relationships:\n{context}\n\n"
-            "Respond in this exact format:\n"
-            "TITLE: <title>\n"
-            "SUMMARY: <summary>"
-        )
+        prompt = self._user_prompt_template.format(context=context)
 
         response = self._llm.complete([
-            {"role": "system", "content": "You are a knowledge graph analyst."},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": prompt},
         ])
 
@@ -278,6 +284,9 @@ class CommunityEmbedderProcessor(BaseProcessor):
         Additional embedding/vector store params passed through.
     """
 
+    default_inputs = {}
+    default_output = "embedder_result"
+
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
         self._store = None
@@ -286,7 +295,7 @@ class CommunityEmbedderProcessor(BaseProcessor):
 
     def _ensure_store(self):
         if self._store is None:
-            self._store = create_store(self.config_dict)
+            self._store = resolve_from_pool_or_create(self.config_dict, "graph")
 
     def _ensure_embedding_model(self):
         if self._embedding_model is None:
@@ -303,13 +312,7 @@ class CommunityEmbedderProcessor(BaseProcessor):
 
     def _ensure_vector_store(self):
         if self._vector_store is None:
-            vector_config = {
-                "vector_store_type": self.config_dict.get("vector_store_type", "in_memory"),
-            }
-            for key in ("use_gpu", "qdrant_url", "qdrant_api_key", "qdrant_path", "prefer_grpc"):
-                if key in self.config_dict:
-                    vector_config[key] = self.config_dict[key]
-            self._vector_store = create_vector_store(vector_config)
+            self._vector_store = resolve_from_pool_or_create(self.config_dict, "vector")
 
     def __call__(self, **kwargs) -> Dict[str, Any]:
         self._ensure_store()
@@ -350,12 +353,13 @@ class CommunityEmbedderProcessor(BaseProcessor):
         ]
         self._vector_store.store_embeddings(index_name, items)
 
-        # Also store on Community nodes in graph
-        for comm, emb in zip(to_embed, embeddings):
-            try:
-                self._store.update_community_embedding(comm.get("id"), emb)
-            except Exception as e:
-                logger.debug(f"Could not store embedding on Community node: {e}")
+        # Persist on graph nodes (skip if vector store already writes to graph DB)
+        if not isinstance(self._vector_store, _GraphDBVectorStore):
+            for comm, emb in zip(to_embed, embeddings):
+                try:
+                    self._store.update_community_embedding(comm.get("id"), emb)
+                except Exception as e:
+                    logger.debug(f"Could not store embedding on Community node: {e}")
 
         logger.info(f"Embedded {len(to_embed)} communities (dim={dimension})")
         return {
@@ -366,16 +370,16 @@ class CommunityEmbedderProcessor(BaseProcessor):
 
 # -- Processor registration --------------------------------------------------
 
-@processor_registry.register("community_detector")
+@modeling_registry.register("community_detector")
 def create_community_detector(config_dict: dict, pipeline=None):
     return CommunityDetectorProcessor(config_dict, pipeline)
 
 
-@processor_registry.register("community_summarizer")
+@modeling_registry.register("community_summarizer")
 def create_community_summarizer(config_dict: dict, pipeline=None):
     return CommunitySummarizerProcessor(config_dict, pipeline)
 
 
-@processor_registry.register("community_embedder")
+@modeling_registry.register("community_embedder")
 def create_community_embedder(config_dict: dict, pipeline=None):
     return CommunityEmbedderProcessor(config_dict, pipeline)

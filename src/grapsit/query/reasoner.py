@@ -7,7 +7,8 @@ import re
 import logging
 
 from ..core.base import BaseProcessor
-from ..core.registry import processor_registry
+from ..core.registry import query_registry
+from ..llm.prompts import REASONER_SYSTEM_PROMPT, REASONER_USER_PROMPT_TEMPLATE
 from ..models.entity import Entity
 from ..models.relation import Relation
 from ..models.document import Chunk
@@ -34,6 +35,8 @@ class LLMReasoner(BaseReasoner):
     """
 
     def __init__(self, config_dict: Dict[str, Any]):
+        self._system_prompt = config_dict.get("system_prompt", REASONER_SYSTEM_PROMPT)
+        self._user_prompt_template = config_dict.get("user_prompt_template", REASONER_USER_PROMPT_TEMPLATE)
         self._client = None
         self._client_kwargs = {
             "api_key": config_dict.get("api_key"),
@@ -76,25 +79,11 @@ class LLMReasoner(BaseReasoner):
 
         context = self._format_subgraph_context(subgraph)
 
-        system_msg = (
-            "You are a knowledge graph reasoning system. "
-            "Given a query and a subgraph of entities, relations, and source text chunks, "
-            "you analyze the information to answer the query."
-        )
+        system_msg = self._system_prompt
 
-        user_msg = (
-            f"Query: {query}\n\n"
-            f"Knowledge Graph Context:\n{context}\n\n"
-            f"Based on the subgraph above, respond with a JSON object:\n"
-            f'{{\n'
-            f'  "inferred_relations": [{{"head": "entity1", "tail": "entity2", "relation": "relation_type"}}],\n'
-            f'  "relevant_chunk_ids": ["chunk_id_1", ...],\n'
-            f'  "answer": "Your concise answer to the query"\n'
-            f'}}\n\n'
-            f"- inferred_relations: new relations you can infer that are not explicitly stated\n"
-            f"- relevant_chunk_ids: IDs of the most relevant source chunks for answering\n"
-            f"- answer: a concise answer based on the available evidence\n\n"
-            f"Return ONLY the JSON object."
+        user_msg = self._user_prompt_template.format(
+            query=query,
+            context=context,
         )
 
         messages = [
@@ -175,7 +164,13 @@ class ReasonerProcessor(BaseProcessor):
     Config keys:
         method: str — reasoning strategy (default: "llm")
         api_key, model, base_url, temperature, max_completion_tokens, timeout — LLM config
+        system_prompt: str — override default reasoner system prompt.
+        user_prompt_template: str — override default reasoner user prompt.
+            Available placeholders: {query}, {context}.
     """
+
+    default_inputs = {"query": "$input.query", "subgraph": "chunk_result.subgraph"}
+    default_output = "reasoner_result"
 
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
@@ -206,6 +201,6 @@ class ReasonerProcessor(BaseProcessor):
         return {"result": result}
 
 
-@processor_registry.register("reasoner")
+@query_registry.register("reasoner")
 def create_reasoner(config_dict: dict, pipeline=None):
     return ReasonerProcessor(config_dict, pipeline)

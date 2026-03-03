@@ -7,3 +7,6 @@ from . import ner_llm as _ner_llm
 from . import relex_llm as _relex_llm
 from . import linker as _linker
 from . import ingest as _ingest
+from . import chunk_embedder as _chunk_embedder
+from . import entity_embedder as _entity_embedder
+from . import store_reader as _store_reader

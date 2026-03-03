@@ -93,3 +93,85 @@ class TestChunkRetrieverProcessor:
         }
         result = proc(subgraph=subgraph_dict)
         assert len(result["subgraph"].chunks) == 1
+
+
+class TestChunkEntitySource:
+    def _make_proc(self, chunk_entity_source="all", **config_overrides):
+        config = {
+            "neo4j_uri": "bolt://localhost:7687",
+            "neo4j_user": "neo4j",
+            "neo4j_password": "password",
+            "chunk_entity_source": chunk_entity_source,
+        }
+        config.update(config_overrides)
+        proc = ChunkRetrieverProcessor(config)
+        proc._store = MagicMock()
+        return proc
+
+    def _make_subgraph(self):
+        return Subgraph(
+            entities=[
+                Entity(id="e1", label="Einstein", entity_type="person"),
+                Entity(id="e2", label="Ulm", entity_type="location"),
+                Entity(id="e3", label="Physics", entity_type="field"),
+            ],
+            relations=[
+                Relation(head_text="Einstein", tail_text="Ulm", relation_type="BORN_IN"),
+            ],
+        )
+
+    def test_all_entities_default(self):
+        proc = self._make_proc(chunk_entity_source="all")
+        proc._store.get_chunks_for_entity.return_value = [
+            {"id": "c1", "document_id": "d1", "text": "test", "index": 0},
+        ]
+
+        result = proc(subgraph=self._make_subgraph())
+        # Should query all 3 entities
+        assert proc._store.get_chunks_for_entity.call_count == 3
+
+    def test_head_entities_only(self):
+        proc = self._make_proc(chunk_entity_source="head")
+        proc._store.get_chunks_for_entity.return_value = [
+            {"id": "c1", "document_id": "d1", "text": "test", "index": 0},
+        ]
+
+        scored_triples = [
+            {"head": "Einstein", "relation": "BORN_IN", "tail": "Ulm", "score": 0.9},
+        ]
+
+        result = proc(subgraph=self._make_subgraph(), scored_triples=scored_triples)
+        # Should only query Einstein (head)
+        assert proc._store.get_chunks_for_entity.call_count == 1
+        proc._store.get_chunks_for_entity.assert_called_with("e1")
+
+    def test_tail_entities_only(self):
+        proc = self._make_proc(chunk_entity_source="tail")
+        proc._store.get_chunks_for_entity.return_value = [
+            {"id": "c1", "document_id": "d1", "text": "test", "index": 0},
+        ]
+
+        scored_triples = [
+            {"head": "Einstein", "relation": "BORN_IN", "tail": "Ulm", "score": 0.9},
+        ]
+
+        result = proc(subgraph=self._make_subgraph(), scored_triples=scored_triples)
+        # Should only query Ulm (tail)
+        assert proc._store.get_chunks_for_entity.call_count == 1
+        proc._store.get_chunks_for_entity.assert_called_with("e2")
+
+    def test_fallback_to_all_without_scored_triples(self):
+        proc = self._make_proc(chunk_entity_source="head")
+        proc._store.get_chunks_for_entity.return_value = []
+
+        result = proc(subgraph=self._make_subgraph())
+        # No scored_triples → falls back to all entities
+        assert proc._store.get_chunks_for_entity.call_count == 3
+
+    def test_both_alias(self):
+        proc = self._make_proc(chunk_entity_source="both")
+        proc._store.get_chunks_for_entity.return_value = []
+
+        result = proc(subgraph=self._make_subgraph())
+        # "both" is same as "all"
+        assert proc._store.get_chunks_for_entity.call_count == 3

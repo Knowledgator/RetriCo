@@ -52,9 +52,9 @@ class TestQueryPipeline:
         # Mock GLiNER parser
         parser_proc = executor.processors["query_parser"]
         parser_proc._model = MagicMock()
-        parser_proc._model.predict_entities.return_value = [
+        parser_proc._model.inference.return_value = [[
             {"text": "Einstein", "label": "person", "start": 10, "end": 18, "score": 0.95},
-        ]
+        ]]
 
         # Mock store for retriever + chunk_retriever
         mock_store = self._mock_store()
@@ -89,9 +89,9 @@ class TestQueryPipeline:
         # Mock parser
         parser_proc = executor.processors["query_parser"]
         parser_proc._model = MagicMock()
-        parser_proc._model.predict_entities.return_value = [
+        parser_proc._model.inference.return_value = [[
             {"text": "Einstein", "label": "person", "start": 10, "end": 18, "score": 0.95},
-        ]
+        ]]
 
         # Mock store
         mock_store = self._mock_store()

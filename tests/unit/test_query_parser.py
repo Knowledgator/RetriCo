@@ -17,10 +17,10 @@ class TestQueryParserGLiNER:
             "threshold": 0.3,
         })
         proc._model = MagicMock()
-        proc._model.predict_entities.return_value = [
+        proc._model.inference.return_value = [[
             {"text": "Einstein", "label": "person", "start": 10, "end": 18, "score": 0.95},
             {"text": "Ulm", "label": "location", "start": 27, "end": 30, "score": 0.85},
-        ]
+        ]]
 
         result = proc(query="Where was Einstein born in Ulm?")
 
@@ -37,7 +37,7 @@ class TestQueryParserGLiNER:
             "labels": ["person"],
         })
         proc._model = MagicMock()
-        proc._model.predict_entities.return_value = []
+        proc._model.inference.return_value = [[]]
 
         result = proc(query="What is the meaning of life?")
 
@@ -52,13 +52,13 @@ class TestQueryParserGLiNER:
             "threshold": 0.5,
         })
         proc._model = MagicMock()
-        proc._model.predict_entities.return_value = []
+        proc._model.inference.return_value = [[]]
 
         proc(query="test query")
 
-        proc._model.predict_entities.assert_called_once_with(
-            "test query",
-            ["person", "organization"],
+        proc._model.inference.assert_called_once_with(
+            texts=["test query"],
+            labels=["person", "organization"],
             threshold=0.5,
             flat_ner=True,
         )

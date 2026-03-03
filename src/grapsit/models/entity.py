@@ -14,6 +14,7 @@ class EntityMention(BaseModel):
     score: float = 0.0
     chunk_id: str = ""
     linked_entity_id: Optional[str] = None
+    properties: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Entity(BaseModel):

@@ -11,7 +11,7 @@ from grapsit.models.relation import Relation
 @pytest.fixture
 def mock_falkordb_store():
     """A mocked FalkorDBGraphStore."""
-    from grapsit.store.falkordb_store import FalkorDBGraphStore
+    from grapsit.store.graph.falkordb_store import FalkorDBGraphStore
     store = FalkorDBGraphStore(host="localhost", port=6379, graph="test")
 
     mock_graph = MagicMock()
@@ -190,8 +190,14 @@ class TestFalkorDBGraphStore:
     def test_setup_indexes(self, mock_falkordb_store):
         store, mock_graph = mock_falkordb_store
         store.setup_indexes()
-        # Should create 5 indexes
-        assert mock_graph.query.call_count == 5
+        # Should create 6 indexes (5 original + Community)
+        assert mock_graph.query.call_count == 6
+
+    def test_setup_indexes_includes_community(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        store.setup_indexes()
+        queries = [c[0][0] for c in mock_graph.query.call_args_list]
+        assert any("Community" in q for q in queries)
 
     def test_setup_indexes_tolerates_errors(self, mock_falkordb_store):
         store, mock_graph = mock_falkordb_store
@@ -207,19 +213,19 @@ class TestFalkorDBGraphStore:
         assert store._db is None
 
     def test_node_to_dict_with_dict(self):
-        from grapsit.store.falkordb_store import _node_to_dict
+        from grapsit.store.graph.falkordb_store import _node_to_dict
         d = {"id": "e1", "label": "test"}
         assert _node_to_dict(d) == d
 
     def test_node_to_dict_with_node(self):
-        from grapsit.store.falkordb_store import _node_to_dict
+        from grapsit.store.graph.falkordb_store import _node_to_dict
         node = MagicMock()
         node.properties = {"id": "e1", "label": "test"}
         result = _node_to_dict(node)
         assert result == {"id": "e1", "label": "test"}
 
     def test_sanitize_label(self):
-        from grapsit.store.falkordb_store import _sanitize_label
+        from grapsit.store.graph.falkordb_store import _sanitize_label
         assert _sanitize_label("born in") == "BORN_IN"
         assert _sanitize_label("works-at") == "WORKS_AT"
         assert _sanitize_label("123test") == "_123TEST"
@@ -227,19 +233,156 @@ class TestFalkorDBGraphStore:
 
     def test_lazy_connection(self):
         """Verify connection is not established until first query."""
-        from grapsit.store.falkordb_store import FalkorDBGraphStore
+        from grapsit.store.graph.falkordb_store import FalkorDBGraphStore
         store = FalkorDBGraphStore()
         assert store._graph is None
         assert store._db is None
 
 
+class TestFalkorDBChunkLookups:
+    def test_get_entities_for_chunk(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        mock_node = MagicMock()
+        mock_node.properties = {"id": "e1", "label": "Einstein"}
+        mock_result = MagicMock()
+        mock_result.result_set = [[mock_node]]
+        mock_graph.query.return_value = mock_result
+
+        result = store.get_entities_for_chunk("c1")
+        assert len(result) == 1
+        assert result[0]["id"] == "e1"
+        query = mock_graph.query.call_args[0][0]
+        assert "MENTIONED_IN" in query
+        assert "Chunk" in query
+
+    def test_get_entities_for_chunk_empty(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        result = store.get_entities_for_chunk("c999")
+        assert result == []
+
+    def test_get_chunk_by_id_found(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        mock_node = MagicMock()
+        mock_node.properties = {"id": "c1", "text": "Hello", "document_id": "d1"}
+        mock_result = MagicMock()
+        mock_result.result_set = [[mock_node]]
+        mock_graph.query.return_value = mock_result
+
+        result = store.get_chunk_by_id("c1")
+        assert result["id"] == "c1"
+        assert result["text"] == "Hello"
+
+    def test_get_chunk_by_id_not_found(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        result = store.get_chunk_by_id("c999")
+        assert result is None
+
+
+class TestFalkorDBPathQueries:
+    def test_get_shortest_paths_empty(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        result = store.get_shortest_paths("e1", "e2")
+        assert result == []
+        query = mock_graph.query.call_args[0][0]
+        assert "shortestPath" in query
+
+    def test_get_shortest_paths_with_edge_objects(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        node1 = MagicMock()
+        node1.properties = {"id": "e1", "label": "Einstein"}
+        node2 = MagicMock()
+        node2.properties = {"id": "e2", "label": "Ulm"}
+        edge = MagicMock()
+        edge.relation = "BORN_IN"
+        edge.properties = {"score": 0.8}
+        mock_result = MagicMock()
+        mock_result.result_set = [[[node1, node2], [edge]]]
+        mock_graph.query.return_value = mock_result
+
+        result = store.get_shortest_paths("e1", "e2")
+        assert len(result) == 1
+        assert len(result[0]["nodes"]) == 2
+        assert result[0]["rels"][0]["type"] == "BORN_IN"
+        assert result[0]["rels"][0]["score"] == 0.8
+
+    def test_get_shortest_paths_with_dict_edges(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        node1 = MagicMock()
+        node1.properties = {"id": "e1"}
+        edge_dict = {"type": "WORKS_AT", "score": 0.9}
+        mock_result = MagicMock()
+        mock_result.result_set = [[[node1], [edge_dict]]]
+        mock_graph.query.return_value = mock_result
+
+        result = store.get_shortest_paths("e1", "e2")
+        assert result[0]["rels"][0]["type"] == "WORKS_AT"
+
+
+class TestFalkorDBCommunityCRUD:
+    def test_write_community(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        store.write_community("com1", level=0, title="Science", summary="Scientific entities")
+        query = mock_graph.query.call_args[0][0]
+        assert "MERGE" in query
+        assert "Community" in query
+        params = mock_graph.query.call_args[0][1]
+        assert params["id"] == "com1"
+        assert params["level"] == 0
+        assert params["title"] == "Science"
+
+    def test_write_community_membership(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        store.write_community_membership("e1", "com1", level=0)
+        query = mock_graph.query.call_args[0][0]
+        assert "MEMBER_OF" in query
+        assert "Entity" in query
+        assert "Community" in query
+
+    def test_get_community_members(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        mock_node = MagicMock()
+        mock_node.properties = {"id": "e1", "label": "Einstein"}
+        mock_result = MagicMock()
+        mock_result.result_set = [[mock_node]]
+        mock_graph.query.return_value = mock_result
+
+        result = store.get_community_members("com1")
+        assert len(result) == 1
+        assert result[0]["id"] == "e1"
+
+    def test_get_all_communities(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        mock_node = MagicMock()
+        mock_node.properties = {"id": "com1", "level": 0, "title": "Science"}
+        mock_result = MagicMock()
+        mock_result.result_set = [[mock_node]]
+        mock_graph.query.return_value = mock_result
+
+        result = store.get_all_communities()
+        assert len(result) == 1
+        assert result[0]["id"] == "com1"
+
+    def test_detect_communities_cdlp(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        mock_result = MagicMock()
+        mock_result.result_set = [["e1", "0"], ["e2", "0"], ["e3", "1"]]
+        mock_graph.query.return_value = mock_result
+
+        result = store.detect_communities()
+
+        assert result == {"e1": "0", "e2": "0", "e3": "1"}
+        call_args = mock_graph.query.call_args
+        assert "algo.labelPropagation" in call_args[0][0]
+        assert call_args[0][1]["max_iter"] == 10
+
+
 class TestFalkorDBIsBaseGraphStore:
     def test_isinstance(self):
-        from grapsit.store.base import BaseGraphStore
-        from grapsit.store.falkordb_store import FalkorDBGraphStore
+        from grapsit.store.graph.base import BaseGraphStore
+        from grapsit.store.graph.falkordb_store import FalkorDBGraphStore
         assert issubclass(FalkorDBGraphStore, BaseGraphStore)
 
     def test_neo4j_isinstance(self):
-        from grapsit.store.base import BaseGraphStore
-        from grapsit.store.neo4j_store import Neo4jGraphStore
+        from grapsit.store.graph.base import BaseGraphStore
+        from grapsit.store.graph.neo4j_store import Neo4jGraphStore
         assert issubclass(Neo4jGraphStore, BaseGraphStore)
