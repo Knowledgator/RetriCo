@@ -6,7 +6,7 @@ End-to-end Graph RAG framework that turns unstructured text into a queryable kno
 
 **Ingest pipeline**: `structured JSON → graph store` (bypass NER/relex, write pre-structured data directly)
 
-**Query pipeline**: `query parsing → entity linking → subgraph retrieval → chunk retrieval → LLM reasoning` (9 retrieval strategies)
+**Query pipeline**: `query parsing → entity linking → subgraph retrieval → chunk retrieval → LLM reasoning` (9 retrieval strategies + multi-retriever fusion)
 
 **Community pipeline**: `community detection → LLM summarization → vector embedding`
 
@@ -16,6 +16,8 @@ Supports multiple extraction backends — mix and match freely:
 - **GLiNER** — fast local inference, no API keys needed
 - **LLM** — any OpenAI-compatible API (OpenAI, vLLM, Ollama, LM Studio, etc.)
 - **GLinker** — entity linking against a reference knowledge base
+
+Use via Python API, YAML configs, or the `grapsit` CLI (interactive wizards, graph CRUD, query REPL).
 
 ## Installation
 
@@ -273,14 +275,216 @@ print(answer.subgraph)      # retrieved entities, relations, source chunks
 2. **Training** — trains a PyKEEN KG embedding model (RotatE, TransE, ComplEx, etc.)
 3. **Storing** — saves entity/relation embeddings to vector store and disk, optionally writes to graph DB
 
-**Query pipeline** (9 retrieval strategies):
+**Query pipeline** (9 retrieval strategies + multi-retriever fusion):
 
 1. **Query parsing** — GLiNER, LLM, or tool-calling parser extracts entities/triple patterns from the query
 2. **Entity linking** (optional) — links parsed entities to the knowledge base for precise lookup
 3. **Retrieval** — one of 9 strategies (entity lookup, community, chunk embedding, entity embedding, tool-based, path, KG-scored, keyword)
-4. **KG scoring** (optional) — scores retrieved triples and predicts missing links using trained KG embeddings; in KG-scored mode, acts as the retriever
-5. **Chunk retrieval** — fetches source text chunks where subgraph entities were mentioned (configurable entity filtering)
-6. **Reasoning** (optional) — LLM generates an answer from the subgraph and source chunks
+4. **Fusion** (optional) — merges results from multiple retrievers into a single subgraph (union, RRF, weighted, or intersection)
+5. **KG scoring** (optional) — scores retrieved triples and predicts missing links using trained KG embeddings; in KG-scored mode, acts as the retriever
+6. **Chunk retrieval** — fetches source text chunks where subgraph entities were mentioned (configurable entity filtering)
+7. **Reasoning** (optional) — LLM generates an answer from the subgraph and source chunks
+
+## CLI
+
+grapsit includes a full command-line interface. After installation (`pip install -e .`), the `grapsit` command is available.
+
+```
+grapsit
+├── connect      — Save database connection to .grapsit.yaml
+├── build        — Build KG from text (interactive wizard or flags/config)
+├── ingest       — Ingest structured JSON data
+├── query        — Query the KG (interactive wizard or flags/config)
+├── community    — Community detection
+├── model        — Train KG embeddings
+├── init         — Generate a pipeline config YAML interactively
+├── graph        — Direct graph CRUD
+│   ├── entities    — List/search entities
+│   ├── relations   — List relations for an entity
+│   ├── search      — Full-text search chunks
+│   ├── add-entity  — Add entity
+│   ├── add-relation — Add relation
+│   ├── update      — Update entity
+│   ├── delete      — Delete entity or relation
+│   ├── merge       — Merge two entities
+│   ├── stats       — Graph statistics
+│   ├── cypher      — Run raw Cypher
+│   └── clear       — Clear all data
+└── shell        — Interactive query REPL
+```
+
+### Connection management
+
+Save a database connection once, and all subsequent commands use it automatically:
+
+```bash
+# Interactive setup
+grapsit connect
+# → Store type? [neo4j/falkordb/memgraph]
+# → URI, user, password...
+# → Saved to .grapsit.yaml
+
+# Or with flags
+grapsit connect --store-type neo4j --neo4j-uri bolt://localhost:7687 --neo4j-password secret
+
+# Show / clear saved connection
+grapsit connect --show
+grapsit connect --clear
+```
+
+After connecting, all commands work without store flags:
+
+```bash
+grapsit graph stats
+grapsit query "Who is Einstein?" --entity-labels person,location
+grapsit build --config build.yaml
+```
+
+### API key
+
+The OpenAI API key can be provided via `--api-key` flag or the `OPENAI_API_KEY` environment variable:
+
+```bash
+# Via environment variable (recommended)
+export OPENAI_API_KEY=sk-...
+grapsit build --text "..." --entity-labels person --method llm
+grapsit query "Where was Einstein born?" --entity-labels person
+
+# Via flag (overrides env var)
+grapsit query "..." --entity-labels person --api-key sk-...
+```
+
+Interactive wizards will also pick up `OPENAI_API_KEY` automatically and skip the API key prompt.
+
+### Building a graph
+
+Pipeline commands support two modes: **argument-based** (flags or `--config`) and **interactive wizard** (step-by-step prompts when run with no/insufficient args).
+
+```bash
+# From a YAML config
+grapsit build --config configs/build_gliner.yaml --text "Einstein was born in Ulm."
+
+# With flags (GLiNER)
+grapsit build \
+  --text "Einstein was born in Ulm." \
+  --entity-labels person,location \
+  --relation-labels "born in" \
+  --neo4j-uri bolt://localhost:7687
+
+# LLM method
+grapsit build \
+  --text "Einstein was born in Ulm." \
+  --entity-labels person,location \
+  --method llm --api-key sk-... --llm-model gpt-4o-mini
+
+# Interactive wizard (just run with no args)
+grapsit build
+# → walks you through input, store, chunking, NER, relex, embeddings...
+
+# Save the pipeline config for reuse
+grapsit build --text "..." --entity-labels person --save-config my_pipeline.yaml
+```
+
+Input can come from `--text` (repeatable) or `--file` (repeatable, reads file contents).
+
+### Querying
+
+```bash
+# With flags
+grapsit query "Where was Einstein born?" \
+  --entity-labels person,location \
+  --api-key sk-... --llm-model gpt-4o-mini
+
+# Different retrieval strategy
+grapsit query "..." --entity-labels person --strategy community
+
+# Multi-retriever fusion
+grapsit query "..." --entity-labels person --strategy entity,community,path
+
+# From config
+grapsit query "Where was Einstein born?" --config configs/query_gliner.yaml
+
+# Interactive wizard
+grapsit query
+```
+
+### Ingesting structured data
+
+```bash
+grapsit ingest data.json
+grapsit ingest data.json --json-output backup.json --verbose
+```
+
+The JSON file must be a list of objects matching the `ingest_data()` format (each with `entities`, optional `relations`, `text`, `metadata`).
+
+### Community detection
+
+```bash
+grapsit community --method louvain --levels 2
+grapsit community --method leiden --api-key sk-...  # enables LLM summarization
+grapsit community   # interactive wizard
+```
+
+### KG embedding training
+
+```bash
+grapsit model --kg-model RotatE --epochs 100 --embedding-dim 128
+grapsit model --config model_config.yaml
+grapsit model   # interactive wizard
+```
+
+### Config generation
+
+Generate a full pipeline config YAML interactively:
+
+```bash
+grapsit init build    # walks through build pipeline config
+grapsit init query    # walks through query pipeline config
+grapsit init community
+grapsit init model
+```
+
+### Direct graph operations
+
+```bash
+grapsit graph entities                    # list all entities
+grapsit graph entities --type person      # filter by type
+grapsit graph relations "Einstein"        # relations for an entity
+grapsit graph search "quantum physics"    # full-text search chunks
+grapsit graph add-entity "Einstein" --type person --properties '{"birth_year": 1879}'
+grapsit graph add-relation "Einstein" "Ulm" "BORN_IN"
+grapsit graph update <entity-id> --label "Albert Einstein"
+grapsit graph delete --entity <id>
+grapsit graph merge <source-id> <target-id>
+grapsit graph stats
+grapsit graph cypher "MATCH (n) RETURN count(n)"
+grapsit graph clear --yes
+```
+
+### Interactive shell
+
+```bash
+grapsit shell --entity-labels person,location --api-key sk-...
+```
+
+```
+grapsit> Where was Einstein born?
+Answer: Albert Einstein was born in Ulm, Germany.
+Entities (3): ...
+
+grapsit> :entities person
+id        label             entity_type
+--------  ----------------  -----------
+a1b2c3..  Albert Einstein   person
+d4e5f6..  Marie Curie       person
+
+grapsit> :relations Einstein
+grapsit> :search quantum physics
+grapsit> :cypher MATCH (n:Entity) RETURN n.label LIMIT 5
+grapsit> :labels person,org,location    # change default labels
+grapsit> :help
+grapsit> :quit
+```
 
 ## Building the graph
 
@@ -994,19 +1198,25 @@ result = executor.execute({"texts": ["Einstein was born in Ulm."]})
 
 ### Output format
 
-The JSON file contains deduplicated entities and resolved relations:
+The JSON file is a list of items in the same format as `ingest_data()`. Each item groups entities and relations by source document, with optional `text` and `metadata`:
 
 ```json
-{
-  "entities": [
-    {"text": "Einstein", "label": "person", "id": "..."},
-    {"text": "Ulm", "label": "location", "id": "..."}
-  ],
-  "relations": [
-    {"head": "Einstein", "tail": "Ulm", "type": "born in", "score": 0.8}
-  ]
-}
+[
+  {
+    "entities": [
+      {"text": "Einstein", "label": "person", "id": "..."},
+      {"text": "Ulm", "label": "location", "id": "..."}
+    ],
+    "relations": [
+      {"head": "Einstein", "tail": "Ulm", "type": "born in", "score": 0.8}
+    ],
+    "text": "Einstein was born in Ulm, Germany in 1879.",
+    "metadata": {"source": "..."}
+  }
+]
 ```
+
+Entities and relations not linked to any document are collected into a separate item without `text`.
 
 ### Round-trip: build, export, re-ingest
 
@@ -1025,13 +1235,12 @@ grapsit.build_graph(
     json_output="data/graph_export.json",
 )
 
-# Later, ingest into a different database
+# Later, ingest into a different database — feed the list directly
 with open("data/graph_export.json") as f:
     data = json.load(f)
 
 grapsit.ingest_data(
-    entities=data["entities"],
-    relations=data["relations"],
+    data=data,
     store_type="memgraph",
     memgraph_uri="bolt://localhost:7688",
 )
@@ -1041,7 +1250,7 @@ grapsit.ingest_data(
 
 After building a knowledge graph, you can embed chunk texts and/or entity labels into a vector store. This enables the `chunk_embedding` and `entity_embedding` retrieval strategies during queries.
 
-Both embedders run **after** `graph_writer` in the build pipeline. They use the existing embedding model factory (`sentence_transformer` or `openai`) and vector store factory (`in_memory`, `faiss`, or `qdrant`). Embeddings are stored in the vector store and optionally persisted on graph nodes.
+Both embedders run **after** `graph_writer` in the build pipeline. They use the existing embedding model factory (`sentence_transformer`, `openai`, or `gliner_bi_encoder`) and vector store factory (`in_memory`, `faiss`, or `qdrant`). Embeddings are stored in the vector store and optionally persisted on graph nodes.
 
 ### With `build_graph()`
 
@@ -1057,7 +1266,7 @@ result = grapsit.build_graph(
     # Enable embeddings
     embed_chunks=True,
     embed_entities=True,
-    embedding_method="sentence_transformer",  # or "openai"
+    embedding_method="sentence_transformer",  # or "openai", "gliner_bi_encoder"
     embedding_model_name="all-MiniLM-L6-v2",
     vector_store_type="in_memory",            # or "faiss", "qdrant"
 )
@@ -1117,6 +1326,19 @@ builder.chunk_embedder(
     model_name="text-embedding-3-small",
 )
 ```
+
+### Using GLiNER bi-encoder embeddings
+
+GLiNER bi-encoder models (`knowledgator/gliner-bi-base-v2.0`) encode text into the same embedding space as entity type labels, enabling entity-type-aware similarity search.
+
+```python
+builder.entity_embedder(
+    embedding_method="gliner_bi_encoder",
+    model_name="knowledgator/gliner-bi-base-v2.0",  # default
+)
+```
+
+This is particularly useful for `entity_embedding_retriever` queries where you want embeddings that are aware of entity type semantics. No API key needed — runs locally like sentence-transformers.
 
 ### How it works
 
@@ -1309,7 +1531,7 @@ reasoner_result = ctx.get("reasoner_result")    # {"result": QueryResult}
 
 ### Retrieval strategies
 
-grapsit supports 9 retrieval strategies. Each strategy plugs into the same downstream pipeline (`chunk_retriever → reasoner`), so you can swap strategies without changing anything else.
+grapsit supports 9 retrieval strategies. Each strategy plugs into the same downstream pipeline (`chunk_retriever → reasoner`), so you can swap strategies without changing anything else. You can also combine multiple strategies with [fusion](#multi-retriever-fusion).
 
 ```
 query → parser → entities → entity lookup → subgraph → chunks     (entity — default)
@@ -1320,8 +1542,7 @@ query → parser → entities → embedding search → subgraph           (entit
 query → LLM function calling → graph tools → subgraph             (tool)
 query → parser → entities → pairs → shortest paths → subgraph     (path)
 query → tool parser → triple queries → KG scorer → subgraph       (kg_scored)
-query → full-text search → chunks                                 (keyword)
-query → full-text search → chunks → entities → subgraph           (keyword + expand)
+query → full-text search → chunks [→ entities → subgraph]         (keyword)
 ```
 
 #### Strategy 1: Entity lookup (default)
@@ -1604,16 +1825,17 @@ The `chunk_entity_source` parameter on `chunk_retriever()` controls which entiti
 
 #### Strategy 9: Keyword retrieval (full-text search)
 
-Searches chunks in a relational store (SQLite FTS5, PostgreSQL tsvector, or Elasticsearch) using full-text search. No parser or embeddings needed — works directly on the query text.
+Searches chunks using full-text search. No parser or embeddings needed — works directly on the query text. Supports two search backends via `search_source`:
 
-Two modes:
-- **Chunks-only** (default) — returns matched chunks directly. Only needs a relational store — no graph database required.
-- **Entity expansion** (`expand_entities=True`) — additionally looks up entities mentioned in matched chunks via the graph store and builds a full subgraph.
+- **Relational** (`search_source="relational"`, default) — searches a relational store (SQLite FTS5, PostgreSQL tsvector, or Elasticsearch). Requires chunks stored in a relational store.
+- **Graph** (`search_source="graph"`) — uses the graph database's native full-text index (Neo4j Lucene, FalkorDB FTS, Memgraph Tantivy). No relational store needed — the FTS index is created automatically during `setup_indexes()`.
 
-**Prerequisites:** Chunks must be stored in a relational store (SQLite, PostgreSQL, or Elasticsearch).
+Two entity modes:
+- **Chunks-only** (default for relational) — returns matched chunks directly.
+- **Entity expansion** (`expand_entities=True`, default for graph) — additionally looks up entities mentioned in matched chunks via the graph store and builds a full subgraph.
 
 ```python
-# Chunks-only (default) — no graph store needed
+# Relational source — chunks-only (default)
 builder = QueryConfigBuilder(name="keyword_query")
 builder.keyword_retriever(
     top_k=10,
@@ -1627,7 +1849,7 @@ ctx = executor.execute({"query": "Where was Einstein born?"})
 ```
 
 ```python
-# With entity expansion — also builds a subgraph from matched chunks
+# Relational source — with entity expansion
 builder = QueryConfigBuilder(name="keyword_expanded")
 builder.keyword_retriever(
     top_k=10,
@@ -1642,6 +1864,34 @@ builder.reasoner(api_key="sk-...", model="gpt-4o-mini")  # optional
 executor = builder.build()
 ```
 
+```python
+# Graph DB source — uses native FTS index (entity expansion by default)
+builder = QueryConfigBuilder(name="graph_keyword_query")
+builder.keyword_retriever(
+    search_source="graph",
+    top_k=10,
+    neo4j_uri="bolt://localhost:7687",
+)
+builder.chunk_retriever()
+builder.reasoner(api_key="sk-...", model="gpt-4o-mini")  # optional
+executor = builder.build()
+ctx = executor.execute({"query": "Where was Einstein born?"})
+```
+
+Graph DB native FTS works with all three graph backends — each uses its native FTS engine:
+
+| Graph DB | FTS engine | Index creation (automatic) |
+|----------|-----------|----------------|
+| Neo4j | Lucene | `CREATE FULLTEXT INDEX chunk_text_idx ...` |
+| FalkorDB | Built-in | `CALL db.idx.fulltext.createNodeIndex(...)` |
+| Memgraph | Tantivy | `CREATE TEXT INDEX chunk_text_idx ON :Chunk` |
+
+The FTS index is created automatically as part of `setup_indexes()` during graph writing. If you don't need keyword search and want to skip all index creation, set `setup_indexes=False`:
+
+```python
+builder.graph_writer(neo4j_uri="bolt://localhost:7687", setup_indexes=False)
+```
+
 #### Strategy comparison
 
 | Strategy | Needs parser? | Needs embeddings? | Needs LLM? | Best for |
@@ -1654,7 +1904,186 @@ executor = builder.build()
 | tool | no | no | yes | Complex multi-hop questions |
 | path | yes | no | no | Relationship discovery |
 | kg_scored | yes (tool) | optional (KGE) | yes | Structured triple matching + link prediction |
-| keyword | no | no | no | Full-text keyword search over chunks |
+| keyword | no | no | no | Full-text search over chunks (relational or graph DB) |
+
+### Multi-retriever fusion
+
+Combine multiple retrieval strategies and merge their results into a single subgraph. When more than one retriever is configured, a fusion node is automatically inserted.
+
+```
+parser_result ──┬──> retriever_0 (entity) ───────┐
+                ├──> retriever_1 (path) ──────────┤
+$input.query ───┴──> retriever_2 (community) ────┤
+                                                  ▼
+                                              fusion
+                                                  │
+                                                  ▼
+                                          chunk_retriever
+                                                  │
+                                                  ▼
+                                              reasoner
+```
+
+#### Convenience function
+
+```python
+# Single strategy (unchanged)
+result = grapsit.query_graph(
+    query="Where was Einstein born?",
+    entity_labels=["person", "location"],
+    retrieval_strategy="entity",
+    neo4j_uri="bolt://localhost:7687",
+    neo4j_password="password",
+)
+
+# Multiple strategies — auto-triggers fusion
+result = grapsit.query_graph(
+    query="Where was Einstein born?",
+    entity_labels=["person", "location"],
+    retrieval_strategy=["entity", "path", "community"],
+    fusion_strategy="rrf",       # "union" (default), "rrf", "weighted", "intersection"
+    fusion_top_k=20,             # 0 = keep all (default)
+    neo4j_uri="bolt://localhost:7687",
+    neo4j_password="password",
+    api_key="sk-...",
+)
+```
+
+#### Builder API — FusedQueryBuilder (recommended)
+
+Configure each retrieval strategy as a separate `QueryConfigBuilder`, then combine via `FusedQueryBuilder`. Each builder can have its own strategy-specific settings:
+
+```python
+from grapsit import QueryConfigBuilder, FusedQueryBuilder, Neo4jConfig
+
+store = Neo4jConfig(uri="bolt://localhost:7687", password="password")
+
+# Entity lookup — parse query for entities, expand to 3-hop subgraph
+entity_builder = QueryConfigBuilder(name="entity")
+entity_builder.store(store)
+entity_builder.query_parser(labels=["person", "organization", "location"])
+entity_builder.retriever(max_hops=3)
+
+# Shortest paths — find connections between parsed entities
+path_builder = QueryConfigBuilder(name="path")
+path_builder.store(store)
+path_builder.query_parser(labels=["person", "organization", "location"])
+path_builder.path_retriever(max_path_length=5, max_pairs=10)
+
+# Community search — find relevant topic clusters via embeddings
+community_builder = QueryConfigBuilder(name="community")
+community_builder.store(store)
+community_builder.community_retriever(
+    top_k=3,
+    embedding_method="sentence_transformer",
+    model_name="all-MiniLM-L6-v2",
+)
+
+# Chunk embedding — semantic search over source text chunks
+chunk_emb_builder = QueryConfigBuilder(name="chunk_emb")
+chunk_emb_builder.store(store)
+chunk_emb_builder.chunk_embedding_retriever(
+    top_k=5,
+    embedding_method="sentence_transformer",
+    model_name="all-MiniLM-L6-v2",
+)
+
+# Keyword search — BM25/full-text over chunks stored in the graph DB
+keyword_builder = QueryConfigBuilder(name="keyword")
+keyword_builder.store(store)
+keyword_builder.keyword_retriever(
+    top_k=10,
+    search_source="graph",
+    expand_entities=True,
+    max_hops=1,
+)
+
+# Combine all five strategies with RRF fusion, keep top 25 entities
+fused = FusedQueryBuilder(
+    entity_builder, path_builder, community_builder,
+    chunk_emb_builder, keyword_builder,
+    strategy="rrf",
+    top_k=25,
+)
+fused.chunk_retriever()
+fused.reasoner(api_key="sk-...", model="gpt-4o-mini")
+
+executor = fused.build()
+ctx = executor.execute({"query": "What is the relationship between Einstein and quantum mechanics?"})
+print(ctx.get("reasoner_result")["result"].answer)
+```
+
+The parser is auto-inherited from the first sub-builder that has one, so you only need to configure it once. You can override it on the fused builder with `fused.query_parser(...)`. Store config is also inherited — set it on one builder and the rest will pick it up.
+
+**Simpler example** — two strategies:
+
+```python
+# Entity lookup + community search with weighted fusion
+entity = QueryConfigBuilder(name="entity")
+entity.store(store)
+entity.query_parser(labels=["person", "location"])
+entity.retriever(max_hops=2)
+
+community = QueryConfigBuilder(name="community")
+community.store(store)
+community.community_retriever(top_k=5)
+
+fused = FusedQueryBuilder(
+    entity, community,
+    strategy="weighted",
+    weights=[2.0, 1.0],  # prioritize entity matches
+    top_k=15,
+)
+fused.chunk_retriever()
+executor = fused.build()
+ctx = executor.execute({"query": "Where was Einstein born?"})
+```
+
+#### Builder API — single QueryConfigBuilder (also works)
+
+Calling multiple retriever methods on a single `QueryConfigBuilder` still works:
+
+```python
+from grapsit import QueryConfigBuilder
+
+builder = QueryConfigBuilder(name="hybrid_query")
+builder.query_parser(labels=["person", "location"])
+
+# Add multiple retrievers (each call appends)
+builder.retriever(neo4j_uri="bolt://localhost:7687", max_hops=2)
+builder.path_retriever(neo4j_uri="bolt://localhost:7687")
+builder.community_retriever(neo4j_uri="bolt://localhost:7687")
+
+# Configure fusion (optional — defaults to union if omitted)
+builder.fusion(strategy="rrf", top_k=20, rrf_k=60)
+
+builder.chunk_retriever()
+builder.reasoner(api_key="sk-...", model="gpt-4o-mini")
+
+executor = builder.build()
+ctx = executor.execute({"query": "Where was Einstein born?"})
+```
+
+#### Fusion strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `union` (default) | Deduplicate entities by ID, keep all chunks and valid relations |
+| `rrf` | Reciprocal Rank Fusion — `sum(1/(k + rank))` per entity across retrievers, keep top_k |
+| `weighted` | Score by `sum(weight_i / (rank_i + 1))` per entity, keep top_k. Set per-retriever `weights` |
+| `intersection` | Keep only entities found in >= `min_sources` retrievers |
+
+All strategies filter relations to only keep edges where both endpoints survive. Chunks are always deduplicated by ID.
+
+```python
+# Weighted fusion with custom per-retriever weights
+builder.fusion(strategy="weighted", top_k=15, weights=[2.0, 1.0, 0.5])
+
+# Intersection — keep entities found in at least 2 of 3 retrievers
+builder.fusion(strategy="intersection", min_sources=2)
+```
+
+A single retriever produces the exact same DAG as before (no fusion node) — full backward compatibility.
 
 ### Direct store queries (Neo4j)
 
@@ -1693,6 +2122,51 @@ all_entities = store.get_all_entities()
 
 store.close()
 ```
+
+### Graph mutations
+
+All graph stores (Neo4j, FalkorDB, Memgraph) support high-level mutation methods for surgical changes without raw Cypher:
+
+```python
+from grapsit import Neo4jGraphStore
+
+store = Neo4jGraphStore(uri="bolt://localhost:7687", password="password")
+
+# Add entities (CREATE, not MERGE — use write_entity for dedup)
+einstein_id = store.add_entity("Albert Einstein", "person", properties={"birth_year": 1879})
+ulm_id = store.add_entity("Ulm", "location")
+
+# Add a relation (validates both entities exist, raises ValueError if not)
+rel_id = store.add_relation(einstein_id, ulm_id, "born in")
+
+# Update an entity — only provided fields change, properties are merged
+store.update_entity(einstein_id, properties={"death_year": 1955})
+
+# Delete a relation by its stored ID
+store.delete_relation(rel_id)  # returns True if found & deleted
+
+# Delete an entity and all its relationships
+store.delete_entity(ulm_id)  # returns True if found & deleted
+
+# Delete a chunk and its relationships
+store.delete_chunk("chunk-123")
+
+# Merge two entities — moves all relationships to target, merges properties
+# (target values win on conflict), then deletes source
+store.merge_entities(source_id="e-duplicate", target_id="e-canonical")
+
+store.close()
+```
+
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `add_entity` | `(label, entity_type, *, properties, id)` | `str` (UUID) |
+| `add_relation` | `(head_id, tail_id, relation_type, *, properties, id)` | `str` (UUID) |
+| `update_entity` | `(entity_id, *, label, entity_type, properties)` | `bool` |
+| `delete_entity` | `(entity_id)` | `bool` |
+| `delete_relation` | `(relation_id)` | `bool` |
+| `delete_chunk` | `(chunk_id)` | `bool` |
+| `merge_entities` | `(source_id, target_id)` | `bool` |
 
 ## LLM function calling (tool use)
 
@@ -1949,7 +2423,7 @@ result = grapsit.detect_communities(
     model="gpt-4o-mini",
     top_k=10,                # max entities per community for LLM context
     # Embedder (enabled alongside summarizer)
-    embedding_method="sentence_transformer",  # or "openai"
+    embedding_method="sentence_transformer",  # or "openai", "gliner_bi_encoder"
     model_name="all-MiniLM-L6-v2",
     vector_store_type="in_memory",            # or "faiss", "qdrant"
 )
@@ -2503,7 +2977,7 @@ When a `StorePool` is attached to the executor (via builders or YAML `stores` se
 | `relex_gliner` | Relation extraction with GLiNER-relex | `model`, `entity_labels`, `relation_labels`, `threshold`, `relation_threshold` |
 | `relex_llm` | Relation extraction with LLM | `model`, `entity_labels`, `relation_labels`, `api_key`, `base_url`, `temperature` |
 | `data_ingest` | Convert flat JSON to graph_writer format | (used internally by `IngestConfigBuilder`) |
-| `graph_writer` | Deduplicate and write to graph store | `store_type`, `neo4j_uri`/`falkordb_host`/`memgraph_uri`, `json_output`, `graph_store_name`, … |
+| `graph_writer` | Deduplicate and write to graph store | `store_type`, `neo4j_uri`/`falkordb_host`/`memgraph_uri`, `json_output`, `setup_indexes`, `graph_store_name`, … |
 | `chunk_embedder` | Embed chunk texts into vector store | `embedding_method`, `model_name`, `vector_store_type`, `vector_index_name`, store params |
 | `entity_embedder` | Embed entity labels into vector store | `embedding_method`, `model_name`, `vector_store_type`, `vector_index_name`, store params |
 | `query_parser` | Extract entities from a query | `method` (gliner/llm/tool), `labels`, `relation_labels`, `model`, `api_key` |
@@ -2862,5 +3336,6 @@ python3 -m venv .venv
 - ~~**Chunk & entity embeddings** — embed chunks/entities during build for semantic retrieval strategies~~ Done
 - ~~**KG modeling** — PyKEEN KG embedding training, storage, and query-time link prediction~~ Done
 - ~~**Store pool** — named store pool with shared connections, typed vector store configs, context manager support~~ Done
+- ~~**Multi-retriever fusion** — combine multiple retrieval strategies (union, RRF, weighted, intersection) with automatic DAG wiring~~ Done
+- ~~**CLI** — `grapsit build --config pipeline.yaml`, interactive wizards, graph CRUD, REPL shell~~ Done
 - **In-memory store** — testing without a database
-- **CLI** — `grapsit build --config pipeline.yaml`

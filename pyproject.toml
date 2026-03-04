@@ -15,7 +15,11 @@ dependencies = [
     "pyyaml>=6.0",
     "gliner>=0.2",
     "neo4j>=5.0",
+    "click>=8.0",
 ]
+
+[project.scripts]
+grapsit = "grapsit.cli:cli"
 
 [project.optional-dependencies]
 dev = [
