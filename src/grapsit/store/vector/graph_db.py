@@ -137,11 +137,15 @@ class GraphDBVectorStore(BaseVectorStore):
                 )
             self._graph_store.run_cypher(cypher)
             logger.info(f"Created vector index {name!r} on :{node_label}.{prop} (dim={dimension})")
+            self._created_indexes[name] = dimension
         except Exception as e:
-            # Index may already exist — log and continue
-            logger.debug(f"Vector index creation note for {name!r}: {e}")
-
-        self._created_indexes[name] = dimension
+            err_lower = str(e).lower()
+            if "already" in err_lower or "exists" in err_lower or "duplicate" in err_lower:
+                logger.debug(f"Vector index {name!r} already exists: {e}")
+                self._created_indexes[name] = dimension
+            else:
+                logger.warning(f"Failed to create vector index {name!r}: {e}")
+                raise
 
     def store_embeddings(self, index_name: str, items: List[Tuple[str, List[float]]]):
         if not items:
@@ -189,10 +193,10 @@ class GraphDBVectorStore(BaseVectorStore):
         if self._store_type == "falkordb":
             cypher = (
                 f"CALL db.idx.vector.queryNodes('{node_label}', '{prop}', "
-                f"$top_k, vecf32($vec)) YIELD node, score "
+                f"{int(top_k)}, vecf32($vec)) YIELD node, score "
                 f"RETURN node.id AS id, score"
             )
-            params = {"top_k": top_k, "vec": vec}
+            params = {"vec": vec}
         elif self._store_type == "memgraph":
             cypher = (
                 f'CALL vector_search.search("{index_name}", $top_k, $vec) '
@@ -212,8 +216,25 @@ class GraphDBVectorStore(BaseVectorStore):
         try:
             records = self._graph_store.run_cypher(cypher, params)
         except Exception as e:
-            logger.warning(f"Vector search failed for {index_name!r}: {e}")
-            return []
+            # If the vector index doesn't exist, try to create it and retry
+            if index_name not in self._created_indexes:
+                dimension = len(vec)
+                logger.info(
+                    f"Vector search failed for {index_name!r}, "
+                    f"attempting to create index (dim={dimension}): {e}"
+                )
+                try:
+                    self.create_index(index_name, dimension)
+                    records = self._graph_store.run_cypher(cypher, params)
+                except Exception as retry_err:
+                    logger.warning(
+                        f"Vector search failed for {index_name!r} even after "
+                        f"index creation attempt: {retry_err}"
+                    )
+                    return []
+            else:
+                logger.warning(f"Vector search failed for {index_name!r}: {e}")
+                return []
 
         results = []
         for rec in records:

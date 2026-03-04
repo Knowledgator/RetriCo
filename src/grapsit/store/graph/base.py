@@ -134,6 +134,29 @@ class BaseGraphStore(ABC):
         """Find shortest paths between two entities (entity relations only)."""
         raise NotImplementedError
 
+    def get_top_shortest_paths(
+        self, entity_ids: List[str], max_length: int = 5, top_k: int = 3,
+    ) -> List[Dict[str, Any]]:
+        """Find top-k shortest paths among a set of entities, ordered by path length.
+
+        Returns list of path dicts with ``nodes`` and ``rels`` keys.
+        Default implementation calls ``get_shortest_paths`` per pair — stores
+        should override with a single efficient query when possible.
+        """
+        import itertools
+        all_paths: List[tuple] = []  # (length, path_dict)
+        pairs = list(itertools.combinations(entity_ids, 2))
+        for src, tgt in pairs:
+            try:
+                paths = self.get_shortest_paths(src, tgt, max_length)
+            except NotImplementedError:
+                continue
+            for p in paths:
+                length = len(p.get("rels", []))
+                all_paths.append((length, p))
+        all_paths.sort(key=lambda x: x[0])
+        return [p for _, p in all_paths[:top_k]]
+
     # -- Community CRUD ------------------------------------------------------
 
     def write_community(

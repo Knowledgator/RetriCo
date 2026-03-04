@@ -1,10 +1,10 @@
 """Path retriever — find shortest paths between parsed entities."""
 
 from typing import Any, Dict, List
-import itertools
 import logging
 
 from ..core.registry import query_registry
+from ..models.document import Chunk
 from ..models.entity import Entity, EntityMention
 from ..models.relation import Relation
 from ..models.graph import Subgraph
@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 class PathRetrieverProcessor(BaseRetriever):
     """Retrieve subgraph by finding shortest paths between parsed entities.
 
-    Flow: lookup entities -> generate pairs -> get_shortest_paths per pair ->
-    collect all path nodes and edges into a Subgraph.
+    Flow: lookup entities -> get_top_shortest_paths (DB-level top_k) ->
+    collect path nodes and edges into a Subgraph.
 
     Config keys:
         max_path_length: int — maximum path length for shortest path queries (default: 5)
-        max_pairs: int — maximum number of entity pairs to query (default: 10)
+        top_k: int — maximum number of paths to return (default: 3)
         store_type, neo4j_uri, etc. — passed to create_store
     """
 
@@ -31,7 +31,7 @@ class PathRetrieverProcessor(BaseRetriever):
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
         self.max_path_length: int = config_dict.get("max_path_length", 5)
-        self.max_pairs: int = config_dict.get("max_pairs", 10)
+        self.top_k: int = config_dict.get("top_k", 3)
 
     def __call__(self, *, entities: List[EntityMention], **kwargs) -> Dict[str, Any]:
         """Find shortest paths between entity pairs and build a subgraph.
@@ -61,53 +61,50 @@ class PathRetrieverProcessor(BaseRetriever):
                 return {"subgraph": self._raw_to_subgraph(raw)}
             return {"subgraph": Subgraph()}
 
-        # Generate entity pairs and find shortest paths
-        pairs = list(itertools.combinations(matched, 2))[:self.max_pairs]
+        # Single DB call: find top_k shortest paths among all matched entities
+        entity_ids = [m["id"] for m in matched]
+        try:
+            top_paths = self._store.get_top_shortest_paths(
+                entity_ids,
+                max_length=self.max_path_length,
+                top_k=self.top_k,
+            )
+        except NotImplementedError:
+            logger.warning("Store does not support get_top_shortest_paths")
+            return {"subgraph": Subgraph()}
 
+        logger.info(f"Path retriever: got {len(top_paths)} paths (top_k={self.top_k})")
+
+        # Build subgraph from selected paths
         all_entities: Dict[str, Entity] = {}
         all_relations: List[Relation] = []
 
-        for source, target in pairs:
-            try:
-                paths = self._store.get_shortest_paths(
-                    source["id"], target["id"],
-                    max_length=self.max_path_length,
-                )
-            except NotImplementedError:
-                logger.warning("Store does not support get_shortest_paths")
-                continue
+        for path in top_paths:
+            nodes_list = path.get("nodes", [])
+            rels_list = path.get("rels", [])
 
-            for path in paths:
-                # Collect nodes
-                for node in path.get("nodes", []):
-                    if node is None:
-                        continue
-                    nid = node.get("id", "")
-                    if nid and nid not in all_entities:
-                        all_entities[nid] = Entity(
-                            id=nid,
-                            label=node.get("label", ""),
-                            entity_type=node.get("entity_type", ""),
-                        )
+            for node in nodes_list:
+                if node is None:
+                    continue
+                nid = node.get("id", "")
+                if nid and nid not in all_entities:
+                    all_entities[nid] = Entity(
+                        id=nid,
+                        label=node.get("label", ""),
+                        entity_type=node.get("entity_type", ""),
+                    )
 
-                # Collect path edges
-                nodes_list = path.get("nodes", [])
-                rels_list = path.get("rels", [])
-                for i, rel in enumerate(rels_list):
-                    if rel is None:
-                        continue
-                    head_text = ""
-                    tail_text = ""
-                    if i < len(nodes_list):
-                        head_text = (nodes_list[i] or {}).get("id", "")
-                    if i + 1 < len(nodes_list):
-                        tail_text = (nodes_list[i + 1] or {}).get("id", "")
-                    all_relations.append(Relation(
-                        head_text=head_text,
-                        tail_text=tail_text,
-                        relation_type=rel.get("type", ""),
-                        score=rel.get("score", 0.0) or 0.0,
-                    ))
+            for i, rel in enumerate(rels_list):
+                if rel is None:
+                    continue
+                head_node = (nodes_list[i] or {}) if i < len(nodes_list) else {}
+                tail_node = (nodes_list[i + 1] or {}) if i + 1 < len(nodes_list) else {}
+                all_relations.append(Relation(
+                    head_text=head_node.get("label", "") or head_node.get("id", ""),
+                    tail_text=tail_node.get("label", "") or tail_node.get("id", ""),
+                    relation_type=rel.get("type", ""),
+                    score=rel.get("score", 0.0) or 0.0,
+                ))
 
         return {
             "subgraph": Subgraph(

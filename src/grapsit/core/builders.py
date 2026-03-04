@@ -316,6 +316,7 @@ class _GraphWriterMixin:
         json_output: str = None,
         chunk_table: str = None,
         document_table: str = None,
+        write_reversed_relations: bool = False,
         **kwargs,
     ):
         store = self._effective_store(store_config, **kwargs) or Neo4jConfig()
@@ -327,6 +328,8 @@ class _GraphWriterMixin:
             self._writer_config["chunk_table"] = chunk_table
         if document_table is not None:
             self._writer_config["document_table"] = document_table
+        if write_reversed_relations:
+            self._writer_config["write_reversed_relations"] = True
         # Merge relational store config so graph_writer can create/resolve it
         relational = self._effective_relational_store()
         if relational:
@@ -1031,14 +1034,14 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
     def path_retriever(
         self,
         max_path_length: int = 5,
-        max_pairs: int = 10,
+        top_k: int = 3,
         store_config: BaseStoreConfig = None,
         **kwargs,
     ) -> "QueryConfigBuilder":
         config = self._effective_store_flat(store_config, **kwargs)
         config.update({
             "max_path_length": max_path_length,
-            "max_pairs": max_pairs,
+            "top_k": top_k,
         })
         config.update(kwargs)
         self._retriever_nodes.append({"type": "path_retriever", "config": config})

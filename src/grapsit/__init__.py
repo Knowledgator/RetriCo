@@ -207,6 +207,7 @@ def build_graph(
     embedding_model_name: str = "all-MiniLM-L6-v2",
     vector_store_type: str = "in_memory",
     store_config: BaseStoreConfig = None,
+    write_reversed_relations: bool = False,
 ) -> PipeContext:
     """Build a knowledge graph from texts in one call.
 
@@ -228,6 +229,8 @@ def build_graph(
         json_output: Path to save extracted data as JSON (ingest-ready format).
         store_config: A BaseStoreConfig object (Neo4jConfig, FalkorDBConfig, etc.).
             If provided, overrides individual store params.
+        write_reversed_relations: If True, write reversed relations for bidirectional
+            path traversal.
 
     Returns:
         PipeContext with all intermediate results.
@@ -267,7 +270,7 @@ def build_graph(
             device=device,
         )
 
-    builder.graph_writer(json_output=json_output)
+    builder.graph_writer(json_output=json_output, write_reversed_relations=write_reversed_relations)
 
     if embed_chunks:
         builder.chunk_embedder(
@@ -656,6 +659,7 @@ def ingest_data(
     json_output: str = None,
     verbose: bool = False,
     store_config: BaseStoreConfig = None,
+    write_reversed_relations: bool = False,
 ) -> PipeContext:
     """Ingest pre-structured entities and relations into the graph database.
 
@@ -673,6 +677,8 @@ def ingest_data(
         json_output: Path to also save data as JSON (ingest-ready format).
         verbose: Enable verbose logging.
         store_config: A BaseStoreConfig object. If provided, overrides individual store params.
+        write_reversed_relations: If True, write reversed relations for bidirectional
+            path traversal.
 
     Returns:
         PipeContext with writer_result containing entity_count, relation_count.
@@ -709,7 +715,7 @@ def ingest_data(
 
     builder = IngestConfigBuilder(name="ingest_data")
     builder.store(store_config)
-    builder.graph_writer(json_output=json_output)
+    builder.graph_writer(json_output=json_output, write_reversed_relations=write_reversed_relations)
 
     executor = builder.build(verbose=verbose)
     return executor.execute({"data": data})

@@ -86,8 +86,13 @@ class ChunkRetrieverProcessor(BaseProcessor):
         scored_triples = kwargs.get("scored_triples")
         entities_to_query = self._select_entities(subgraph, scored_triples)
 
+        # Preserve any chunks already present on the input subgraph
         seen_ids = set()
         chunks = []
+        for existing in subgraph.chunks:
+            if existing.id not in seen_ids:
+                seen_ids.add(existing.id)
+                chunks.append(existing)
 
         for entity in entities_to_query:
             raw_chunks = self._store.get_chunks_for_entity(entity.id)

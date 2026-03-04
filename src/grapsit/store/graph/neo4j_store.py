@@ -346,6 +346,27 @@ class Neo4jGraphStore(BaseGraphStore):
         )
         return records
 
+    def get_top_shortest_paths(
+        self, entity_ids: list, max_length: int = 5, top_k: int = 3,
+    ) -> list:
+        """Single query: find top-k shortest paths among a set of entities."""
+        if len(entity_ids) < 2:
+            return []
+        records = self._run(
+            f"""
+            MATCH (s:Entity), (t:Entity)
+            WHERE s.id IN $ids AND t.id IN $ids AND s.id < t.id
+            MATCH path = shortestPath((s)-[*1..{max_length}]-(t))
+            WHERE ALL(r IN relationships(path) WHERE NOT type(r) = 'MENTIONED_IN')
+            RETURN [n IN nodes(path) | properties(n)] AS nodes,
+                   [r IN relationships(path) | {{type: type(r), score: r.score}}] AS rels
+            ORDER BY length(path)
+            LIMIT $top_k
+            """,
+            {"ids": entity_ids, "top_k": top_k},
+        )
+        return records
+
     # -- Community CRUD ------------------------------------------------------
 
     def write_community(self, community_id: str, level: int, title: str, summary: str):

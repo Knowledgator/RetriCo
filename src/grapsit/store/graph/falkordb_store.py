@@ -319,57 +319,169 @@ class FalkorDBGraphStore(BaseGraphStore):
 
     # -- Path queries --------------------------------------------------------
 
+    def _parse_path_rows(self, rows: list) -> list:
+        """Convert raw Cypher path result rows into path dicts."""
+        results = []
+        for row in rows:
+            nodes = [_node_to_dict(n) for n in (row[0] or [])]
+            rels = []
+            for edge in (row[1] or []):
+                if hasattr(edge, "relation"):
+                    rel_dict = {"type": edge.relation}
+                    if hasattr(edge, "properties"):
+                        rel_dict["score"] = edge.properties.get("score")
+                    rels.append(rel_dict)
+                elif isinstance(edge, dict):
+                    rels.append(edge)
+            results.append({"nodes": nodes, "rels": rels})
+        return results
+
     def get_shortest_paths(self, source_id: str, target_id: str, max_length: int = 5) -> list:
-        # FalkorDB doesn't support shortestPath or undirected traversals.
-        # Try directed path in both directions, then fall back to a
-        # meet-in-the-middle approach via get_subgraph.
+        # FalkorDB doesn't support shortestPath() or complex path functions
+        # like relationships(path) reliably. Use explicit node chain matching.
+
+        # Try directed paths in both directions.
         for src, tgt in [(source_id, target_id), (target_id, source_id)]:
             rows = self._run(
                 f"""
-                MATCH path = (s:Entity {{id: $source}})-[*1..{max_length}]->(t:Entity {{id: $target}})
-                WHERE ALL(r IN relationships(path) WHERE NOT type(r) = 'MENTIONED_IN')
-                RETURN nodes(path) AS nodes, relationships(path) AS rels
-                ORDER BY length(path)
+                MATCH (s:Entity {{id: $source}})-[*1..{max_length}]->(t:Entity {{id: $target}})
+                RETURN s, t
                 LIMIT 1
                 """,
                 {"source": src, "target": tgt},
             )
             if rows:
-                results = []
-                for row in rows:
-                    nodes = [_node_to_dict(n) for n in (row[0] or [])]
-                    rels = []
-                    for edge in (row[1] or []):
-                        if hasattr(edge, "relation"):
-                            rel_dict = {"type": edge.relation}
-                            if hasattr(edge, "properties"):
-                                rel_dict["score"] = edge.properties.get("score")
-                            rels.append(rel_dict)
-                        elif isinstance(edge, dict):
-                            rels.append(edge)
-                    results.append({"nodes": nodes, "rels": rels})
-                return results
+                # Found a directed connection — now get the actual path nodes
+                # by matching intermediate Entity nodes step by step.
+                return self._get_entity_chain(src, tgt, max_length)
 
-        # Fallback: get overlapping neighborhoods (meet-in-the-middle).
-        # Query outgoing neighbours of each entity and find shared nodes.
-        hops = min(max_length // 2 + 1, max_length)
-        raw = self.get_subgraph([source_id, target_id], max_hops=hops)
-        if not raw or (not raw.get("entities") and not raw.get("nodes")):
+        # Fallback: find a shared intermediate Entity connected to both.
+        rows = self._run(
+            """
+            MATCH (s:Entity {id: $source})-[r1]->(mid:Entity)<-[r2]-(t:Entity {id: $target})
+            WHERE NOT type(r1) = 'MENTIONED_IN' AND NOT type(r2) = 'MENTIONED_IN'
+            RETURN s, mid, t, type(r1) AS t1, r1.score AS s1, type(r2) AS t2, r2.score AS s2
+            LIMIT 3
+            """,
+            {"source": source_id, "target": target_id},
+        )
+        if rows:
+            results = []
+            for row in rows:
+                nodes = [_node_to_dict(row[0]), _node_to_dict(row[1]), _node_to_dict(row[2])]
+                rels = [
+                    {"type": row[3], "score": row[4]},
+                    {"type": row[5], "score": row[6]},
+                ]
+                results.append({"nodes": nodes, "rels": rels})
+            return results
+
+        # Try the other direction for intermediate: s<-mid->t
+        rows = self._run(
+            """
+            MATCH (s:Entity {id: $source})<-[r1]-(mid:Entity)-[r2]->(t:Entity {id: $target})
+            WHERE NOT type(r1) = 'MENTIONED_IN' AND NOT type(r2) = 'MENTIONED_IN'
+            RETURN s, mid, t, type(r1) AS t1, r1.score AS s1, type(r2) AS t2, r2.score AS s2
+            LIMIT 3
+            """,
+            {"source": source_id, "target": target_id},
+        )
+        if rows:
+            results = []
+            for row in rows:
+                nodes = [_node_to_dict(row[0]), _node_to_dict(row[1]), _node_to_dict(row[2])]
+                rels = [
+                    {"type": row[3], "score": row[4]},
+                    {"type": row[5], "score": row[6]},
+                ]
+                results.append({"nodes": nodes, "rels": rels})
+            return results
+
+        return []
+
+    def _get_entity_chain(self, source_id: str, target_id: str, max_length: int) -> list:
+        """Get a directed entity chain from source to target, step by step."""
+        # Try lengths 1, 2, 3... up to max_length to find the shortest
+        for length in range(1, min(max_length, 4) + 1):
+            if length == 1:
+                rows = self._run(
+                    """
+                    MATCH (s:Entity {id: $source})-[r]->(t:Entity {id: $target})
+                    WHERE NOT type(r) = 'MENTIONED_IN'
+                    RETURN s, t, type(r) AS rtype, r.score AS rscore
+                    LIMIT 1
+                    """,
+                    {"source": source_id, "target": target_id},
+                )
+                if rows:
+                    row = rows[0]
+                    return [{"nodes": [_node_to_dict(row[0]), _node_to_dict(row[1])],
+                             "rels": [{"type": row[2], "score": row[3]}]}]
+            elif length == 2:
+                rows = self._run(
+                    """
+                    MATCH (s:Entity {id: $source})-[r1]->(m:Entity)-[r2]->(t:Entity {id: $target})
+                    WHERE NOT type(r1) = 'MENTIONED_IN' AND NOT type(r2) = 'MENTIONED_IN'
+                    RETURN s, m, t, type(r1) AS t1, r1.score AS s1, type(r2) AS t2, r2.score AS s2
+                    LIMIT 1
+                    """,
+                    {"source": source_id, "target": target_id},
+                )
+                if rows:
+                    row = rows[0]
+                    return [{"nodes": [_node_to_dict(row[0]), _node_to_dict(row[1]), _node_to_dict(row[2])],
+                             "rels": [{"type": row[3], "score": row[4]}, {"type": row[5], "score": row[6]}]}]
+            elif length == 3:
+                rows = self._run(
+                    """
+                    MATCH (s:Entity {id: $source})-[r1]->(m1:Entity)-[r2]->(m2:Entity)-[r3]->(t:Entity {id: $target})
+                    WHERE NOT type(r1) = 'MENTIONED_IN' AND NOT type(r2) = 'MENTIONED_IN'
+                      AND NOT type(r3) = 'MENTIONED_IN'
+                    RETURN s, m1, m2, t,
+                           type(r1) AS t1, r1.score AS s1,
+                           type(r2) AS t2, r2.score AS s2,
+                           type(r3) AS t3, r3.score AS s3
+                    LIMIT 1
+                    """,
+                    {"source": source_id, "target": target_id},
+                )
+                if rows:
+                    row = rows[0]
+                    return [{"nodes": [_node_to_dict(row[0]), _node_to_dict(row[1]),
+                                       _node_to_dict(row[2]), _node_to_dict(row[3])],
+                             "rels": [{"type": row[4], "score": row[5]},
+                                      {"type": row[6], "score": row[7]},
+                                      {"type": row[8], "score": row[9]}]}]
+            else:
+                # length 4: use variable-length but only return endpoint + count
+                rows = self._run(
+                    f"""
+                    MATCH (s:Entity {{id: $source}})-[*{length}]->(t:Entity {{id: $target}})
+                    RETURN s, t
+                    LIMIT 1
+                    """,
+                    {"source": source_id, "target": target_id},
+                )
+                if rows:
+                    row = rows[0]
+                    return [{"nodes": [_node_to_dict(row[0]), _node_to_dict(row[1])], "rels": []}]
+        return []
+
+    def get_top_shortest_paths(
+        self, entity_ids: list, max_length: int = 5, top_k: int = 3,
+    ) -> list:
+        """Find top-k shortest paths among a set of entities (directed, both directions)."""
+        if len(entity_ids) < 2:
             return []
-        # Convert subgraph to a single "path" result
-        nodes_list = raw.get("entities") or raw.get("nodes") or []
-        rels_list = raw.get("relations") or raw.get("rels") or []
-        path_nodes = [n if isinstance(n, dict) else _node_to_dict(n) for n in nodes_list]
-        path_rels = []
-        for r in rels_list:
-            if isinstance(r, dict):
-                path_rels.append(r)
-            elif hasattr(r, "relation"):
-                rel_dict = {"type": r.relation}
-                if hasattr(r, "properties"):
-                    rel_dict["score"] = r.properties.get("score")
-                path_rels.append(rel_dict)
-        return [{"nodes": path_nodes, "rels": path_rels}]
+        import itertools
+        all_paths: list = []
+        for src, tgt in itertools.combinations(entity_ids, 2):
+            paths = self.get_shortest_paths(src, tgt, max_length)
+            for p in paths:
+                length = len(p.get("rels", []))
+                all_paths.append((length, p))
+        all_paths.sort(key=lambda x: x[0])
+        return [p for _, p in all_paths[:top_k]]
 
     # -- Community CRUD ------------------------------------------------------
 

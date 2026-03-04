@@ -30,6 +30,11 @@ class GraphWriterProcessor(BaseProcessor):
         setup_indexes: bool (default: True)
         json_output: str (default: None) — path to save extracted data as JSON
             in the ingest-ready format (compatible with ``ingest_data()``).
+        write_reversed_relations: bool (default: False) — if True, for each
+            relation ``A -[REL]-> B`` also write ``B -[REV_REL]-> A``.  This
+            enables path-based retrievers to traverse the graph in both
+            directions.  The reverse relation type is prefixed with ``REV_``
+            (e.g. ``BORN_IN`` → ``REV_BORN_IN``).
     """
 
     default_inputs = {
@@ -43,6 +48,7 @@ class GraphWriterProcessor(BaseProcessor):
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
         self.json_output = config_dict.get("json_output", None)
+        self.write_reversed = config_dict.get("write_reversed_relations", False)
         self.chunk_table = config_dict.get("chunk_table", "chunks")
         self.document_table = config_dict.get("document_table", "documents")
         # Graph store is optional — a relational-only pipeline may skip it
@@ -185,6 +191,19 @@ class GraphWriterProcessor(BaseProcessor):
                 if head_entity and tail_entity:
                     if self.store is not None:
                         self.store.write_relation(rel, head_entity.id, tail_entity.id)
+                        if self.write_reversed:
+                            rev_type = "REV_" + rel.relation_type.strip().upper().replace(" ", "_")
+                            rev_rel = Relation(
+                                head_text=rel.tail_text,
+                                tail_text=rel.head_text,
+                                relation_type=rev_type,
+                                score=rel.score,
+                                chunk_id=rel.chunk_id,
+                                head_label=rel.tail_label,
+                                tail_label=rel.head_label,
+                                properties=rel.properties,
+                            )
+                            self.store.write_relation(rev_rel, tail_entity.id, head_entity.id)
                     rel_count += 1
                 else:
                     logger.debug(

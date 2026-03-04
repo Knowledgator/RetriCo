@@ -60,7 +60,19 @@ class ChunkEmbeddingRetrieverProcessor(BaseRetriever):
         if not results:
             return {"subgraph": Subgraph()}
 
-        # Get entities mentioned in matched chunks
+        # Fetch the matched chunks
+        from ..models.document import Chunk as ChunkModel
+        chunks = []
+        for chunk_id, _score in results:
+            chunk_data = self._store.get_chunk_by_id(chunk_id)
+            if chunk_data:
+                chunks.append(ChunkModel(**chunk_data))
+
+        # max_hops=0: pure semantic search — return only matched chunks
+        if self.max_hops == 0:
+            return {"subgraph": Subgraph(chunks=chunks)}
+
+        # Otherwise expand into a graph subgraph around entities in those chunks
         all_entity_ids = []
         for chunk_id, _score in results:
             entities = self._store.get_entities_for_chunk(chunk_id)
@@ -70,10 +82,16 @@ class ChunkEmbeddingRetrieverProcessor(BaseRetriever):
                     all_entity_ids.append(eid)
 
         if not all_entity_ids:
-            return {"subgraph": Subgraph()}
+            return {"subgraph": Subgraph(chunks=chunks)}
 
         raw = self._store.get_subgraph(all_entity_ids, max_hops=self.max_hops)
-        return {"subgraph": self._raw_to_subgraph(raw)}
+        subgraph = self._raw_to_subgraph(raw)
+        # Merge vector-matched chunks into the subgraph
+        existing_ids = {c.id for c in subgraph.chunks}
+        for c in chunks:
+            if c.id not in existing_ids:
+                subgraph.chunks.append(c)
+        return {"subgraph": subgraph}
 
 
 @query_registry.register("chunk_embedding_retriever")

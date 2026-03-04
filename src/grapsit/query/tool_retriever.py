@@ -307,9 +307,12 @@ class ToolRetrieverProcessor(BaseRetriever):
                         )
                 # Extract relation info
                 if key == "relation_type" and "target_id" in record:
+                    # Prefer labels over IDs for human-readable display
+                    head = record.get("entity_label", "") or record.get("entity_id", "")
+                    tail = record.get("target_label", "") or record.get("target_id", "")
                     relations.append(Relation(
-                        head_text=record.get("entity_id", ""),
-                        tail_text=record.get("target_id", ""),
+                        head_text=head,
+                        tail_text=tail,
                         relation_type=record.get("relation_type", ""),
                         score=record.get("score", 0.0) or 0.0,
                     ))

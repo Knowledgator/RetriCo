@@ -85,18 +85,34 @@ class MemgraphGraphStore(Neo4jGraphStore):
 
         Uses ``community_detection.get()`` which implements Louvain.
         Leiden is not supported by MAGE; a warning is logged if requested.
+
+        Requires MAGE (Memgraph Advanced Graph Extensions). Use the
+        ``memgraph/memgraph-mage`` Docker image or install MAGE manually.
         """
         if method == "leiden":
             logger.warning(
                 "Memgraph MAGE does not support Leiden; falling back to Louvain."
             )
 
-        records = self._run(
-            """
-            CALL community_detection.get()
-            YIELD node, community_id
-            WHERE 'Entity' IN labels(node)
-            RETURN node.id AS entity_id, toString(community_id) AS community_id
-            """
-        )
-        return {r["entity_id"]: r["community_id"] for r in records}
+        try:
+            records = self._run(
+                """
+                CALL community_detection.get()
+                YIELD node, community_id
+                WITH node, community_id
+                WHERE 'Entity' IN labels(node)
+                RETURN node.id AS entity_id, toString(community_id) AS community_id
+                """
+            )
+            return {r["entity_id"]: r["community_id"] for r in records}
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "no procedure" in err_msg or "not found" in err_msg:
+                raise RuntimeError(
+                    "Community detection requires Memgraph MAGE (Advanced Graph Extensions). "
+                    "The 'community_detection.get()' procedure was not found.\n\n"
+                    "To fix this, use the MAGE Docker image instead of the base Memgraph image:\n"
+                    "  docker run -p 7687:7687 -p 3000:3000 -p 7444:7444 memgraph/memgraph-mage\n\n"
+                    "Or install MAGE manually: https://memgraph.com/docs/advanced-algorithms/install"
+                ) from e
+            raise

@@ -965,12 +965,14 @@ The `store_type` parameter works everywhere — `build_graph()`, `query_graph()`
 #### Starting Memgraph
 
 ```bash
-# Using Docker (Memgraph Platform includes Lab + MAGE algorithms)
-docker run -p 7687:7687 -p 3000:3000 -p 7444:7444 memgraph/memgraph-platform
-
-# Or just the database
+# Run Memgraph (basic — graph storage and queries)
 docker run -p 7687:7687 memgraph/memgraph
+
+# Run Memgraph with MAGE (required for community detection)
+docker run -p 7687:7687 -p 3000:3000 -p 7444:7444 memgraph/memgraph-mage
 ```
+
+> **Note:** Community detection (`grapsit.detect_communities()`) requires the [MAGE](https://memgraph.com/docs/advanced-algorithms/install) extensions. Use the `memgraph/memgraph-mage` image or install MAGE manually.
 
 #### `build_graph()` with Memgraph
 
