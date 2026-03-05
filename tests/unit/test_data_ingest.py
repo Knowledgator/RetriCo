@@ -411,14 +411,18 @@ class TestJsonExport:
             with open(json_path) as f:
                 data = json.load(f)
 
-            assert len(data["entities"]) == 2
-            assert len(data["relations"]) == 1
+            # Output is a list of items (ingest-ready format)
+            assert isinstance(data, list)
+            assert len(data) == 1
+            item = data[0]
+            assert len(item["entities"]) == 2
+            assert len(item["relations"]) == 1
             # Entities in ingest format
-            texts = {e["text"] for e in data["entities"]}
+            texts = {e["text"] for e in item["entities"]}
             assert "Einstein" in texts
             assert "Ulm" in texts
             # Relations in ingest format
-            rel = data["relations"][0]
+            rel = item["relations"][0]
             assert rel["head"] == "Einstein"
             assert rel["tail"] == "Ulm"
             assert rel["type"] == "born_in"
@@ -443,8 +447,10 @@ class TestJsonExport:
             with open(json_path) as f:
                 data = json.load(f)
 
-            assert len(data["entities"]) == 1
-            assert data["relations"] == []
+            assert isinstance(data, list)
+            assert len(data) == 1
+            assert len(data[0]["entities"]) == 1
+            assert data[0]["relations"] == []
 
     def test_json_output_with_entity_ids(self, tmp_path):
         json_path = str(tmp_path / "with_ids.json")
@@ -471,8 +477,10 @@ class TestJsonExport:
                 data = json.load(f)
 
             # Deduped to 1 entity, should have the ID
-            assert len(data["entities"]) == 1
-            assert data["entities"][0]["id"] == "Q937"
+            assert isinstance(data, list)
+            assert len(data) == 1
+            assert len(data[0]["entities"]) == 1
+            assert data[0]["entities"][0]["id"] == "Q937"
 
     def test_json_output_skips_unresolved_relations(self, tmp_path):
         json_path = str(tmp_path / "unresolved.json")
@@ -499,8 +507,10 @@ class TestJsonExport:
             with open(json_path) as f:
                 data = json.load(f)
 
-            assert len(data["entities"]) == 1
-            assert len(data["relations"]) == 0
+            assert isinstance(data, list)
+            assert len(data) == 1
+            assert len(data[0]["entities"]) == 1
+            assert len(data[0]["relations"]) == 0
 
     def test_json_output_no_file_when_not_configured(self, tmp_path):
         with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
@@ -538,7 +548,9 @@ class TestJsonExport:
 
             with open(json_path) as f:
                 data = json.load(f)
-            assert len(data["entities"]) == 1
+            assert isinstance(data, list)
+            assert len(data) == 1
+            assert len(data[0]["entities"]) == 1
 
     def test_json_is_ingest_compatible(self, tmp_path):
         """Verify the JSON output can be fed back into ingest_data()."""
@@ -568,14 +580,10 @@ class TestJsonExport:
             with open(json_path) as f:
                 exported = json.load(f)
 
-            # Feed the JSON back through the ingest processor as a single item
+            # Output is already in ingest-ready format — feed it directly
+            assert isinstance(exported, list)
             proc = DataIngestProcessor({})
-            result = proc(data=[
-                {
-                    "entities": exported["entities"],
-                    "relations": exported["relations"],
-                },
-            ])
+            result = proc(data=exported)
             assert len(result["entities"][0]) == 2
             assert len(result["relations"][0]) == 1
 

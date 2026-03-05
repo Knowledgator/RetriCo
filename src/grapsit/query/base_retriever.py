@@ -6,6 +6,7 @@ import logging
 from ..core.base import BaseProcessor
 from ..models.entity import Entity, EntityMention
 from ..models.relation import Relation
+from ..models.document import Chunk
 from ..models.graph import Subgraph
 
 logger = logging.getLogger(__name__)
@@ -79,11 +80,57 @@ class BaseRetriever(BaseProcessor):
                 continue
             head_id = rel_dict.get("head", "")
             tail_id = rel_dict.get("tail", "")
-            sg_relations.append(Relation(
-                head_text=id_to_label.get(head_id, head_id),
-                tail_text=id_to_label.get(tail_id, tail_id),
-                relation_type=rel_dict.get("type", ""),
-                score=rel_dict.get("score", 0.0) or 0.0,
-            ))
+            kwargs: Dict[str, Any] = {
+                "head_text": id_to_label.get(head_id, head_id),
+                "tail_text": id_to_label.get(tail_id, tail_id),
+                "relation_type": rel_dict.get("type", ""),
+                "score": rel_dict.get("score", 0.0) or 0.0,
+            }
+            # Pass through chunk_id (already a list from store)
+            if "chunk_id" in rel_dict:
+                cid = rel_dict["chunk_id"]
+                if isinstance(cid, list):
+                    kwargs["chunk_id"] = cid
+                elif isinstance(cid, str):
+                    kwargs["chunk_id"] = [cid] if cid else []
+            if rel_dict.get("start_date") is not None:
+                kwargs["start_date"] = rel_dict["start_date"]
+            if rel_dict.get("end_date") is not None:
+                kwargs["end_date"] = rel_dict["end_date"]
+            sg_relations.append(Relation(**kwargs))
 
         return Subgraph(entities=sg_entities, relations=sg_relations)
+
+    def _get_chunks_from_relations(self, relations: List[Relation]) -> List[Chunk]:
+        """Collect all chunk IDs from relations and batch-fetch chunks.
+
+        Args:
+            relations: List of Relation objects with chunk_id lists.
+
+        Returns:
+            List of Chunk objects fetched from the store.
+        """
+        self._ensure_store()
+        all_chunk_ids: List[str] = []
+        seen: set = set()
+        for rel in relations:
+            for cid in rel.chunk_id:
+                if cid and cid not in seen:
+                    seen.add(cid)
+                    all_chunk_ids.append(cid)
+
+        if not all_chunk_ids:
+            return []
+
+        raw_chunks = self._store.get_chunks_by_ids(all_chunk_ids)
+        chunks = []
+        for raw in raw_chunks:
+            chunks.append(Chunk(
+                id=raw.get("id", ""),
+                document_id=raw.get("document_id", ""),
+                text=raw.get("text", ""),
+                index=int(raw.get("index", 0)),
+                start_char=int(raw.get("start_char", 0)),
+                end_char=int(raw.get("end_char", 0)),
+            ))
+        return chunks

@@ -4,10 +4,10 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.construct.ner_llm import (
-    NERLLMProcessor,
-    _parse_entities_json,
-    _find_entity_offsets,
+from grapsit.construct.ner_llm import NERLLMProcessor
+from grapsit.extraction.utils import (
+    parse_entities_json as _parse_entities_json,
+    find_entity_offsets as _find_entity_offsets,
 )
 from grapsit.models.document import Chunk
 
@@ -73,12 +73,12 @@ class TestNERLLMProcessor:
         }
         config.update(config_overrides)
         proc = NERLLMProcessor(config)
-        proc._client = MagicMock()
+        proc._engine._client = MagicMock()
         return proc
 
     def test_basic_ner(self):
         proc = self._make_processor()
-        proc._client.complete.return_value = json.dumps({"entities": [
+        proc._engine._client.complete.return_value = json.dumps({"entities": [
             {"text": "Einstein", "label": "person", "start": 0, "end": 8},
             {"text": "Ulm", "label": "location", "start": 21, "end": 24},
         ]})
@@ -101,7 +101,7 @@ class TestNERLLMProcessor:
 
     def test_multiple_chunks(self):
         proc = self._make_processor()
-        proc._client.complete.side_effect = [
+        proc._engine._client.complete.side_effect = [
             json.dumps([{"text": "Alice", "label": "person", "start": 0, "end": 5}]),
             json.dumps([{"text": "Bob", "label": "person", "start": 0, "end": 3}]),
         ]
@@ -120,7 +120,7 @@ class TestNERLLMProcessor:
 
     def test_filters_unknown_labels(self):
         proc = self._make_processor()
-        proc._client.complete.return_value = json.dumps([
+        proc._engine._client.complete.return_value = json.dumps([
             {"text": "Einstein", "label": "person", "start": 0, "end": 8},
             {"text": "1879", "label": "date", "start": 40, "end": 44},
         ])
@@ -134,7 +134,7 @@ class TestNERLLMProcessor:
 
     def test_api_error_returns_empty(self):
         proc = self._make_processor()
-        proc._client.complete.side_effect = Exception("API error")
+        proc._engine._client.complete.side_effect = Exception("API error")
 
         chunks = [Chunk(id="c1", text="Einstein was born in Ulm.")]
         result = proc(chunks=chunks)
@@ -145,7 +145,7 @@ class TestNERLLMProcessor:
     def test_offset_search_fallback(self):
         """When LLM omits offsets, they are found by text search."""
         proc = self._make_processor()
-        proc._client.complete.return_value = json.dumps([
+        proc._engine._client.complete.return_value = json.dumps([
             {"text": "Einstein", "label": "person"},
         ])
 
@@ -159,7 +159,7 @@ class TestNERLLMProcessor:
     def test_no_labels_open_ended(self):
         """When labels are empty, LLM infers entity types freely."""
         proc = self._make_processor(labels=[])
-        proc._client.complete.return_value = json.dumps({"entities": [
+        proc._engine._client.complete.return_value = json.dumps({"entities": [
             {"text": "Einstein", "label": "scientist"},
             {"text": "Ulm", "label": "city"},
         ]})
@@ -175,11 +175,11 @@ class TestNERLLMProcessor:
     def test_no_labels_prompt_wording(self):
         """Open-ended prompt should not mention specific labels."""
         proc = self._make_processor(labels=[])
-        proc._client.complete.return_value = json.dumps({"entities": []})
+        proc._engine._client.complete.return_value = json.dumps({"entities": []})
 
         proc(chunks=[Chunk(id="c1", text="Hello world.")])
 
-        call_args = proc._client.complete.call_args[0][0]
+        call_args = proc._engine._client.complete.call_args[0][0]
         user_msg = call_args[1]["content"]
         assert "No specific entity labels" in user_msg
         assert "Entity labels:" not in user_msg
@@ -187,26 +187,26 @@ class TestNERLLMProcessor:
     def test_structured_output_used_by_default(self):
         """Default: uses json_schema response format."""
         proc = self._make_processor()
-        proc._client.complete.return_value = json.dumps({"entities": [
+        proc._engine._client.complete.return_value = json.dumps({"entities": [
             {"text": "Einstein", "label": "person"},
         ]})
 
         proc(chunks=[Chunk(id="c1", text="Einstein was a physicist.")])
 
-        call_kwargs = proc._client.complete.call_args[1]
+        call_kwargs = proc._engine._client.complete.call_args[1]
         assert call_kwargs["response_format"]["type"] == "json_schema"
         assert "json_schema" in call_kwargs["response_format"]
 
     def test_structured_output_disabled(self):
         """structured_output=False uses json_object mode."""
         proc = self._make_processor(structured_output=False)
-        proc._client.complete.return_value = json.dumps({"entities": [
+        proc._engine._client.complete.return_value = json.dumps({"entities": [
             {"text": "Einstein", "label": "person"},
         ]})
 
         proc(chunks=[Chunk(id="c1", text="Einstein was a physicist.")])
 
-        call_kwargs = proc._client.complete.call_args[1]
+        call_kwargs = proc._engine._client.complete.call_args[1]
         assert call_kwargs["response_format"] == {"type": "json_object"}
 
     def test_structured_output_fallback_on_error(self):
@@ -214,7 +214,7 @@ class TestNERLLMProcessor:
         proc = self._make_processor()
 
         # First call: structured output raises, fallback succeeds
-        proc._client.complete.side_effect = [
+        proc._engine._client.complete.side_effect = [
             Exception("Unsupported response_format"),  # structured attempt
             json.dumps({"entities": [{"text": "Einstein", "label": "person"}]}),  # json_object fallback
             json.dumps({"entities": [{"text": "Newton", "label": "person"}]}),  # second chunk, json_object directly
@@ -232,7 +232,7 @@ class TestNERLLMProcessor:
         assert result["entities"][1][0].text == "Newton"
 
         # After fallback, _structured_failed should be True
-        assert proc._structured_failed is True
+        assert proc._engine._structured_failed is True
         # Third call should go directly to json_object (no structured attempt)
-        last_call_kwargs = proc._client.complete.call_args_list[-1][1]
+        last_call_kwargs = proc._engine._client.complete.call_args_list[-1][1]
         assert last_call_kwargs["response_format"] == {"type": "json_object"}

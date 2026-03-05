@@ -119,7 +119,7 @@ class RelexGLiNERProcessor(BaseProcessor):
                     m.chunk_id = chunk_id
             if i < len(result.relations):
                 for r in result.relations[i]:
-                    r.chunk_id = chunk_id
+                    r.chunk_id = [chunk_id] if chunk_id else []
 
         return {"relations": result.relations, "entities": result.entities, "chunks": chunks}
 

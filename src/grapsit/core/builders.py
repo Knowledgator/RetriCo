@@ -1010,6 +1010,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         entity_types: List[str] = None,
         relation_types: List[str] = None,
         max_tool_rounds: int = 3,
+        chunk_source: str = "entity",
         store_config: BaseStoreConfig = None,
         **kwargs,
     ) -> "QueryConfigBuilder":
@@ -1022,6 +1023,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
             "entity_types": entity_types or [],
             "relation_types": relation_types or [],
             "max_tool_rounds": max_tool_rounds,
+            "chunk_source": chunk_source,
         })
         config.update(kwargs)
         if api_key is not None:
@@ -1035,6 +1037,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         self,
         max_path_length: int = 5,
         top_k: int = 3,
+        chunk_source: str = "entity",
         store_config: BaseStoreConfig = None,
         **kwargs,
     ) -> "QueryConfigBuilder":
@@ -1042,6 +1045,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         config.update({
             "max_path_length": max_path_length,
             "top_k": top_k,
+            "chunk_source": chunk_source,
         })
         config.update(kwargs)
         self._retriever_nodes.append({"type": "path_retriever", "config": config})

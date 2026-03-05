@@ -8,16 +8,16 @@ from grapsit.query.parser import QueryParserProcessor
 
 
 class TestQueryParserGLiNER:
-    @patch("grapsit.query.parser.QueryParserProcessor._load_gliner")
-    def test_basic_parsing(self, mock_load):
+    def test_basic_parsing(self):
         proc = QueryParserProcessor({
             "method": "gliner",
             "model": "test-model",
             "labels": ["person", "location"],
             "threshold": 0.3,
         })
-        proc._model = MagicMock()
-        proc._model.inference.return_value = [[
+        engine = proc._get_gliner_engine()
+        engine._model = MagicMock()
+        engine._model.inference.return_value = [[
             {"text": "Einstein", "label": "person", "start": 10, "end": 18, "score": 0.95},
             {"text": "Ulm", "label": "location", "start": 27, "end": 30, "score": 0.85},
         ]]
@@ -30,37 +30,38 @@ class TestQueryParserGLiNER:
         assert result["entities"][0].label == "person"
         assert result["entities"][1].text == "Ulm"
 
-    @patch("grapsit.query.parser.QueryParserProcessor._load_gliner")
-    def test_no_entities_found(self, mock_load):
+    def test_no_entities_found(self):
         proc = QueryParserProcessor({
             "method": "gliner",
             "labels": ["person"],
         })
-        proc._model = MagicMock()
-        proc._model.inference.return_value = [[]]
+        engine = proc._get_gliner_engine()
+        engine._model = MagicMock()
+        engine._model.inference.return_value = [[]]
 
         result = proc(query="What is the meaning of life?")
 
         assert result["query"] == "What is the meaning of life?"
         assert result["entities"] == []
 
-    @patch("grapsit.query.parser.QueryParserProcessor._load_gliner")
-    def test_labels_passed_to_model(self, mock_load):
+    def test_labels_passed_to_model(self):
         proc = QueryParserProcessor({
             "method": "gliner",
             "labels": ["person", "organization"],
             "threshold": 0.5,
         })
-        proc._model = MagicMock()
-        proc._model.inference.return_value = [[]]
+        engine = proc._get_gliner_engine()
+        engine._model = MagicMock()
+        engine._model.inference.return_value = [[]]
 
         proc(query="test query")
 
-        proc._model.inference.assert_called_once_with(
+        engine._model.inference.assert_called_once_with(
             texts=["test query"],
             labels=["person", "organization"],
             threshold=0.5,
             flat_ner=True,
+            batch_size=8,
         )
 
 
@@ -72,8 +73,9 @@ class TestQueryParserLLM:
             "model": "test-model",
             "labels": ["person", "location"],
         })
-        proc._client = MagicMock()
-        proc._client.complete.return_value = json.dumps({"entities": [
+        engine = proc._get_llm_engine()
+        engine._client = MagicMock()
+        engine._client.complete.return_value = json.dumps({"entities": [
             {"text": "Einstein", "label": "person"},
             {"text": "Germany", "label": "location"},
         ]})
@@ -92,8 +94,9 @@ class TestQueryParserLLM:
             "api_key": "test",
             "labels": ["person"],
         })
-        proc._client = MagicMock()
-        proc._client.complete.return_value = json.dumps({"entities": []})
+        engine = proc._get_llm_engine()
+        engine._client = MagicMock()
+        engine._client.complete.return_value = json.dumps({"entities": []})
 
         result = proc(query="What is 2+2?")
         assert result["entities"] == []
@@ -104,8 +107,9 @@ class TestQueryParserLLM:
             "api_key": "test",
             "labels": ["person"],
         })
-        proc._client = MagicMock()
-        proc._client.complete.return_value = json.dumps({"entities": [
+        engine = proc._get_llm_engine()
+        engine._client = MagicMock()
+        engine._client.complete.return_value = json.dumps({"entities": [
             {"text": "Einstein", "label": "person"},
             {"text": "Ulm", "label": "location"},
         ]})
@@ -120,8 +124,9 @@ class TestQueryParserLLM:
             "api_key": "test",
             "labels": ["person"],
         })
-        proc._client = MagicMock()
-        proc._client.complete.side_effect = Exception("API error")
+        engine = proc._get_llm_engine()
+        engine._client = MagicMock()
+        engine._client.complete.side_effect = Exception("API error")
 
         result = proc(query="test query")
         assert result["entities"] == []
@@ -132,8 +137,9 @@ class TestQueryParserLLM:
             "api_key": "test",
             "labels": ["person"],
         })
-        proc._client = MagicMock()
-        proc._client.complete.return_value = json.dumps({"entities": [
+        engine = proc._get_llm_engine()
+        engine._client = MagicMock()
+        engine._client.complete.return_value = json.dumps({"entities": [
             {"text": "Einstein", "label": "person"},
         ]})
 

@@ -1,7 +1,7 @@
 """Graph-level models."""
 
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .entity import Entity
 from .relation import Relation
@@ -14,7 +14,17 @@ class KGTriple(BaseModel):
     relation: str
     tail: str
     score: float = 0.0
-    chunk_id: str = ""
+    chunk_id: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_chunk_id(cls, values):
+        """Migrate old str chunk_id to List[str] for backward compat."""
+        if isinstance(values, dict):
+            cid = values.get("chunk_id")
+            if isinstance(cid, str):
+                values["chunk_id"] = [cid] if cid else []
+        return values
 
 
 class Subgraph(BaseModel):

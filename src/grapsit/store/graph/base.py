@@ -77,16 +77,38 @@ class BaseGraphStore(ABC):
         """Get neighboring entities within max_hops."""
 
     @abstractmethod
-    def get_entity_relations(self, entity_id: str) -> List[Dict[str, Any]]:
-        """Get all relations involving an entity."""
+    def get_entity_relations(
+        self, entity_id: str, *, active_after: Optional[str] = None, active_before: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get all relations involving an entity.
+
+        Args:
+            entity_id: The entity UUID.
+            active_after: If set, only return relations whose ``end_date``
+                is null or >= this ISO 8601 date string.
+            active_before: If set, only return relations whose ``start_date``
+                is null or <= this ISO 8601 date string.
+        """
 
     @abstractmethod
     def get_chunks_for_entity(self, entity_id: str) -> List[Dict[str, Any]]:
         """Get chunks where an entity is mentioned."""
 
     @abstractmethod
-    def get_subgraph(self, entity_ids: List[str], max_hops: int = 1) -> Dict[str, Any]:
-        """Retrieve a subgraph around a set of entity IDs."""
+    def get_subgraph(
+        self, entity_ids: List[str], max_hops: int = 1,
+        *, active_after: Optional[str] = None, active_before: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Retrieve a subgraph around a set of entity IDs.
+
+        Args:
+            entity_ids: Seed entity UUIDs.
+            max_hops: Expansion depth.
+            active_after: If set, only include relations whose ``end_date``
+                is null or >= this ISO 8601 date string.
+            active_before: If set, only include relations whose ``start_date``
+                is null or <= this ISO 8601 date string.
+        """
 
     @abstractmethod
     def clear_all(self):
@@ -115,6 +137,23 @@ class BaseGraphStore(ABC):
     def get_chunk_by_id(self, chunk_id: str) -> Optional[Dict[str, Any]]:
         """Look up a chunk by its ID."""
         raise NotImplementedError
+
+    def get_chunks_by_ids(self, chunk_ids: List[str]) -> List[Dict[str, Any]]:
+        """Batch-fetch chunks by their IDs.
+
+        Default implementation calls ``get_chunk_by_id`` per ID.
+        Stores should override with a single efficient query.
+        """
+        results = []
+        seen: set = set()
+        for cid in chunk_ids:
+            if cid in seen:
+                continue
+            seen.add(cid)
+            chunk = self.get_chunk_by_id(cid)
+            if chunk is not None:
+                results.append(chunk)
+        return results
 
     def fulltext_search_chunks(
         self, query: str, top_k: int = 10, index_name: str = "chunk_text_idx",
@@ -300,6 +339,8 @@ class BaseGraphStore(ABC):
         *,
         properties: Optional[Dict[str, Any]] = None,
         id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> str:
         """Create a new directed relation between two entities.
 
@@ -309,6 +350,8 @@ class BaseGraphStore(ABC):
             relation_type: Relation label (will be sanitized).
             properties: Extra edge properties.
             id: Explicit UUID; generated if omitted.
+            start_date: ISO 8601 start date for the relation's validity.
+            end_date: ISO 8601 end date for the relation's validity.
 
         Returns:
             The relation's UUID.

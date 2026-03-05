@@ -12,7 +12,7 @@ class TestPathRetrieverProcessor:
         config = {
             "neo4j_uri": "bolt://localhost:7687",
             "max_path_length": 5,
-            "max_pairs": 10,
+            "top_k": 3,
         }
         config.update(config_overrides)
         proc = PathRetrieverProcessor(config)
@@ -25,7 +25,7 @@ class TestPathRetrieverProcessor:
             {"id": "e1", "label": "Einstein", "entity_type": "person"},
             {"id": "e2", "label": "Ulm", "entity_type": "location"},
         ]
-        proc._store.get_shortest_paths.return_value = [
+        proc._store.get_top_shortest_paths.return_value = [
             {
                 "nodes": [
                     {"id": "e1", "label": "Einstein", "entity_type": "person"},
@@ -47,8 +47,11 @@ class TestPathRetrieverProcessor:
         assert len(sg.entities) == 2
         assert len(sg.relations) == 1
         assert sg.relations[0].relation_type == "BORN_IN"
-        assert sg.relations[0].head_text == "e1"
-        assert sg.relations[0].tail_text == "e2"
+        assert sg.relations[0].head_text == "Einstein"
+        assert sg.relations[0].tail_text == "Ulm"
+        proc._store.get_top_shortest_paths.assert_called_once_with(
+            ["e1", "e2"], max_length=5, top_k=3,
+        )
 
     def test_empty_entities(self):
         proc = self._make_proc()
@@ -97,28 +100,28 @@ class TestPathRetrieverProcessor:
             {"id": "e2", "label": "B", "entity_type": ""},
             {"id": "e3", "label": "C", "entity_type": ""},
         ]
-        proc._store.get_shortest_paths.side_effect = [
-            [{  # A → B
+        proc._store.get_top_shortest_paths.return_value = [
+            {  # A → B
                 "nodes": [
                     {"id": "e1", "label": "A", "entity_type": ""},
                     {"id": "e2", "label": "B", "entity_type": ""},
                 ],
                 "rels": [{"type": "REL_1", "score": 0.9}],
-            }],
-            [{  # A → C
+            },
+            {  # A → C
                 "nodes": [
                     {"id": "e1", "label": "A", "entity_type": ""},
                     {"id": "e3", "label": "C", "entity_type": ""},
                 ],
                 "rels": [{"type": "REL_2", "score": 0.8}],
-            }],
-            [{  # B → C
+            },
+            {  # B → C
                 "nodes": [
                     {"id": "e2", "label": "B", "entity_type": ""},
                     {"id": "e3", "label": "C", "entity_type": ""},
                 ],
                 "rels": [{"type": "REL_3", "score": 0.7}],
-            }],
+            },
         ]
 
         entities = [
@@ -133,20 +136,24 @@ class TestPathRetrieverProcessor:
         assert len(sg.entities) == 3
         assert len(sg.relations) == 3
 
-    def test_max_pairs_limit(self):
-        proc = self._make_proc(max_pairs=1)
+    def test_top_k_limits_paths(self):
+        """top_k=1 should only return entities/relations from 1 path."""
+        proc = self._make_proc(top_k=1)
         proc._store.get_entity_by_label.side_effect = [
             {"id": "e1", "label": "A", "entity_type": ""},
             {"id": "e2", "label": "B", "entity_type": ""},
             {"id": "e3", "label": "C", "entity_type": ""},
         ]
-        proc._store.get_shortest_paths.return_value = [{
-            "nodes": [
-                {"id": "e1", "label": "A", "entity_type": ""},
-                {"id": "e2", "label": "B", "entity_type": ""},
-            ],
-            "rels": [{"type": "REL", "score": 0.5}],
-        }]
+        # Store respects top_k and returns only 1 path
+        proc._store.get_top_shortest_paths.return_value = [
+            {
+                "nodes": [
+                    {"id": "e1", "label": "A", "entity_type": ""},
+                    {"id": "e2", "label": "B", "entity_type": ""},
+                ],
+                "rels": [{"type": "REL_1", "score": 0.9}],
+            },
+        ]
 
         entities = [
             EntityMention(text="A", label=""),
@@ -155,8 +162,12 @@ class TestPathRetrieverProcessor:
         ]
         result = proc(entities=entities)
 
-        # Only 1 pair processed due to max_pairs=1
-        assert proc._store.get_shortest_paths.call_count == 1
+        sg = result["subgraph"]
+        assert len(sg.entities) == 2
+        assert len(sg.relations) == 1
+        proc._store.get_top_shortest_paths.assert_called_once_with(
+            ["e1", "e2", "e3"], max_length=5, top_k=1,
+        )
 
     def test_no_paths_found(self):
         proc = self._make_proc()
@@ -164,7 +175,7 @@ class TestPathRetrieverProcessor:
             {"id": "e1", "label": "A", "entity_type": ""},
             {"id": "e2", "label": "B", "entity_type": ""},
         ]
-        proc._store.get_shortest_paths.return_value = []
+        proc._store.get_top_shortest_paths.return_value = []
 
         entities = [
             EntityMention(text="A", label=""),
@@ -182,7 +193,7 @@ class TestPathRetrieverProcessor:
             {"id": "e1", "label": "A", "entity_type": ""},
             {"id": "e2", "label": "B", "entity_type": ""},
         ]
-        proc._store.get_shortest_paths.side_effect = NotImplementedError
+        proc._store.get_top_shortest_paths.side_effect = NotImplementedError
 
         entities = [
             EntityMention(text="A", label=""),
@@ -194,4 +205,4 @@ class TestPathRetrieverProcessor:
     def test_config_defaults(self):
         proc = PathRetrieverProcessor({})
         assert proc.max_path_length == 5
-        assert proc.max_pairs == 10
+        assert proc.top_k == 3

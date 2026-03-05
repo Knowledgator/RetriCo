@@ -22,6 +22,7 @@ class PathRetrieverProcessor(BaseRetriever):
     Config keys:
         max_path_length: int — maximum path length for shortest path queries (default: 5)
         top_k: int — maximum number of paths to return (default: 3)
+        chunk_source: str — where to get chunks: "entity", "relation", or "both" (default: "entity")
         store_type, neo4j_uri, etc. — passed to create_store
     """
 
@@ -32,6 +33,7 @@ class PathRetrieverProcessor(BaseRetriever):
         super().__init__(config_dict, pipeline)
         self.max_path_length: int = config_dict.get("max_path_length", 5)
         self.top_k: int = config_dict.get("top_k", 3)
+        self.chunk_source: str = config_dict.get("chunk_source", "entity")
 
     def __call__(self, *, entities: List[EntityMention], **kwargs) -> Dict[str, Any]:
         """Find shortest paths between entity pairs and build a subgraph.
@@ -99,17 +101,35 @@ class PathRetrieverProcessor(BaseRetriever):
                     continue
                 head_node = (nodes_list[i] or {}) if i < len(nodes_list) else {}
                 tail_node = (nodes_list[i + 1] or {}) if i + 1 < len(nodes_list) else {}
-                all_relations.append(Relation(
-                    head_text=head_node.get("label", "") or head_node.get("id", ""),
-                    tail_text=tail_node.get("label", "") or tail_node.get("id", ""),
-                    relation_type=rel.get("type", ""),
-                    score=rel.get("score", 0.0) or 0.0,
-                ))
+                rel_kwargs = {
+                    "head_text": head_node.get("label", "") or head_node.get("id", ""),
+                    "tail_text": tail_node.get("label", "") or tail_node.get("id", ""),
+                    "relation_type": rel.get("type", ""),
+                    "score": rel.get("score", 0.0) or 0.0,
+                }
+                # Pass through chunk_id from path results
+                if "chunk_id" in rel:
+                    cid = rel["chunk_id"]
+                    if isinstance(cid, list):
+                        rel_kwargs["chunk_id"] = cid
+                    elif isinstance(cid, str):
+                        rel_kwargs["chunk_id"] = [cid] if cid else []
+                if rel.get("start_date") is not None:
+                    rel_kwargs["start_date"] = rel["start_date"]
+                if rel.get("end_date") is not None:
+                    rel_kwargs["end_date"] = rel["end_date"]
+                all_relations.append(Relation(**rel_kwargs))
+
+        # Fetch chunks from relations if configured
+        chunks: List[Chunk] = []
+        if self.chunk_source in ("relation", "both") and all_relations:
+            chunks = self._get_chunks_from_relations(all_relations)
 
         return {
             "subgraph": Subgraph(
                 entities=list(all_entities.values()),
                 relations=all_relations,
+                chunks=chunks,
             )
         }
 

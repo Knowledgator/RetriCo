@@ -43,8 +43,7 @@ def _make_mock_glinker_executor(linked_entities=None):
 
 class TestBuildPipelineWithLinker:
     @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
-    @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_ner_plus_linker_pipeline(self, mock_ner_load, mock_create_store):
+    def test_ner_plus_linker_pipeline(self, mock_create_store):
         """Test chunker -> NER -> linker -> graph_writer."""
         mock_store = MagicMock()
         mock_create_store.return_value = mock_store
@@ -62,10 +61,10 @@ class TestBuildPipelineWithLinker:
 
         executor = builder.build()
 
-        # Mock NER
+        # Mock NER via engine
         ner_proc = executor.processors["ner"]
-        ner_proc._model = MagicMock()
-        ner_proc._model.inference.return_value = [
+        ner_proc._engine._model = MagicMock()
+        ner_proc._engine._model.inference.return_value = [
             [
                 {"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.95},
                 {"text": "Ulm", "label": "location", "start": 21, "end": 24, "score": 0.85},
@@ -123,8 +122,7 @@ class TestBuildPipelineWithLinker:
         assert writer_result["entity_count"] == 2
 
     @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
-    @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_ner_linker_relex_pipeline(self, mock_ner_load, mock_create_store):
+    def test_ner_linker_relex_pipeline(self, mock_create_store):
         """Test chunker -> NER -> linker -> relex -> graph_writer."""
         mock_store = MagicMock()
         mock_create_store.return_value = mock_store
@@ -147,20 +145,20 @@ class TestBuildPipelineWithLinker:
 
         executor = builder.build()
 
-        # Mock NER
+        # Mock NER via engine
         ner_proc = executor.processors["ner"]
-        ner_proc._model = MagicMock()
-        ner_proc._model.inference.return_value = [
+        ner_proc._engine._model = MagicMock()
+        ner_proc._engine._model.inference.return_value = [
             [
                 {"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.95},
                 {"text": "Ulm", "label": "location", "start": 21, "end": 24, "score": 0.85},
             ],
         ]
 
-        # Mock relex LLM
+        # Mock relex LLM via engine
         relex_proc = executor.processors["relex"]
-        relex_proc._client = MagicMock()
-        relex_proc._client.complete.return_value = json.dumps({"relations": [
+        relex_proc._engine._client = MagicMock()
+        relex_proc._engine._client.complete.return_value = json.dumps({"relations": [
             {"head": "Einstein", "tail": "Ulm", "relation": "born in"},
         ]})
 
@@ -204,8 +202,7 @@ class TestQueryPipelineWithLinker:
 
     @patch("grapsit.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
     @patch("grapsit.query.retriever.RetrieverProcessor._ensure_store")
-    @patch("grapsit.query.parser.QueryParserProcessor._load_gliner")
-    def test_parser_plus_linker_pipeline(self, mock_load, mock_ret_store, mock_chunk_store):
+    def test_parser_plus_linker_pipeline(self, mock_ret_store, mock_chunk_store):
         """Test query_parser -> linker -> retriever -> chunk_retriever."""
         glinker_executor = _make_mock_glinker_executor([
             {"mention_text": "Einstein", "entity_id": "Q937"},
@@ -219,10 +216,11 @@ class TestQueryPipelineWithLinker:
 
         executor = builder.build()
 
-        # Mock parser
+        # Mock parser via engine
         parser_proc = executor.processors["query_parser"]
-        parser_proc._model = MagicMock()
-        parser_proc._model.inference.return_value = [[
+        engine = parser_proc._get_gliner_engine()
+        engine._model = MagicMock()
+        engine._model.inference.return_value = [[
             {"text": "Einstein", "label": "person", "start": 10, "end": 18, "score": 0.95},
         ]]
 

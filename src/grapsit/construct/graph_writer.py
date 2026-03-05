@@ -176,8 +176,9 @@ class GraphWriterProcessor(BaseProcessor):
             for mention in entity.mentions:
                 text_to_entity[mention.text.strip().lower()] = entity
 
-        # 5. Write relations
-        rel_count = 0
+        # 5. Deduplicate relations and accumulate chunk_ids
+        # Key: (head_key, tail_key, rel_type) -> Relation with merged chunk_ids
+        deduped_relations: Dict[tuple, tuple] = {}  # key -> (rel, head_entity, tail_entity)
         for chunk_relations in relations:
             if not isinstance(chunk_relations, list):
                 chunk_relations = [chunk_relations]
@@ -189,27 +190,43 @@ class GraphWriterProcessor(BaseProcessor):
                 head_entity = text_to_entity.get(head_key)
                 tail_entity = text_to_entity.get(tail_key)
                 if head_entity and tail_entity:
-                    if self.store is not None:
-                        self.store.write_relation(rel, head_entity.id, tail_entity.id)
-                        if self.write_reversed:
-                            rev_type = "REV_" + rel.relation_type.strip().upper().replace(" ", "_")
-                            rev_rel = Relation(
-                                head_text=rel.tail_text,
-                                tail_text=rel.head_text,
-                                relation_type=rev_type,
-                                score=rel.score,
-                                chunk_id=rel.chunk_id,
-                                head_label=rel.tail_label,
-                                tail_label=rel.head_label,
-                                properties=rel.properties,
-                            )
-                            self.store.write_relation(rev_rel, tail_entity.id, head_entity.id)
-                    rel_count += 1
+                    rel_type_key = rel.relation_type.strip().upper().replace(" ", "_")
+                    dedup_key = (head_key, tail_key, rel_type_key)
+                    if dedup_key in deduped_relations:
+                        existing_rel = deduped_relations[dedup_key][0]
+                        # Accumulate chunk_ids from this relation
+                        for cid in rel.chunk_id:
+                            if cid and cid not in existing_rel.chunk_id:
+                                existing_rel.chunk_id.append(cid)
+                    else:
+                        deduped_relations[dedup_key] = (rel, head_entity, tail_entity)
                 else:
                     logger.debug(
                         f"Skipping relation {rel.head_text} -> {rel.tail_text}: "
                         f"head_found={head_entity is not None}, tail_found={tail_entity is not None}"
                     )
+
+        # Write deduplicated relations
+        rel_count = 0
+        for rel, head_entity, tail_entity in deduped_relations.values():
+            if self.store is not None:
+                self.store.write_relation(rel, head_entity.id, tail_entity.id)
+                if self.write_reversed:
+                    rev_type = "REV_" + rel.relation_type.strip().upper().replace(" ", "_")
+                    rev_rel = Relation(
+                        head_text=rel.tail_text,
+                        tail_text=rel.head_text,
+                        relation_type=rev_type,
+                        score=rel.score,
+                        chunk_id=list(rel.chunk_id),
+                        head_label=rel.tail_label,
+                        tail_label=rel.head_label,
+                        start_date=rel.start_date,
+                        end_date=rel.end_date,
+                        properties=rel.properties,
+                    )
+                    self.store.write_relation(rev_rel, tail_entity.id, head_entity.id)
+            rel_count += 1
 
         # 6. Write chunks/documents to relational store (if configured)
         if self.relational_store is not None:
@@ -345,14 +362,22 @@ class GraphWriterProcessor(BaseProcessor):
                     entry["head_label"] = rel.head_label
                 if rel.tail_label:
                     entry["tail_label"] = rel.tail_label
+                if rel.start_date is not None:
+                    entry["start_date"] = rel.start_date
+                if rel.end_date is not None:
+                    entry["end_date"] = rel.end_date
                 if rel.properties:
                     entry["properties"] = rel.properties
 
-                # Place relation in its document group
-                doc_id = chunk_to_doc.get(rel.chunk_id, "")
-                if doc_id and doc_id in doc_by_id:
-                    doc_relations.setdefault(doc_id, []).append(entry)
-                else:
+                # Place relation in its document group (use first matching chunk_id)
+                placed = False
+                for cid in rel.chunk_id:
+                    doc_id = chunk_to_doc.get(cid, "")
+                    if doc_id and doc_id in doc_by_id:
+                        doc_relations.setdefault(doc_id, []).append(entry)
+                        placed = True
+                        break
+                if not placed:
                     unlinked_relations.append(entry)
 
         # Build the output list — one item per document

@@ -230,8 +230,152 @@ class TestCreateEmbeddingModel:
         assert isinstance(model, OpenAIEmbedding)
         assert model.api_key == "test"
 
+    def test_gliner_bi_encoder(self):
+        from grapsit.modeling.embeddings import (
+            GLiNERBiEncoderEmbedding,
+            create_embedding_model,
+        )
+
+        model = create_embedding_model(
+            {"embedding_method": "gliner_bi_encoder", "model_name": "custom-gliner"}
+        )
+        assert isinstance(model, GLiNERBiEncoderEmbedding)
+        assert model.model_name == "custom-gliner"
+
+    def test_gliner_bi_encoder_filters_extra_keys(self):
+        from grapsit.modeling.embeddings import (
+            GLiNERBiEncoderEmbedding,
+            create_embedding_model,
+        )
+
+        model = create_embedding_model(
+            {
+                "embedding_method": "gliner_bi_encoder",
+                "model_name": "test",
+                "top_k": 10,
+                "neo4j_uri": "bolt://localhost",
+            }
+        )
+        assert isinstance(model, GLiNERBiEncoderEmbedding)
+        assert model.model_name == "test"
+
     def test_unknown_method(self):
         from grapsit.modeling.embeddings import create_embedding_model
 
         with pytest.raises(ValueError, match="Unknown embedding_method"):
             create_embedding_model({"embedding_method": "cohere"})
+
+
+class TestGLiNERBiEncoderEmbedding:
+    """Tests for GLiNERBiEncoderEmbedding with mocked GLiNER."""
+
+    def _make_mock_gliner(self, dim=256):
+        """Create a mock GLiNER model with encode_labels."""
+        mock_model = MagicMock()
+        mock_model.encode_labels.side_effect = lambda texts, **kw: np.random.rand(
+            len(texts), dim
+        ).astype(np.float32)
+
+        mock_cls = MagicMock()
+        mock_cls.from_pretrained.return_value = mock_model
+        return mock_cls, mock_model
+
+    def test_lazy_loading(self):
+        """Model is not loaded until first use."""
+        from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+
+        emb = GLiNERBiEncoderEmbedding(model_name="test-model")
+        assert emb._model is None
+
+    def test_encode_returns_list_of_lists(self):
+        """encode() returns List[List[float]]."""
+        mock_cls, mock_model = self._make_mock_gliner(dim=256)
+
+        mock_gliner_module = MagicMock()
+        mock_gliner_module.GLiNER = mock_cls
+
+        with patch.dict("sys.modules", {"gliner": mock_gliner_module}):
+            from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+
+            emb = GLiNERBiEncoderEmbedding(model_name="test-model")
+            result = emb.encode(["hello", "world"])
+
+            assert len(result) == 2
+            assert all(isinstance(v, list) for v in result)
+            assert all(len(v) == 256 for v in result)
+            assert all(isinstance(v[0], float) for v in result)
+
+    def test_dimension_property(self):
+        """dimension property returns correct value after loading."""
+        mock_cls, mock_model = self._make_mock_gliner(dim=512)
+
+        mock_gliner_module = MagicMock()
+        mock_gliner_module.GLiNER = mock_cls
+
+        with patch.dict("sys.modules", {"gliner": mock_gliner_module}):
+            from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+
+            emb = GLiNERBiEncoderEmbedding(model_name="test-model")
+            assert emb.dimension == 512
+
+    def test_device_passed(self):
+        """Device kwarg is forwarded via map_location."""
+        mock_cls, mock_model = self._make_mock_gliner()
+
+        mock_gliner_module = MagicMock()
+        mock_gliner_module.GLiNER = mock_cls
+
+        with patch.dict("sys.modules", {"gliner": mock_gliner_module}):
+            from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+
+            emb = GLiNERBiEncoderEmbedding(model_name="test-model", device="cpu")
+            emb.encode(["test"])
+            mock_cls.from_pretrained.assert_called_once_with(
+                "test-model", map_location="cpu"
+            )
+
+    def test_batch_size_forwarded(self):
+        """batch_size is forwarded to encode_labels."""
+        mock_cls, mock_model = self._make_mock_gliner()
+
+        mock_gliner_module = MagicMock()
+        mock_gliner_module.GLiNER = mock_cls
+
+        with patch.dict("sys.modules", {"gliner": mock_gliner_module}):
+            from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+
+            emb = GLiNERBiEncoderEmbedding(model_name="test-model", batch_size=16)
+            emb.encode(["hello", "world"])
+
+            # Second call is the actual encode (first is the probe)
+            calls = mock_model.encode_labels.call_args_list
+            assert len(calls) == 2
+            # Probe call
+            assert calls[0][0][0] == ["probe"]
+            assert calls[0][1]["batch_size"] == 1
+            # Actual encode call
+            assert calls[1][0][0] == ["hello", "world"]
+            assert calls[1][1]["batch_size"] == 16
+
+    def test_import_error(self):
+        """ImportError raised when gliner not installed."""
+        import sys
+
+        saved = sys.modules.pop("gliner", None)
+        try:
+            with patch.dict("sys.modules", {"gliner": None}):
+                from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+
+                emb = GLiNERBiEncoderEmbedding()
+                with pytest.raises(ImportError, match="gliner"):
+                    emb.encode(["test"])
+        finally:
+            if saved is not None:
+                sys.modules["gliner"] = saved
+
+    def test_default_model_name(self):
+        """Default model name is the bi-encoder v2."""
+        from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+
+        emb = GLiNERBiEncoderEmbedding()
+        assert emb.model_name == "knowledgator/gliner-bi-base-v2.0"

@@ -139,3 +139,223 @@ class TestBaseGraphStoreDefaults:
     def test_detect_communities_raises(self):
         with pytest.raises(NotImplementedError):
             self._make_store().detect_communities()
+
+    def test_delete_entity_raises(self):
+        with pytest.raises(NotImplementedError):
+            self._make_store().delete_entity("e1")
+
+    def test_delete_relation_raises(self):
+        with pytest.raises(NotImplementedError):
+            self._make_store().delete_relation("r1")
+
+    def test_delete_chunk_raises(self):
+        with pytest.raises(NotImplementedError):
+            self._make_store().delete_chunk("c1")
+
+    def test_update_entity_raises(self):
+        with pytest.raises(NotImplementedError):
+            self._make_store().update_entity("e1", label="new")
+
+    def test_add_entity_raises(self):
+        with pytest.raises(NotImplementedError):
+            self._make_store().add_entity("Einstein", "person")
+
+    def test_add_relation_raises(self):
+        with pytest.raises(NotImplementedError):
+            self._make_store().add_relation("e1", "e2", "knows")
+
+    def test_merge_entities_raises(self):
+        with pytest.raises(NotImplementedError):
+            self._make_store().merge_entities("e1", "e2")
+
+
+class TestNeo4jMutations:
+    """Test Neo4j mutation methods with controlled _run() side effects."""
+
+    def _make_store_with_run(self, side_effects):
+        """Create a Neo4jGraphStore with _run mocked to return successive values."""
+        from grapsit.store.graph.neo4j_store import Neo4jGraphStore
+        store = Neo4jGraphStore.__new__(Neo4jGraphStore)
+        store._driver = MagicMock()
+        store._run = MagicMock(side_effect=side_effects)
+        return store
+
+    # -- delete_entity -------------------------------------------------------
+
+    def test_delete_entity_found(self):
+        store = self._make_store_with_run([
+            [{"e": {"id": "e1", "label": "Einstein"}}],  # get_entity_by_id
+            [],  # DETACH DELETE
+        ])
+        assert store.delete_entity("e1") is True
+        assert store._run.call_count == 2
+
+    def test_delete_entity_not_found(self):
+        store = self._make_store_with_run([
+            [],  # get_entity_by_id returns nothing
+        ])
+        assert store.delete_entity("e999") is False
+        assert store._run.call_count == 1
+
+    # -- delete_relation -----------------------------------------------------
+
+    def test_delete_relation_found(self):
+        store = self._make_store_with_run([
+            [{"cnt": 1}],  # DELETE + RETURN count
+        ])
+        assert store.delete_relation("r1") is True
+
+    def test_delete_relation_not_found(self):
+        store = self._make_store_with_run([
+            [{"cnt": 0}],
+        ])
+        assert store.delete_relation("r999") is False
+
+    # -- delete_chunk --------------------------------------------------------
+
+    def test_delete_chunk_found(self):
+        store = self._make_store_with_run([
+            [{"c": {"id": "c1", "text": "hello"}}],  # get_chunk_by_id
+            [],  # DETACH DELETE
+        ])
+        assert store.delete_chunk("c1") is True
+
+    def test_delete_chunk_not_found(self):
+        store = self._make_store_with_run([
+            [],  # get_chunk_by_id returns nothing
+        ])
+        assert store.delete_chunk("c999") is False
+
+    # -- update_entity -------------------------------------------------------
+
+    def test_update_entity_label(self):
+        store = self._make_store_with_run([
+            [{"e": {"id": "e1", "label": "Old", "entity_type": "person", "properties": "{}"}}],
+            [],  # SET
+        ])
+        assert store.update_entity("e1", label="New") is True
+        set_call = store._run.call_args_list[1]
+        assert "e.label = $label" in set_call[0][0]
+        assert set_call[0][1]["label"] == "New"
+
+    def test_update_entity_properties_merged(self):
+        store = self._make_store_with_run([
+            [{"e": {"id": "e1", "label": "X", "properties": "{'a': 1}"}}],
+            [],  # SET
+        ])
+        assert store.update_entity("e1", properties={"b": 2}) is True
+        set_call = store._run.call_args_list[1]
+        props_str = set_call[0][1]["properties"]
+        import ast
+        merged = ast.literal_eval(props_str)
+        assert merged == {"a": 1, "b": 2}
+
+    def test_update_entity_not_found(self):
+        store = self._make_store_with_run([
+            [],  # get_entity_by_id returns nothing
+        ])
+        assert store.update_entity("e999", label="X") is False
+
+    def test_update_entity_no_changes(self):
+        store = self._make_store_with_run([
+            [{"e": {"id": "e1", "label": "X", "properties": "{}"}}],
+        ])
+        assert store.update_entity("e1") is True
+        # Only the get_entity_by_id call, no SET
+        assert store._run.call_count == 1
+
+    # -- add_entity ----------------------------------------------------------
+
+    def test_add_entity_with_id(self):
+        store = self._make_store_with_run([
+            [],  # CREATE
+        ])
+        result = store.add_entity("Einstein", "person", id="e-custom")
+        assert result == "e-custom"
+        query = store._run.call_args[0][0]
+        assert "CREATE" in query
+        assert "MERGE" not in query
+
+    def test_add_entity_generated_id(self):
+        store = self._make_store_with_run([
+            [],  # CREATE
+        ])
+        result = store.add_entity("Einstein", "person")
+        # Should be a valid UUID
+        import uuid
+        uuid.UUID(result)
+
+    def test_add_entity_with_properties(self):
+        store = self._make_store_with_run([
+            [],  # CREATE
+        ])
+        store.add_entity("Einstein", "person", properties={"birth_year": 1879})
+        params = store._run.call_args[0][1]
+        assert "1879" in params["properties"]
+
+    # -- add_relation --------------------------------------------------------
+
+    def test_add_relation_success(self):
+        store = self._make_store_with_run([
+            [{"e": {"id": "e1"}}],  # head exists
+            [{"e": {"id": "e2"}}],  # tail exists
+            [],  # CREATE
+        ])
+        result = store.add_relation("e1", "e2", "born in", id="r-custom")
+        assert result == "r-custom"
+        query = store._run.call_args[0][0]
+        assert "BORN_IN" in query
+        assert "CREATE" in query
+
+    def test_add_relation_head_missing(self):
+        store = self._make_store_with_run([
+            [],  # head not found
+        ])
+        with pytest.raises(ValueError, match="Head entity"):
+            store.add_relation("e1", "e2", "born in")
+
+    def test_add_relation_tail_missing(self):
+        store = self._make_store_with_run([
+            [{"e": {"id": "e1"}}],  # head exists
+            [],  # tail not found
+        ])
+        with pytest.raises(ValueError, match="Tail entity"):
+            store.add_relation("e1", "e2", "born in")
+
+    # -- merge_entities ------------------------------------------------------
+
+    def test_merge_entities_same_id(self):
+        store = self._make_store_with_run([])
+        assert store.merge_entities("e1", "e1") is True
+        store._run.assert_not_called()
+
+    def test_merge_entities_source_missing(self):
+        store = self._make_store_with_run([
+            [],  # source not found
+        ])
+        assert store.merge_entities("e1", "e2") is False
+
+    def test_merge_entities_target_missing(self):
+        store = self._make_store_with_run([
+            [{"e": {"id": "e1", "label": "A", "properties": "{}"}}],  # source found
+            [],  # target not found
+        ])
+        assert store.merge_entities("e1", "e2") is False
+
+    def test_merge_entities_success(self):
+        store = self._make_store_with_run([
+            [{"e": {"id": "e1", "label": "A", "properties": "{'x': 1}"}}],  # source
+            [{"e": {"id": "e2", "label": "B", "properties": "{'y': 2}"}}],  # target
+            [],  # move MENTIONED_IN
+            [],  # move MEMBER_OF
+            [],  # outgoing rels (none)
+            [],  # incoming rels (none)
+            [],  # merge properties
+            [],  # delete source
+        ])
+        assert store.merge_entities("e1", "e2") is True
+        # Verify properties merge call
+        props_call = store._run.call_args_list[6]
+        import ast
+        merged = ast.literal_eval(props_call[0][1]["properties"])
+        assert merged == {"x": 1, "y": 2}  # target wins

@@ -3,7 +3,8 @@
 import pytest
 from unittest.mock import MagicMock, patch, call
 
-from grapsit.construct.relex_gliner import RelexGLiNERProcessor, _mentions_to_gliner_spans
+from grapsit.construct.relex_gliner import RelexGLiNERProcessor
+from grapsit.extraction.utils import mentions_to_gliner_spans as _mentions_to_gliner_spans
 from grapsit.models.document import Chunk
 from grapsit.models.entity import EntityMention
 
@@ -34,16 +35,15 @@ class TestMentionsToGlinerSpans:
 
 
 class TestRelexGLiNERProcessor:
-    @patch("grapsit.construct.relex_gliner.RelexGLiNERProcessor._load_model")
-    def test_standalone_mode(self, mock_load):
+    def test_standalone_mode(self):
         """Without entities input — model does its own NER + relex."""
         proc = RelexGLiNERProcessor({
             "model": "test",
             "entity_labels": ["person", "location"],
             "relation_labels": ["born in"],
         })
-        proc._model = MagicMock()
-        proc._model.inference.return_value = (
+        proc._engine._model = MagicMock()
+        proc._engine._model.inference.return_value = (
             [[{"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.9},
               {"text": "Ulm", "label": "location", "start": 21, "end": 24, "score": 0.8}]],
             [[{
@@ -58,7 +58,7 @@ class TestRelexGLiNERProcessor:
         result = proc(chunks=chunks)
 
         # Should NOT pass input_spans when no entities provided
-        call_kwargs = proc._model.inference.call_args[1]
+        call_kwargs = proc._engine._model.inference.call_args[1]
         assert "input_spans" not in call_kwargs
         assert call_kwargs["batch_size"] == 8
 
@@ -74,16 +74,15 @@ class TestRelexGLiNERProcessor:
         assert len(result["entities"]) == 1
         assert len(result["entities"][0]) == 2
 
-    @patch("grapsit.construct.relex_gliner.RelexGLiNERProcessor._load_model")
-    def test_with_preextracted_entities(self, mock_load):
+    def test_with_preextracted_entities(self):
         """With entities input — passes input_spans to model."""
         proc = RelexGLiNERProcessor({
             "model": "test",
             "entity_labels": ["person", "location"],
             "relation_labels": ["born in"],
         })
-        proc._model = MagicMock()
-        proc._model.inference.return_value = (
+        proc._engine._model = MagicMock()
+        proc._engine._model.inference.return_value = (
             [[{"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.9},
               {"text": "Ulm", "label": "location", "start": 21, "end": 24, "score": 0.8}]],
             [[{
@@ -103,7 +102,7 @@ class TestRelexGLiNERProcessor:
         result = proc(chunks=chunks, entities=pre_entities)
 
         # Should pass input_spans when entities are provided
-        call_kwargs = proc._model.inference.call_args[1]
+        call_kwargs = proc._engine._model.inference.call_args[1]
         assert "input_spans" in call_kwargs
         spans = call_kwargs["input_spans"]
         assert len(spans) == 1
@@ -115,16 +114,15 @@ class TestRelexGLiNERProcessor:
         assert result["relations"][0][0].head_text == "Einstein"
         assert result["relations"][0][0].head_label == "person"
 
-    @patch("grapsit.construct.relex_gliner.RelexGLiNERProcessor._load_model")
-    def test_with_dict_entities(self, mock_load):
+    def test_with_dict_entities(self):
         """Entities as plain dicts (e.g. from LLM NER) are also converted."""
         proc = RelexGLiNERProcessor({
             "model": "test",
             "entity_labels": ["person"],
             "relation_labels": ["knows"],
         })
-        proc._model = MagicMock()
-        proc._model.inference.return_value = (
+        proc._engine._model = MagicMock()
+        proc._engine._model.inference.return_value = (
             [[{"text": "Alice", "label": "person", "start": 0, "end": 5, "score": 0.9}]],
             [[]],
         )
@@ -134,12 +132,11 @@ class TestRelexGLiNERProcessor:
         ]]
         result = proc(chunks=[Chunk(id="c1", text="Alice knows Bob.")], entities=dict_entities)
 
-        call_kwargs = proc._model.inference.call_args[1]
+        call_kwargs = proc._engine._model.inference.call_args[1]
         assert "input_spans" in call_kwargs
         assert call_kwargs["input_spans"][0][0]["text"] == "Alice"
 
-    @patch("grapsit.construct.relex_gliner.RelexGLiNERProcessor._load_model")
-    def test_multiple_chunks_batched(self, mock_load):
+    def test_multiple_chunks_batched(self):
         """All chunks processed in a single batched inference call."""
         proc = RelexGLiNERProcessor({
             "model": "test",
@@ -147,8 +144,8 @@ class TestRelexGLiNERProcessor:
             "relation_labels": ["born in"],
             "batch_size": 4,
         })
-        proc._model = MagicMock()
-        proc._model.inference.return_value = (
+        proc._engine._model = MagicMock()
+        proc._engine._model.inference.return_value = (
             [
                 [{"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.9}],
                 [{"text": "Newton", "label": "person", "start": 0, "end": 6, "score": 0.85}],
@@ -163,8 +160,8 @@ class TestRelexGLiNERProcessor:
         result = proc(chunks=chunks)
 
         # Single batched call
-        proc._model.inference.assert_called_once()
-        call_kwargs = proc._model.inference.call_args[1]
+        proc._engine._model.inference.assert_called_once()
+        call_kwargs = proc._engine._model.inference.call_args[1]
         assert call_kwargs["texts"] == ["Einstein was born in Ulm.", "Newton worked at Cambridge."]
         assert call_kwargs["batch_size"] == 4
 

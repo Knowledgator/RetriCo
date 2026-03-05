@@ -110,6 +110,7 @@ class ToolRetrieverProcessor(BaseRetriever):
         self.entity_types: List[str] = config_dict.get("entity_types", [])
         self.relation_types: List[str] = config_dict.get("relation_types", [])
         self.chunk_table: str = config_dict.get("chunk_table", "chunks")
+        self.chunk_source: str = config_dict.get("chunk_source", "entity")
         self._system_prompt_template = config_dict.get("system_prompt", TOOL_RETRIEVER_SYSTEM_PROMPT)
         self._llm = None
         self._relational_store = None
@@ -255,6 +256,15 @@ class ToolRetrieverProcessor(BaseRetriever):
                     "content": result_str,
                 })
 
+        # Fetch chunks from relations if configured
+        if self.chunk_source in ("relation", "both") and collected_relations:
+            rel_chunks = self._get_chunks_from_relations(collected_relations)
+            seen_ids = {c.id for c in collected_chunks}
+            for chunk in rel_chunks:
+                if chunk.id not in seen_ids:
+                    seen_ids.add(chunk.id)
+                    collected_chunks.append(chunk)
+
         return {
             "subgraph": Subgraph(
                 entities=list(collected_entities.values()),
@@ -310,12 +320,23 @@ class ToolRetrieverProcessor(BaseRetriever):
                     # Prefer labels over IDs for human-readable display
                     head = record.get("entity_label", "") or record.get("entity_id", "")
                     tail = record.get("target_label", "") or record.get("target_id", "")
-                    relations.append(Relation(
-                        head_text=head,
-                        tail_text=tail,
-                        relation_type=record.get("relation_type", ""),
-                        score=record.get("score", 0.0) or 0.0,
-                    ))
+                    rel_kwargs = {
+                        "head_text": head,
+                        "tail_text": tail,
+                        "relation_type": record.get("relation_type", ""),
+                        "score": record.get("score", 0.0) or 0.0,
+                    }
+                    cid = record.get("chunk_id")
+                    if cid is not None:
+                        if isinstance(cid, list):
+                            rel_kwargs["chunk_id"] = cid
+                        elif isinstance(cid, str):
+                            rel_kwargs["chunk_id"] = [cid] if cid else []
+                    if record.get("start_date") is not None:
+                        rel_kwargs["start_date"] = record["start_date"]
+                    if record.get("end_date") is not None:
+                        rel_kwargs["end_date"] = record["end_date"]
+                    relations.append(Relation(**rel_kwargs))
 
             # Handle flat records (FalkorDB normalized): entity props merged at top level
             if "id" in record and "label" in record and "_labels" in record:
@@ -340,12 +361,17 @@ class ToolRetrieverProcessor(BaseRetriever):
                     if k == "label" or (k.startswith("label_") and isinstance(v, str)):
                         entity_labels.append(v)
                 if len(entity_ids) >= 2:
-                    relations.append(Relation(
-                        head_text=entity_labels[0] if entity_labels else entity_ids[0],
-                        tail_text=entity_labels[1] if len(entity_labels) > 1 else entity_ids[1],
-                        relation_type=rel_type,
-                        score=record.get("score", 0.0) or 0.0,
-                    ))
+                    rel_kwargs = {
+                        "head_text": entity_labels[0] if entity_labels else entity_ids[0],
+                        "tail_text": entity_labels[1] if len(entity_labels) > 1 else entity_ids[1],
+                        "relation_type": rel_type,
+                        "score": record.get("score", 0.0) or 0.0,
+                    }
+                    if record.get("start_date") is not None:
+                        rel_kwargs["start_date"] = record["start_date"]
+                    if record.get("end_date") is not None:
+                        rel_kwargs["end_date"] = record["end_date"]
+                    relations.append(Relation(**rel_kwargs))
 
 
 @query_registry.register("tool_retriever")

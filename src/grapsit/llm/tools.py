@@ -149,7 +149,7 @@ GRAPH_TOOLS: List[Dict[str, Any]] = [
             "description": (
                 "Get relationships involving an entity. "
                 "Optionally filter by relation type, the entity type of the related entity, "
-                "minimum confidence score, and arbitrary properties on the relation."
+                "minimum confidence score, date range, and arbitrary properties on the relation."
             ),
             "parameters": {
                 "type": "object",
@@ -170,6 +170,14 @@ GRAPH_TOOLS: List[Dict[str, Any]] = [
                         "type": "number",
                         "description": "Minimum confidence score threshold (0.0-1.0).",
                     },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Optional ISO 8601 date (e.g. '2020-01-01'). Only return relations active on or after this date. Relations with no end_date are included.",
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "Optional ISO 8601 date (e.g. '2023-12-31'). Only return relations active on or before this date. Relations with no start_date are included.",
+                    },
                     "filters": PROPERTY_FILTER_SCHEMA,
                 },
                 "required": ["entity_id"],
@@ -183,7 +191,7 @@ GRAPH_TOOLS: List[Dict[str, Any]] = [
             "description": (
                 "Get neighboring entities within a given number of hops. "
                 "Optionally filter neighbors by entity type, relation type, "
-                "and arbitrary properties on the neighbor entities."
+                "date range, and arbitrary properties on the neighbor entities."
             ),
             "parameters": {
                 "type": "object",
@@ -205,6 +213,14 @@ GRAPH_TOOLS: List[Dict[str, Any]] = [
                         "type": "string",
                         "description": "Only traverse edges of this relation type (e.g. 'WORKS_AT').",
                     },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Optional ISO 8601 date. Only traverse relations active on or after this date. Relations with no end_date are included.",
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "Optional ISO 8601 date. Only traverse relations active on or before this date. Relations with no start_date are included.",
+                    },
                     "filters": PROPERTY_FILTER_SCHEMA,
                 },
                 "required": ["entity_id"],
@@ -215,7 +231,7 @@ GRAPH_TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_subgraph",
-            "description": "Retrieve a subgraph around a set of entities. Returns entities and relationships within max_hops of the given entity IDs.",
+            "description": "Retrieve a subgraph around a set of entities. Returns entities and relationships within max_hops of the given entity IDs. Optionally filter relations by date range.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -228,6 +244,14 @@ GRAPH_TOOLS: List[Dict[str, Any]] = [
                         "type": "integer",
                         "description": "Maximum number of hops to traverse (default 1).",
                         "default": 1,
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Optional ISO 8601 date. Only include relations active on or after this date.",
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "Optional ISO 8601 date. Only include relations active on or before this date.",
                     },
                 },
                 "required": ["entity_ids"],
@@ -248,6 +272,35 @@ GRAPH_TOOLS: List[Dict[str, Any]] = [
                     },
                 },
                 "required": ["entity_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_chunks_for_relation",
+            "description": (
+                "Get source text chunks where a specific relation was extracted. "
+                "Looks up the chunk_id list stored on the relation edge between "
+                "the given head and tail entities (optionally filtered by relation type)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "head_entity_id": {
+                        "type": "string",
+                        "description": "The head (source) entity ID.",
+                    },
+                    "tail_entity_id": {
+                        "type": "string",
+                        "description": "The tail (target) entity ID.",
+                    },
+                    "relation_type": {
+                        "type": "string",
+                        "description": "Filter by relation type (e.g. 'BORN_IN'). If omitted, returns chunks for all relations between the entities.",
+                    },
+                },
+                "required": ["head_entity_id", "tail_entity_id"],
             },
         },
     },
@@ -302,6 +355,30 @@ _OPERATOR_MAP = {
     "contains": "CONTAINS",
     "starts_with": "STARTS WITH",
 }
+
+
+def _build_date_filter_clauses(
+    args: Dict[str, Any],
+    rel_var: str,
+    params: Dict[str, Any],
+) -> List[str]:
+    """Build Cypher WHERE fragments for date-range filtering on a relationship.
+
+    Looks for ``start_date`` and ``end_date`` in *args*.  The semantics are:
+
+    - ``start_date``: only include relations active **on or after** this date
+      (i.e. the relation's ``end_date`` is null or >= the filter value).
+    - ``end_date``: only include relations active **on or before** this date
+      (i.e. the relation's ``start_date`` is null or <= the filter value).
+    """
+    clauses: List[str] = []
+    if "start_date" in args:
+        clauses.append(f"({rel_var}.end_date IS NULL OR {rel_var}.end_date >= $filter_start_date)")
+        params["filter_start_date"] = args["start_date"]
+    if "end_date" in args:
+        clauses.append(f"({rel_var}.start_date IS NULL OR {rel_var}.start_date <= $filter_end_date)")
+        params["filter_end_date"] = args["end_date"]
+    return clauses
 
 
 def _build_filter_clauses(
@@ -379,6 +456,7 @@ def _translate_get_entity_relations(args: Dict[str, Any]) -> Tuple[str, Dict[str
     if "min_score" in args:
         post_where.append("r.score >= $min_score")
         params["min_score"] = args["min_score"]
+    post_where.extend(_build_date_filter_clauses(args, "r", params))
     if "filters" in args:
         post_where.extend(_build_filter_clauses(args["filters"], "r", "rf", params))
 
@@ -395,12 +473,39 @@ def _translate_get_neighbors(args: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
     max_hops = args.get("max_hops", 1)
     params: Dict[str, Any] = {"entity_id": args["entity_id"]}
 
+    # For date filtering we need a single-hop pattern with a named relationship
+    date_clauses = _build_date_filter_clauses(args, "r", params)
+
+    if date_clauses:
+        # Use single-hop with named rel for date filter, repeated up to max_hops
+        rel_pattern = f"[r*1..{max_hops}]"
+        if "relation_type" in args:
+            rel_type = args["relation_type"].upper().replace(" ", "_")
+            rel_pattern = f"[r:`{rel_type}`*1..{max_hops}]"
+
+        post_where: List[str] = [
+            f"ALL(r IN relationships(path) WHERE {' AND '.join(date_clauses)})"
+        ]
+        if "entity_type" in args:
+            post_where.append("toLower(neighbor.entity_type) = toLower($entity_type)")
+            params["entity_type"] = args["entity_type"]
+        if "filters" in args:
+            post_where.extend(_build_filter_clauses(args["filters"], "neighbor", "nf", params))
+
+        post_clause = f" AND {' AND '.join(post_where)}" if post_where else ""
+        return (
+            f"MATCH path = (e:Entity)-{rel_pattern}-(neighbor:Entity) "
+            f"WHERE e.id = $entity_id{post_clause} "
+            f"RETURN DISTINCT neighbor",
+            params,
+        )
+
     rel_pattern = f"[*1..{max_hops}]"
     if "relation_type" in args:
         rel_type = args["relation_type"].upper().replace(" ", "_")
         rel_pattern = f"[:`{rel_type}`*1..{max_hops}]"
 
-    post_where: List[str] = []
+    post_where = []
     if "entity_type" in args:
         post_where.append("toLower(neighbor.entity_type) = toLower($entity_type)")
         params["entity_type"] = args["entity_type"]
@@ -419,9 +524,14 @@ def _translate_get_neighbors(args: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
 def _translate_get_subgraph(args: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     max_hops = args.get("max_hops", 1)
     params: Dict[str, Any] = {"entity_ids": args["entity_ids"]}
+    date_clauses = _build_date_filter_clauses(args, "r", params)
+    if date_clauses:
+        date_filter = f" AND ALL(r IN relationships(path) WHERE {' AND '.join(date_clauses)})"
+    else:
+        date_filter = ""
     return (
         f"MATCH path = (e:Entity)-[*1..{max_hops}]-(other:Entity) "
-        f"WHERE e.id IN $entity_ids "
+        f"WHERE e.id IN $entity_ids{date_filter} "
         f"RETURN path",
         params,
     )
@@ -433,6 +543,26 @@ def _translate_get_chunks_for_entity(args: Dict[str, Any]) -> Tuple[str, Dict[st
         "MATCH (e:Entity)-[m:MENTIONED_IN]->(c:Chunk) "
         "WHERE e.id = $entity_id "
         "RETURN c, m",
+        params,
+    )
+
+
+def _translate_get_chunks_for_relation(args: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    params: Dict[str, Any] = {
+        "head_id": args["head_entity_id"],
+        "tail_id": args["tail_entity_id"],
+    }
+    rel_filter = ""
+    if "relation_type" in args:
+        rel_type = args["relation_type"].upper().replace(" ", "_")
+        rel_filter = f":`{rel_type}`"
+
+    return (
+        f"MATCH (h:Entity {{id: $head_id}})-[r{rel_filter}]->(t:Entity {{id: $tail_id}}) "
+        f"WHERE NOT type(r) IN ['MENTIONED_IN', 'MEMBER_OF', 'PART_OF', 'CHILD_OF'] "
+        f"UNWIND r.chunk_id AS cid "
+        f"MATCH (c:Chunk {{id: cid}}) "
+        f"RETURN c",
         params,
     )
 
@@ -469,6 +599,7 @@ _TOOL_TRANSLATORS: Dict[str, Callable[[Dict[str, Any]], Tuple[str, Dict[str, Any
     "get_neighbors": _translate_get_neighbors,
     "get_subgraph": _translate_get_subgraph,
     "get_chunks_for_entity": _translate_get_chunks_for_entity,
+    "get_chunks_for_relation": _translate_get_chunks_for_relation,
     "find_shortest_path": _translate_find_shortest_path,
 }
 
@@ -718,6 +849,12 @@ def build_graph_schema_prompt(
     for rt in relation_types:
         lines.append(f"- {rt}")
 
+    lines.append("")
+    lines.append(
+        "Relations may have optional start_date and end_date properties (ISO 8601 strings) "
+        "indicating when the relationship was active. Use the start_date/end_date filter "
+        "parameters on get_entity_relations, get_neighbors, and get_subgraph to filter by date range."
+    )
     lines.append("")
     lines.append(
         "Use the available tools to query the graph. "

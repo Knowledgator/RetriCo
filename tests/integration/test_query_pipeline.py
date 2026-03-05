@@ -39,8 +39,7 @@ class TestQueryPipeline:
 
     @patch("grapsit.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
     @patch("grapsit.query.retriever.RetrieverProcessor._ensure_store")
-    @patch("grapsit.query.parser.QueryParserProcessor._load_gliner")
-    def test_pipeline_without_reasoner(self, mock_load, mock_ret_store, mock_chunk_store):
+    def test_pipeline_without_reasoner(self, mock_ret_store, mock_chunk_store):
         """Test query_parser -> retriever -> chunk_retriever (no reasoner)."""
         builder = QueryConfigBuilder(name="test_query")
         builder.query_parser(method="gliner", labels=["person", "location"])
@@ -49,10 +48,11 @@ class TestQueryPipeline:
 
         executor = builder.build()
 
-        # Mock GLiNER parser
+        # Mock GLiNER parser via engine
         parser_proc = executor.processors["query_parser"]
-        parser_proc._model = MagicMock()
-        parser_proc._model.inference.return_value = [[
+        engine = parser_proc._get_gliner_engine()
+        engine._model = MagicMock()
+        engine._model.inference.return_value = [[
             {"text": "Einstein", "label": "person", "start": 10, "end": 18, "score": 0.95},
         ]]
 
@@ -75,8 +75,7 @@ class TestQueryPipeline:
 
     @patch("grapsit.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
     @patch("grapsit.query.retriever.RetrieverProcessor._ensure_store")
-    @patch("grapsit.query.parser.QueryParserProcessor._load_gliner")
-    def test_pipeline_with_reasoner(self, mock_load, mock_ret_store, mock_chunk_store):
+    def test_pipeline_with_reasoner(self, mock_ret_store, mock_chunk_store):
         """Test full pipeline with LLM reasoner."""
         builder = QueryConfigBuilder(name="test_query_reasoner")
         builder.query_parser(method="gliner", labels=["person", "location"])
@@ -86,10 +85,11 @@ class TestQueryPipeline:
 
         executor = builder.build()
 
-        # Mock parser
+        # Mock parser via engine
         parser_proc = executor.processors["query_parser"]
-        parser_proc._model = MagicMock()
-        parser_proc._model.inference.return_value = [[
+        engine = parser_proc._get_gliner_engine()
+        engine._model = MagicMock()
+        engine._model.inference.return_value = [[
             {"text": "Einstein", "label": "person", "start": 10, "end": 18, "score": 0.95},
         ]]
 
@@ -125,10 +125,11 @@ class TestQueryPipeline:
 
         executor = builder.build()
 
-        # Mock LLM parser
+        # Mock LLM parser via engine
         parser_proc = executor.processors["query_parser"]
-        parser_proc._client = MagicMock()
-        parser_proc._client.complete.return_value = json.dumps({"entities": [
+        engine = parser_proc._get_llm_engine()
+        engine._client = MagicMock()
+        engine._client.complete.return_value = json.dumps({"entities": [
             {"text": "Einstein", "label": "person"},
         ]})
 
@@ -146,8 +147,7 @@ class TestQueryPipeline:
 
     @patch("grapsit.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
     @patch("grapsit.query.retriever.RetrieverProcessor._ensure_store")
-    @patch("grapsit.query.parser.QueryParserProcessor._load_gliner")
-    def test_query_graph_convenience_without_reasoner(self, mock_load, mock_ret_store, mock_chunk_store):
+    def test_query_graph_convenience_without_reasoner(self, mock_ret_store, mock_chunk_store):
         """Test query_graph() convenience function without API key (no reasoner)."""
         import grapsit
 

@@ -8,11 +8,10 @@ from grapsit.models.document import Chunk
 
 
 class TestNERGLiNERProcessor:
-    @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_basic_ner(self, mock_load):
+    def test_basic_ner(self):
         proc = NERGLiNERProcessor({"model": "test", "labels": ["person", "location"], "threshold": 0.3})
-        proc._model = MagicMock()
-        proc._model.inference.return_value = [
+        proc._engine._model = MagicMock()
+        proc._engine._model.inference.return_value = [
             [
                 {"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.95},
                 {"text": "Ulm", "label": "location", "start": 21, "end": 24, "score": 0.85},
@@ -29,24 +28,22 @@ class TestNERGLiNERProcessor:
         assert result["entities"][0][0].chunk_id == "c1"
 
         # Verify inference was called with batched texts
-        call_kwargs = proc._model.inference.call_args[1]
+        call_kwargs = proc._engine._model.inference.call_args[1]
         assert call_kwargs["texts"] == ["Einstein was born in Ulm."]
         assert call_kwargs["labels"] == ["person", "location"]
         assert call_kwargs["batch_size"] == 8
 
-    @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_empty_chunks(self, mock_load):
+    def test_empty_chunks(self):
         proc = NERGLiNERProcessor({"model": "test", "labels": ["person"]})
-        proc._model = MagicMock()
-        proc._model.inference.return_value = []
+        proc._engine._model = MagicMock()
+        proc._engine._model.inference.return_value = []
         result = proc(chunks=[])
         assert result["entities"] == []
 
-    @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_multiple_chunks_batched(self, mock_load):
+    def test_multiple_chunks_batched(self):
         proc = NERGLiNERProcessor({"model": "test", "labels": ["person"], "batch_size": 4})
-        proc._model = MagicMock()
-        proc._model.inference.return_value = [
+        proc._engine._model = MagicMock()
+        proc._engine._model.inference.return_value = [
             [{"text": "Alice", "label": "person", "start": 0, "end": 5, "score": 0.9}],
             [{"text": "Bob", "label": "person", "start": 0, "end": 3, "score": 0.85}],
         ]
@@ -58,8 +55,8 @@ class TestNERGLiNERProcessor:
         result = proc(chunks=chunks)
 
         # Single batched call with all texts
-        proc._model.inference.assert_called_once()
-        call_kwargs = proc._model.inference.call_args[1]
+        proc._engine._model.inference.assert_called_once()
+        call_kwargs = proc._engine._model.inference.call_args[1]
         assert call_kwargs["texts"] == ["Alice went home.", "Bob stayed."]
         assert call_kwargs["batch_size"] == 4
 

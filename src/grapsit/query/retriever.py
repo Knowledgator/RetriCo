@@ -28,6 +28,8 @@ class RetrieverProcessor(BaseRetriever):
     def __init__(self, config_dict: Dict[str, Any], pipeline: Any = None):
         super().__init__(config_dict, pipeline)
         self.max_hops: int = config_dict.get("max_hops", 2)
+        self.active_after: str | None = config_dict.get("active_after")
+        self.active_before: str | None = config_dict.get("active_before")
 
     def __call__(self, *, entities: List[EntityMention], **kwargs) -> Dict[str, Any]:
         """Look up entities and build a subgraph.
@@ -48,7 +50,10 @@ class RetrieverProcessor(BaseRetriever):
             return {"subgraph": Subgraph()}
 
         # Get subgraph around matched entities
-        raw = self._store.get_subgraph(matched_ids, max_hops=self.max_hops)
+        raw = self._store.get_subgraph(
+            matched_ids, max_hops=self.max_hops,
+            active_after=self.active_after, active_before=self.active_before,
+        )
 
         return {"subgraph": self._raw_to_subgraph(raw)}
 

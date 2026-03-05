@@ -60,8 +60,10 @@ _RELATION_ITEM_SCHEMA = {
         "head": {"type": "string"},
         "tail": {"type": "string"},
         "relation": {"type": "string"},
+        "start_date": {"type": ["string", "null"]},
+        "end_date": {"type": ["string", "null"]},
     },
-    "required": ["head", "tail", "relation"],
+    "required": ["head", "tail", "relation", "start_date", "end_date"],
     "additionalProperties": False,
 }
 
@@ -287,14 +289,19 @@ class LLMExtractionEngine:
         for rel in raw_relations:
             head_text = rel.get("head", "")
             tail_text = rel.get("tail", "")
-            relations.append(Relation(
-                head_text=head_text,
-                tail_text=tail_text,
-                relation_type=rel.get("relation", ""),
-                head_label=entity_label_map.get(head_text.strip().lower(), ""),
-                tail_label=entity_label_map.get(tail_text.strip().lower(), ""),
-                score=1.0,
-            ))
+            rel_kwargs: Dict[str, Any] = {
+                "head_text": head_text,
+                "tail_text": tail_text,
+                "relation_type": rel.get("relation", ""),
+                "head_label": entity_label_map.get(head_text.strip().lower(), ""),
+                "tail_label": entity_label_map.get(tail_text.strip().lower(), ""),
+                "score": 1.0,
+            }
+            if rel.get("start_date"):
+                rel_kwargs["start_date"] = rel["start_date"]
+            if rel.get("end_date"):
+                rel_kwargs["end_date"] = rel["end_date"]
+            relations.append(Relation(**rel_kwargs))
 
         return mentions, relations
 
@@ -330,14 +337,19 @@ class LLMExtractionEngine:
         for rel in raw_relations:
             head_text = rel.get("head", "")
             tail_text = rel.get("tail", "")
-            relations.append(Relation(
-                head_text=head_text,
-                tail_text=tail_text,
-                relation_type=rel.get("relation", ""),
-                head_label=entity_label_map.get(head_text.strip().lower(), ""),
-                tail_label=entity_label_map.get(tail_text.strip().lower(), ""),
-                score=1.0,
-            ))
+            rel_kwargs: Dict[str, Any] = {
+                "head_text": head_text,
+                "tail_text": tail_text,
+                "relation_type": rel.get("relation", ""),
+                "head_label": entity_label_map.get(head_text.strip().lower(), ""),
+                "tail_label": entity_label_map.get(tail_text.strip().lower(), ""),
+                "score": 1.0,
+            }
+            if rel.get("start_date"):
+                rel_kwargs["start_date"] = rel["start_date"]
+            if rel.get("end_date"):
+                rel_kwargs["end_date"] = rel["end_date"]
+            relations.append(Relation(**rel_kwargs))
         return relations
 
     # -- Query mode extraction -------------------------------------------------

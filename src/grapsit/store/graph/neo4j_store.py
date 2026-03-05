@@ -196,20 +196,31 @@ class Neo4jGraphStore(BaseGraphStore):
 
     def write_relation(self, relation: Relation, head_entity_id: str, tail_entity_id: str):
         rel_type = _sanitize_label(relation.relation_type)
+        set_parts = ["r.score = $score", "r.chunk_id = $chunk_id", "r.id = $id"]
+        params = {
+            "head_id": head_entity_id,
+            "tail_id": tail_entity_id,
+            "score": relation.score,
+            "chunk_id": list(relation.chunk_id),
+            "id": relation.id,
+        }
+        if relation.start_date is not None:
+            set_parts.append("r.start_date = $start_date")
+            params["start_date"] = relation.start_date
+        if relation.end_date is not None:
+            set_parts.append("r.end_date = $end_date")
+            params["end_date"] = relation.end_date
+        if relation.properties:
+            set_parts.append("r.properties = $properties")
+            params["properties"] = str(relation.properties)
         self._run(
             f"""
             MATCH (h:Entity {{id: $head_id}})
             MATCH (t:Entity {{id: $tail_id}})
             MERGE (h)-[r:`{rel_type}`]->(t)
-            SET r.score = $score, r.chunk_id = $chunk_id, r.id = $id
+            SET {', '.join(set_parts)}
             """,
-            {
-                "head_id": head_entity_id,
-                "tail_id": tail_entity_id,
-                "score": relation.score,
-                "chunk_id": relation.chunk_id,
-                "id": relation.id,
-            },
+            params,
         )
 
     # -- Reads ---------------------------------------------------------------
@@ -256,20 +267,40 @@ class Neo4jGraphStore(BaseGraphStore):
         )
         return [r["neighbor"] for r in records]
 
-    def get_entity_relations(self, entity_id: str) -> List[Dict[str, Any]]:
+    def get_entity_relations(
+        self, entity_id: str, *, active_after: Optional[str] = None, active_before: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        df = _date_filter_parts(active_after, active_before)
+        where1 = f"WHERE {df}" if df else ""
+        where2_extra = f" AND {df}" if df else ""
+        params: Dict[str, Any] = {"id": entity_id}
+        if active_after:
+            params["active_after"] = active_after
+        if active_before:
+            params["active_before"] = active_before
         records = self._run(
-            """
-            MATCH (e:Entity {id: $id})-[r]->(t:Entity)
+            f"""
+            MATCH (e:Entity {{id: $id}})-[r]->(t:Entity)
+            {where1}
             RETURN type(r) as relation_type, r.score as score, t.id as target_id,
-                   t.label as target_label, r.chunk_id as chunk_id
+                   t.label as target_label, r.chunk_id as chunk_id,
+                   r.start_date as start_date, r.end_date as end_date
             UNION
-            MATCH (s:Entity)-[r]->(e:Entity {id: $id})
-            WHERE NOT type(r) = 'MENTIONED_IN'
+            MATCH (s:Entity)-[r]->(e:Entity {{id: $id}})
+            WHERE NOT type(r) = 'MENTIONED_IN'{where2_extra}
             RETURN type(r) as relation_type, r.score as score, s.id as target_id,
-                   s.label as target_label, r.chunk_id as chunk_id
+                   s.label as target_label, r.chunk_id as chunk_id,
+                   r.start_date as start_date, r.end_date as end_date
             """,
-            {"id": entity_id},
+            params,
         )
+        # Normalize chunk_id to list for backward compat with old DB data
+        for rec in records:
+            cid = rec.get("chunk_id")
+            if isinstance(cid, str):
+                rec["chunk_id"] = [cid] if cid else []
+            elif cid is None:
+                rec["chunk_id"] = []
         return records
 
     def get_chunks_for_entity(self, entity_id: str) -> List[Dict[str, Any]]:
@@ -282,8 +313,18 @@ class Neo4jGraphStore(BaseGraphStore):
         )
         return [r["c"] for r in records]
 
-    def get_subgraph(self, entity_ids: List[str], max_hops: int = 1) -> Dict[str, Any]:
+    def get_subgraph(
+        self, entity_ids: List[str], max_hops: int = 1,
+        *, active_after: Optional[str] = None, active_before: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Retrieve a subgraph around a set of entity IDs."""
+        df = _date_filter_parts(active_after, active_before)
+        rel_where = f"WHERE NOT type(r) = 'MENTIONED_IN' AND {df}" if df else "WHERE NOT type(r) = 'MENTIONED_IN'"
+        params: Dict[str, Any] = {"ids": entity_ids}
+        if active_after:
+            params["active_after"] = active_after
+        if active_before:
+            params["active_before"] = active_before
         records = self._run(
             f"""
             MATCH (e:Entity) WHERE e.id IN $ids
@@ -293,11 +334,11 @@ class Neo4jGraphStore(BaseGraphStore):
             WITH collect(DISTINCT n) AS nodes
             UNWIND nodes AS a
             UNWIND nodes AS b
-            OPTIONAL MATCH (a)-[r]->(b) WHERE NOT type(r) = 'MENTIONED_IN'
+            OPTIONAL MATCH (a)-[r]->(b) {rel_where}
             RETURN collect(DISTINCT properties(a)) AS entities,
-                   collect(DISTINCT {{head: a.id, tail: b.id, type: type(r), score: r.score}}) AS relations
+                   collect(DISTINCT {{head: a.id, tail: b.id, type: type(r), score: r.score, chunk_id: r.chunk_id, start_date: r.start_date, end_date: r.end_date}}) AS relations
             """,
-            {"ids": entity_ids},
+            params,
         )
         if records:
             return records[0]
@@ -321,6 +362,17 @@ class Neo4jGraphStore(BaseGraphStore):
             return records[0]["c"]
         return None
 
+    def get_chunks_by_ids(self, chunk_ids: List[str]) -> List[Dict[str, Any]]:
+        """Batch-fetch chunks by their IDs in a single query."""
+        if not chunk_ids:
+            return []
+        unique_ids = list(set(chunk_ids))
+        records = self._run(
+            "MATCH (c:Chunk) WHERE c.id IN $ids RETURN c",
+            {"ids": unique_ids},
+        )
+        return [r["c"] for r in records]
+
     def fulltext_search_chunks(self, query: str, top_k: int = 10, index_name: str = "chunk_text_idx"):
         records = self._run(
             "CALL db.index.fulltext.queryNodes($index_name, $query) "
@@ -340,7 +392,7 @@ class Neo4jGraphStore(BaseGraphStore):
                   path = shortestPath((s)-[*1..{max_length}]-(t))
             WHERE ALL(r IN relationships(path) WHERE NOT type(r) = 'MENTIONED_IN')
             RETURN [n IN nodes(path) | properties(n)] AS nodes,
-                   [r IN relationships(path) | {{type: type(r), score: r.score}}] AS rels
+                   [r IN relationships(path) | {{type: type(r), score: r.score, chunk_id: r.chunk_id, start_date: r.start_date, end_date: r.end_date}}] AS rels
             """,
             {"source": source_id, "target": target_id},
         )
@@ -359,7 +411,7 @@ class Neo4jGraphStore(BaseGraphStore):
             MATCH path = shortestPath((s)-[*1..{max_length}]-(t))
             WHERE ALL(r IN relationships(path) WHERE NOT type(r) = 'MENTIONED_IN')
             RETURN [n IN nodes(path) | properties(n)] AS nodes,
-                   [r IN relationships(path) | {{type: type(r), score: r.score}}] AS rels
+                   [r IN relationships(path) | {{type: type(r), score: r.score, chunk_id: r.chunk_id, start_date: r.start_date, end_date: r.end_date}}] AS rels
             ORDER BY length(path)
             LIMIT $top_k
             """,
@@ -645,6 +697,8 @@ class Neo4jGraphStore(BaseGraphStore):
         *,
         properties: Optional[Dict[str, Any]] = None,
         id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> str:
         if self.get_entity_by_id(head_id) is None:
             raise ValueError(f"Head entity '{head_id}' does not exist")
@@ -654,18 +708,27 @@ class Neo4jGraphStore(BaseGraphStore):
         rel_id = id or str(uuid.uuid4())
         rel_type = _sanitize_label(relation_type)
         props = properties or {}
+        set_parts = ["r.id = $id", "r.properties = $properties"]
+        params = {
+            "head_id": head_id,
+            "tail_id": tail_id,
+            "id": rel_id,
+            "properties": str(props),
+        }
+        if start_date is not None:
+            set_parts.append("r.start_date = $start_date")
+            params["start_date"] = start_date
+        if end_date is not None:
+            set_parts.append("r.end_date = $end_date")
+            params["end_date"] = end_date
         self._run(
             f"""
             MATCH (h:Entity {{id: $head_id}})
             MATCH (t:Entity {{id: $tail_id}})
-            CREATE (h)-[r:`{rel_type}` {{id: $id, properties: $properties}}]->(t)
+            CREATE (h)-[r:`{rel_type}`]->(t)
+            SET {', '.join(set_parts)}
             """,
-            {
-                "head_id": head_id,
-                "tail_id": tail_id,
-                "id": rel_id,
-                "properties": str(props),
-            },
+            params,
         )
         return rel_id
 
@@ -798,6 +861,21 @@ class Neo4jGraphStore(BaseGraphStore):
     def clear_all(self):
         """Delete all nodes and relationships."""
         self._run("MATCH (n) DETACH DELETE n")
+
+
+def _date_filter_parts(active_after: Optional[str], active_before: Optional[str]) -> str:
+    """Build Cypher conditions for date range filtering on relationship ``r``.
+
+    Returns an empty string when no filtering is needed, or a fragment like
+    ``(r.end_date IS NULL OR r.end_date >= $active_after) AND ...`` suitable
+    for embedding in a WHERE clause.
+    """
+    parts: list = []
+    if active_after:
+        parts.append("(r.end_date IS NULL OR r.end_date >= $active_after)")
+    if active_before:
+        parts.append("(r.start_date IS NULL OR r.start_date <= $active_before)")
+    return " AND ".join(parts)
 
 
 def _sanitize_label(s: str) -> str:

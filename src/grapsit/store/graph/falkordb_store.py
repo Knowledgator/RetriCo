@@ -168,20 +168,31 @@ class FalkorDBGraphStore(BaseGraphStore):
 
     def write_relation(self, relation: Relation, head_entity_id: str, tail_entity_id: str):
         rel_type = _sanitize_label(relation.relation_type)
+        set_parts = ["r.score = $score", "r.chunk_id = $chunk_id", "r.id = $id"]
+        params = {
+            "head_id": head_entity_id,
+            "tail_id": tail_entity_id,
+            "score": relation.score,
+            "chunk_id": list(relation.chunk_id),
+            "id": relation.id,
+        }
+        if relation.start_date is not None:
+            set_parts.append("r.start_date = $start_date")
+            params["start_date"] = relation.start_date
+        if relation.end_date is not None:
+            set_parts.append("r.end_date = $end_date")
+            params["end_date"] = relation.end_date
+        if relation.properties:
+            set_parts.append("r.properties = $properties")
+            params["properties"] = str(relation.properties)
         self._run(
             f"""
             MATCH (h:Entity {{id: $head_id}})
             MATCH (t:Entity {{id: $tail_id}})
             MERGE (h)-[r:`{rel_type}`]->(t)
-            SET r.score = $score, r.chunk_id = $chunk_id, r.id = $id
+            SET {', '.join(set_parts)}
             """,
-            {
-                "head_id": head_entity_id,
-                "tail_id": tail_entity_id,
-                "score": relation.score,
-                "chunk_id": relation.chunk_id,
-                "id": relation.id,
-            },
+            params,
         )
 
     # -- Reads ---------------------------------------------------------------
@@ -226,24 +237,47 @@ class FalkorDBGraphStore(BaseGraphStore):
         )
         return [_node_to_dict(row[0]) for row in rows]
 
-    def get_entity_relations(self, entity_id: str) -> List[Dict[str, Any]]:
-        # FalkorDB supports UNION
+    def get_entity_relations(
+        self, entity_id: str, *, active_after: Optional[str] = None, active_before: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        df = _date_filter_parts_falkor(active_after, active_before)
+        where1 = f"WHERE {df}" if df else ""
+        where2_extra = f" AND {df}" if df else ""
+        params: Dict[str, Any] = {"id": entity_id}
+        if active_after:
+            params["active_after"] = active_after
+        if active_before:
+            params["active_before"] = active_before
         rows = self._run(
-            """
-            MATCH (e:Entity {id: $id})-[r]->(t:Entity)
+            f"""
+            MATCH (e:Entity {{id: $id}})-[r]->(t:Entity)
+            {where1}
             RETURN type(r) as relation_type, r.score as score, t.id as target_id,
-                   t.label as target_label, r.chunk_id as chunk_id
+                   t.label as target_label, r.chunk_id as chunk_id,
+                   r.start_date as start_date, r.end_date as end_date
             UNION
-            MATCH (s:Entity)-[r]->(e:Entity {id: $id})
-            WHERE NOT type(r) = 'MENTIONED_IN'
+            MATCH (s:Entity)-[r]->(e:Entity {{id: $id}})
+            WHERE NOT type(r) = 'MENTIONED_IN'{where2_extra}
             RETURN type(r) as relation_type, r.score as score, s.id as target_id,
-                   s.label as target_label, r.chunk_id as chunk_id
+                   s.label as target_label, r.chunk_id as chunk_id,
+                   r.start_date as start_date, r.end_date as end_date
             """,
-            {"id": entity_id},
+            params,
         )
-        # FalkorDB result_set returns lists of values; convert to dicts
-        columns = ["relation_type", "score", "target_id", "target_label", "chunk_id"]
-        return [dict(zip(columns, row)) for row in rows]
+        columns = ["relation_type", "score", "target_id", "target_label", "chunk_id", "start_date", "end_date"]
+        results = []
+        for row in rows:
+            rec = dict(zip(columns, row))
+            # Normalize chunk_id to list for backward compat with old DB data
+            cid = rec.get("chunk_id")
+            if isinstance(cid, str):
+                rec["chunk_id"] = [cid] if cid else []
+            elif cid is None:
+                rec["chunk_id"] = []
+            elif not isinstance(cid, list):
+                rec["chunk_id"] = []
+            results.append(rec)
+        return results
 
     def get_chunks_for_entity(self, entity_id: str) -> List[Dict[str, Any]]:
         rows = self._run(
@@ -252,7 +286,17 @@ class FalkorDBGraphStore(BaseGraphStore):
         )
         return [_node_to_dict(row[0]) for row in rows]
 
-    def get_subgraph(self, entity_ids: List[str], max_hops: int = 1) -> Dict[str, Any]:
+    def get_subgraph(
+        self, entity_ids: List[str], max_hops: int = 1,
+        *, active_after: Optional[str] = None, active_before: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        df = _date_filter_parts_falkor(active_after, active_before)
+        rel_where = f"WHERE NOT type(r) = 'MENTIONED_IN' AND {df}" if df else "WHERE NOT type(r) = 'MENTIONED_IN'"
+        params: Dict[str, Any] = {"ids": entity_ids}
+        if active_after:
+            params["active_after"] = active_after
+        if active_before:
+            params["active_before"] = active_before
         rows = self._run(
             f"""
             MATCH (e:Entity) WHERE e.id IN $ids
@@ -262,11 +306,11 @@ class FalkorDBGraphStore(BaseGraphStore):
             WITH collect(DISTINCT n) AS nodes
             UNWIND nodes AS a
             UNWIND nodes AS b
-            OPTIONAL MATCH (a)-[r]->(b) WHERE NOT type(r) = 'MENTIONED_IN'
+            OPTIONAL MATCH (a)-[r]->(b) {rel_where}
             RETURN collect(DISTINCT a) AS entities,
-                   collect(DISTINCT [a.id, b.id, type(r), r.score]) AS relations
+                   collect(DISTINCT [a.id, b.id, type(r), r.score, r.chunk_id, r.start_date, r.end_date]) AS relations
             """,
-            {"ids": entity_ids},
+            params,
         )
         if not rows:
             return {"entities": [], "relations": []}
@@ -276,18 +320,31 @@ class FalkorDBGraphStore(BaseGraphStore):
         raw_entities = row[0] if row[0] else []
         entities = [_node_to_dict(n) for n in raw_entities if n is not None]
 
-        # Parse relations (lists of [head_id, tail_id, type, score])
+        # Parse relations (lists of [head_id, tail_id, type, score, chunk_id, start_date, end_date])
         raw_relations = row[1] if row[1] else []
         relations = []
         for rel_data in raw_relations:
             if rel_data is None or (isinstance(rel_data, list) and rel_data[2] is None):
                 continue
-            relations.append({
+            rel_dict = {
                 "head": rel_data[0],
                 "tail": rel_data[1],
                 "type": rel_data[2],
                 "score": rel_data[3],
-            })
+            }
+            if len(rel_data) > 4 and rel_data[4] is not None:
+                cid = rel_data[4]
+                if isinstance(cid, str):
+                    rel_dict["chunk_id"] = [cid] if cid else []
+                elif isinstance(cid, list):
+                    rel_dict["chunk_id"] = cid
+                else:
+                    rel_dict["chunk_id"] = []
+            if len(rel_data) > 5 and rel_data[5] is not None:
+                rel_dict["start_date"] = rel_data[5]
+            if len(rel_data) > 6 and rel_data[6] is not None:
+                rel_dict["end_date"] = rel_data[6]
+            relations.append(rel_dict)
 
         return {"entities": entities, "relations": relations}
 
@@ -309,6 +366,17 @@ class FalkorDBGraphStore(BaseGraphStore):
             return _node_to_dict(rows[0][0])
         return None
 
+    def get_chunks_by_ids(self, chunk_ids: List[str]) -> List[Dict[str, Any]]:
+        """Batch-fetch chunks by their IDs in a single query."""
+        if not chunk_ids:
+            return []
+        unique_ids = list(set(chunk_ids))
+        rows = self._run(
+            "MATCH (c:Chunk) WHERE c.id IN $ids RETURN c",
+            {"ids": unique_ids},
+        )
+        return [_node_to_dict(row[0]) for row in rows]
+
     def fulltext_search_chunks(self, query: str, top_k: int = 10, index_name: str = "chunk_text_idx"):
         rows = self._run(
             "CALL db.idx.fulltext.queryNodes('Chunk', $query) YIELD node "
@@ -329,7 +397,18 @@ class FalkorDBGraphStore(BaseGraphStore):
                 if hasattr(edge, "relation"):
                     rel_dict = {"type": edge.relation}
                     if hasattr(edge, "properties"):
-                        rel_dict["score"] = edge.properties.get("score")
+                        props = edge.properties
+                        rel_dict["score"] = props.get("score")
+                        cid = props.get("chunk_id")
+                        if cid is not None:
+                            if isinstance(cid, str):
+                                rel_dict["chunk_id"] = [cid] if cid else []
+                            elif isinstance(cid, list):
+                                rel_dict["chunk_id"] = cid
+                        if props.get("start_date") is not None:
+                            rel_dict["start_date"] = props["start_date"]
+                        if props.get("end_date") is not None:
+                            rel_dict["end_date"] = props["end_date"]
                     rels.append(rel_dict)
                 elif isinstance(edge, dict):
                     rels.append(edge)
@@ -360,7 +439,8 @@ class FalkorDBGraphStore(BaseGraphStore):
             """
             MATCH (s:Entity {id: $source})-[r1]->(mid:Entity)<-[r2]-(t:Entity {id: $target})
             WHERE NOT type(r1) = 'MENTIONED_IN' AND NOT type(r2) = 'MENTIONED_IN'
-            RETURN s, mid, t, type(r1) AS t1, r1.score AS s1, type(r2) AS t2, r2.score AS s2
+            RETURN s, mid, t, type(r1) AS t1, r1.score AS s1, type(r2) AS t2, r2.score AS s2,
+                   r1.start_date AS sd1, r1.end_date AS ed1, r2.start_date AS sd2, r2.end_date AS ed2
             LIMIT 3
             """,
             {"source": source_id, "target": target_id},
@@ -370,8 +450,8 @@ class FalkorDBGraphStore(BaseGraphStore):
             for row in rows:
                 nodes = [_node_to_dict(row[0]), _node_to_dict(row[1]), _node_to_dict(row[2])]
                 rels = [
-                    {"type": row[3], "score": row[4]},
-                    {"type": row[5], "score": row[6]},
+                    _build_rel_dict(row[3], row[4], row[7] if len(row) > 7 else None, row[8] if len(row) > 8 else None),
+                    _build_rel_dict(row[5], row[6], row[9] if len(row) > 9 else None, row[10] if len(row) > 10 else None),
                 ]
                 results.append({"nodes": nodes, "rels": rels})
             return results
@@ -381,7 +461,8 @@ class FalkorDBGraphStore(BaseGraphStore):
             """
             MATCH (s:Entity {id: $source})<-[r1]-(mid:Entity)-[r2]->(t:Entity {id: $target})
             WHERE NOT type(r1) = 'MENTIONED_IN' AND NOT type(r2) = 'MENTIONED_IN'
-            RETURN s, mid, t, type(r1) AS t1, r1.score AS s1, type(r2) AS t2, r2.score AS s2
+            RETURN s, mid, t, type(r1) AS t1, r1.score AS s1, type(r2) AS t2, r2.score AS s2,
+                   r1.start_date AS sd1, r1.end_date AS ed1, r2.start_date AS sd2, r2.end_date AS ed2
             LIMIT 3
             """,
             {"source": source_id, "target": target_id},
@@ -391,8 +472,8 @@ class FalkorDBGraphStore(BaseGraphStore):
             for row in rows:
                 nodes = [_node_to_dict(row[0]), _node_to_dict(row[1]), _node_to_dict(row[2])]
                 rels = [
-                    {"type": row[3], "score": row[4]},
-                    {"type": row[5], "score": row[6]},
+                    _build_rel_dict(row[3], row[4], row[7] if len(row) > 7 else None, row[8] if len(row) > 8 else None),
+                    _build_rel_dict(row[5], row[6], row[9] if len(row) > 9 else None, row[10] if len(row) > 10 else None),
                 ]
                 results.append({"nodes": nodes, "rels": rels})
             return results
@@ -408,7 +489,8 @@ class FalkorDBGraphStore(BaseGraphStore):
                     """
                     MATCH (s:Entity {id: $source})-[r]->(t:Entity {id: $target})
                     WHERE NOT type(r) = 'MENTIONED_IN'
-                    RETURN s, t, type(r) AS rtype, r.score AS rscore
+                    RETURN s, t, type(r) AS rtype, r.score AS rscore,
+                           r.start_date AS sd, r.end_date AS ed
                     LIMIT 1
                     """,
                     {"source": source_id, "target": target_id},
@@ -416,13 +498,14 @@ class FalkorDBGraphStore(BaseGraphStore):
                 if rows:
                     row = rows[0]
                     return [{"nodes": [_node_to_dict(row[0]), _node_to_dict(row[1])],
-                             "rels": [{"type": row[2], "score": row[3]}]}]
+                             "rels": [_build_rel_dict(row[2], row[3], row[4] if len(row) > 4 else None, row[5] if len(row) > 5 else None)]}]
             elif length == 2:
                 rows = self._run(
                     """
                     MATCH (s:Entity {id: $source})-[r1]->(m:Entity)-[r2]->(t:Entity {id: $target})
                     WHERE NOT type(r1) = 'MENTIONED_IN' AND NOT type(r2) = 'MENTIONED_IN'
-                    RETURN s, m, t, type(r1) AS t1, r1.score AS s1, type(r2) AS t2, r2.score AS s2
+                    RETURN s, m, t, type(r1) AS t1, r1.score AS s1, type(r2) AS t2, r2.score AS s2,
+                           r1.start_date AS sd1, r1.end_date AS ed1, r2.start_date AS sd2, r2.end_date AS ed2
                     LIMIT 1
                     """,
                     {"source": source_id, "target": target_id},
@@ -430,7 +513,8 @@ class FalkorDBGraphStore(BaseGraphStore):
                 if rows:
                     row = rows[0]
                     return [{"nodes": [_node_to_dict(row[0]), _node_to_dict(row[1]), _node_to_dict(row[2])],
-                             "rels": [{"type": row[3], "score": row[4]}, {"type": row[5], "score": row[6]}]}]
+                             "rels": [_build_rel_dict(row[3], row[4], row[7] if len(row) > 7 else None, row[8] if len(row) > 8 else None),
+                                      _build_rel_dict(row[5], row[6], row[9] if len(row) > 9 else None, row[10] if len(row) > 10 else None)]}]
             elif length == 3:
                 rows = self._run(
                     """
@@ -440,7 +524,10 @@ class FalkorDBGraphStore(BaseGraphStore):
                     RETURN s, m1, m2, t,
                            type(r1) AS t1, r1.score AS s1,
                            type(r2) AS t2, r2.score AS s2,
-                           type(r3) AS t3, r3.score AS s3
+                           type(r3) AS t3, r3.score AS s3,
+                           r1.start_date AS sd1, r1.end_date AS ed1,
+                           r2.start_date AS sd2, r2.end_date AS ed2,
+                           r3.start_date AS sd3, r3.end_date AS ed3
                     LIMIT 1
                     """,
                     {"source": source_id, "target": target_id},
@@ -449,9 +536,9 @@ class FalkorDBGraphStore(BaseGraphStore):
                     row = rows[0]
                     return [{"nodes": [_node_to_dict(row[0]), _node_to_dict(row[1]),
                                        _node_to_dict(row[2]), _node_to_dict(row[3])],
-                             "rels": [{"type": row[4], "score": row[5]},
-                                      {"type": row[6], "score": row[7]},
-                                      {"type": row[8], "score": row[9]}]}]
+                             "rels": [_build_rel_dict(row[4], row[5], row[10] if len(row) > 10 else None, row[11] if len(row) > 11 else None),
+                                      _build_rel_dict(row[6], row[7], row[12] if len(row) > 12 else None, row[13] if len(row) > 13 else None),
+                                      _build_rel_dict(row[8], row[9], row[14] if len(row) > 14 else None, row[15] if len(row) > 15 else None)]}]
             else:
                 # length 4: use variable-length but only return endpoint + count
                 rows = self._run(
@@ -739,6 +826,8 @@ class FalkorDBGraphStore(BaseGraphStore):
         *,
         properties: Optional[Dict[str, Any]] = None,
         id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> str:
         if self.get_entity_by_id(head_id) is None:
             raise ValueError(f"Head entity '{head_id}' does not exist")
@@ -748,18 +837,27 @@ class FalkorDBGraphStore(BaseGraphStore):
         rel_id = id or str(uuid.uuid4())
         rel_type = _sanitize_label(relation_type)
         props = properties or {}
+        set_parts = ["r.id = $id", "r.properties = $properties"]
+        params = {
+            "head_id": head_id,
+            "tail_id": tail_id,
+            "id": rel_id,
+            "properties": str(props),
+        }
+        if start_date is not None:
+            set_parts.append("r.start_date = $start_date")
+            params["start_date"] = start_date
+        if end_date is not None:
+            set_parts.append("r.end_date = $end_date")
+            params["end_date"] = end_date
         self._run(
             f"""
             MATCH (h:Entity {{id: $head_id}})
             MATCH (t:Entity {{id: $tail_id}})
-            CREATE (h)-[r:`{rel_type}` {{id: $id, properties: $properties}}]->(t)
+            CREATE (h)-[r:`{rel_type}`]->(t)
+            SET {', '.join(set_parts)}
             """,
-            {
-                "head_id": head_id,
-                "tail_id": tail_id,
-                "id": rel_id,
-                "properties": str(props),
-            },
+            params,
         )
         return rel_id
 
@@ -894,6 +992,26 @@ class FalkorDBGraphStore(BaseGraphStore):
 
     def clear_all(self):
         self._run("MATCH (n) DETACH DELETE n")
+
+
+def _date_filter_parts_falkor(active_after: Optional[str], active_before: Optional[str]) -> str:
+    """Build Cypher conditions for date range filtering on relationship ``r``."""
+    parts: list = []
+    if active_after:
+        parts.append("(r.end_date IS NULL OR r.end_date >= $active_after)")
+    if active_before:
+        parts.append("(r.start_date IS NULL OR r.start_date <= $active_before)")
+    return " AND ".join(parts)
+
+
+def _build_rel_dict(rel_type, score, start_date=None, end_date=None) -> Dict[str, Any]:
+    """Build a relation dict with optional date fields."""
+    d: Dict[str, Any] = {"type": rel_type, "score": score}
+    if start_date is not None:
+        d["start_date"] = start_date
+    if end_date is not None:
+        d["end_date"] = end_date
+    return d
 
 
 def _node_to_dict(node) -> Dict[str, Any]:

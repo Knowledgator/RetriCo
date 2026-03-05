@@ -190,8 +190,8 @@ class TestFalkorDBGraphStore:
     def test_setup_indexes(self, mock_falkordb_store):
         store, mock_graph = mock_falkordb_store
         store.setup_indexes()
-        # Should create 6 indexes (5 original + Community)
-        assert mock_graph.query.call_count == 6
+        # Should create 7 indexes (5 original + Community + FTS)
+        assert mock_graph.query.call_count == 7
 
     def test_setup_indexes_includes_community(self, mock_falkordb_store):
         store, mock_graph = mock_falkordb_store
@@ -284,20 +284,23 @@ class TestFalkorDBPathQueries:
         result = store.get_shortest_paths("e1", "e2")
         assert result == []
         query = mock_graph.query.call_args[0][0]
-        assert "shortestPath" in query
+        assert "MATCH" in query
 
-    def test_get_shortest_paths_with_edge_objects(self, mock_falkordb_store):
+    def test_get_shortest_paths_directed(self, mock_falkordb_store):
+        """Directed path found: existence check returns rows, then chain query returns path."""
         store, mock_graph = mock_falkordb_store
         node1 = MagicMock()
         node1.properties = {"id": "e1", "label": "Einstein"}
         node2 = MagicMock()
         node2.properties = {"id": "e2", "label": "Ulm"}
-        edge = MagicMock()
-        edge.relation = "BORN_IN"
-        edge.properties = {"score": 0.8}
-        mock_result = MagicMock()
-        mock_result.result_set = [[[node1, node2], [edge]]]
-        mock_graph.query.return_value = mock_result
+
+        # First call: existence check (RETURN s, t) -> found
+        existence_result = MagicMock()
+        existence_result.result_set = [[node1, node2]]
+        # Second call: _get_entity_chain length=1 (RETURN s, t, type(r), r.score)
+        chain_result = MagicMock()
+        chain_result.result_set = [[node1, node2, "BORN_IN", 0.8]]
+        mock_graph.query.side_effect = [existence_result, chain_result]
 
         result = store.get_shortest_paths("e1", "e2")
         assert len(result) == 1
@@ -305,17 +308,28 @@ class TestFalkorDBPathQueries:
         assert result[0]["rels"][0]["type"] == "BORN_IN"
         assert result[0]["rels"][0]["score"] == 0.8
 
-    def test_get_shortest_paths_with_dict_edges(self, mock_falkordb_store):
+    def test_get_shortest_paths_via_intermediate(self, mock_falkordb_store):
+        """No directed path; fallback finds shared intermediate entity."""
         store, mock_graph = mock_falkordb_store
         node1 = MagicMock()
-        node1.properties = {"id": "e1"}
-        edge_dict = {"type": "WORKS_AT", "score": 0.9}
-        mock_result = MagicMock()
-        mock_result.result_set = [[[node1], [edge_dict]]]
-        mock_graph.query.return_value = mock_result
+        node1.properties = {"id": "e1", "label": "Einstein"}
+        node2 = MagicMock()
+        node2.properties = {"id": "e2", "label": "Ulm"}
+        mid = MagicMock()
+        mid.properties = {"id": "e3", "label": "Germany"}
+
+        empty_result = MagicMock()
+        empty_result.result_set = []
+        # Directed checks (both directions) return empty
+        # Then first fallback query returns intermediate node
+        fallback_result = MagicMock()
+        fallback_result.result_set = [[node1, mid, node2, "LOCATED_IN", 0.9, "LOCATED_IN", 0.7]]
+        mock_graph.query.side_effect = [empty_result, empty_result, fallback_result]
 
         result = store.get_shortest_paths("e1", "e2")
-        assert result[0]["rels"][0]["type"] == "WORKS_AT"
+        assert len(result) == 1
+        assert len(result[0]["nodes"]) == 3
+        assert result[0]["rels"][0]["type"] == "LOCATED_IN"
 
 
 class TestFalkorDBCommunityCRUD:
@@ -374,6 +388,156 @@ class TestFalkorDBCommunityCRUD:
         call_args = mock_graph.query.call_args
         assert "algo.labelPropagation" in call_args[0][0]
         assert call_args[0][1]["max_iter"] == 10
+
+
+class TestFalkorDBMutations:
+    """Test FalkorDB mutation methods with controlled side effects."""
+
+    def _make_store_with_run(self, side_effects):
+        from grapsit.store.graph.falkordb_store import FalkorDBGraphStore
+        store = FalkorDBGraphStore.__new__(FalkorDBGraphStore)
+        store._db = MagicMock()
+        store._graph = MagicMock()
+        store._run = MagicMock(side_effect=side_effects)
+        return store
+
+    def _mock_node(self, props):
+        node = MagicMock()
+        node.properties = props
+        return node
+
+    # -- delete_entity -------------------------------------------------------
+
+    def test_delete_entity_found(self):
+        store = self._make_store_with_run([
+            [self._mock_node({"id": "e1", "label": "Einstein"})],  # get_entity_by_id row
+            [],  # DETACH DELETE
+        ])
+        # FalkorDB get_entity_by_id checks rows[0][0], so wrap in list
+        store._run.side_effect = [
+            [[self._mock_node({"id": "e1", "label": "Einstein"})]],
+            [],
+        ]
+        assert store.delete_entity("e1") is True
+
+    def test_delete_entity_not_found(self):
+        store = self._make_store_with_run([
+            [],  # empty result
+        ])
+        assert store.delete_entity("e999") is False
+
+    # -- delete_relation -----------------------------------------------------
+
+    def test_delete_relation_found(self):
+        store = self._make_store_with_run([
+            [[1]],  # count = 1
+        ])
+        assert store.delete_relation("r1") is True
+
+    def test_delete_relation_not_found(self):
+        store = self._make_store_with_run([
+            [[0]],  # count = 0
+        ])
+        assert store.delete_relation("r999") is False
+
+    # -- delete_chunk --------------------------------------------------------
+
+    def test_delete_chunk_found(self):
+        store = self._make_store_with_run([
+            [[self._mock_node({"id": "c1", "text": "hello"})]],  # get_chunk_by_id
+            [],  # DETACH DELETE
+        ])
+        assert store.delete_chunk("c1") is True
+
+    def test_delete_chunk_not_found(self):
+        store = self._make_store_with_run([
+            [],  # empty
+        ])
+        assert store.delete_chunk("c999") is False
+
+    # -- update_entity -------------------------------------------------------
+
+    def test_update_entity_label(self):
+        node = self._mock_node({"id": "e1", "label": "Old", "properties": "{}"})
+        store = self._make_store_with_run([
+            [[node]],  # get_entity_by_id
+            [],  # SET
+        ])
+        assert store.update_entity("e1", label="New") is True
+        set_call = store._run.call_args_list[1]
+        assert "e.label = $label" in set_call[0][0]
+
+    def test_update_entity_not_found(self):
+        store = self._make_store_with_run([
+            [],  # not found
+        ])
+        assert store.update_entity("e999", label="X") is False
+
+    # -- add_entity ----------------------------------------------------------
+
+    def test_add_entity_with_id(self):
+        store = self._make_store_with_run([
+            [],  # CREATE
+        ])
+        result = store.add_entity("Einstein", "person", id="e-custom")
+        assert result == "e-custom"
+        query = store._run.call_args[0][0]
+        assert "CREATE" in query
+
+    def test_add_entity_generated_id(self):
+        store = self._make_store_with_run([
+            [],  # CREATE
+        ])
+        result = store.add_entity("Einstein")
+        import uuid
+        uuid.UUID(result)  # validates format
+
+    # -- add_relation --------------------------------------------------------
+
+    def test_add_relation_success(self):
+        node1 = self._mock_node({"id": "e1"})
+        node2 = self._mock_node({"id": "e2"})
+        store = self._make_store_with_run([
+            [[node1]],  # head exists
+            [[node2]],  # tail exists
+            [],  # CREATE
+        ])
+        result = store.add_relation("e1", "e2", "born in", id="r1")
+        assert result == "r1"
+
+    def test_add_relation_head_missing(self):
+        store = self._make_store_with_run([
+            [],  # head not found
+        ])
+        with pytest.raises(ValueError, match="Head entity"):
+            store.add_relation("e1", "e2", "born in")
+
+    # -- merge_entities ------------------------------------------------------
+
+    def test_merge_entities_same_id(self):
+        store = self._make_store_with_run([])
+        assert store.merge_entities("e1", "e1") is True
+
+    def test_merge_entities_source_missing(self):
+        store = self._make_store_with_run([
+            [],  # source not found
+        ])
+        assert store.merge_entities("e1", "e2") is False
+
+    def test_merge_entities_success(self):
+        src = self._mock_node({"id": "e1", "label": "A", "properties": "{'x': 1}"})
+        tgt = self._mock_node({"id": "e2", "label": "B", "properties": "{'y': 2}"})
+        store = self._make_store_with_run([
+            [[src]],  # source
+            [[tgt]],  # target
+            [],  # move MENTIONED_IN
+            [],  # move MEMBER_OF
+            [],  # outgoing rels (none)
+            [],  # incoming rels (none)
+            [],  # merge properties
+            [],  # delete source
+        ])
+        assert store.merge_entities("e1", "e2") is True
 
 
 class TestFalkorDBIsBaseGraphStore:

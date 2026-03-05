@@ -10,8 +10,7 @@ from grapsit.core.builders import BuildConfigBuilder
 
 class TestBuildPipeline:
     @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
-    @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_full_pipeline_ner_only(self, mock_ner_load, mock_create_store):
+    def test_full_pipeline_ner_only(self, mock_create_store):
         """Test chunker -> NER -> graph_writer (no relex)."""
         mock_store = MagicMock()
         mock_create_store.return_value = mock_store
@@ -23,10 +22,10 @@ class TestBuildPipeline:
 
         executor = builder.build(verbose=False)
 
-        # Mock the NER model (batched inference returns List[List[Dict]])
+        # Mock the NER model via engine
         ner_proc = executor.processors["ner"]
-        ner_proc._model = MagicMock()
-        ner_proc._model.inference.return_value = [
+        ner_proc._engine._model = MagicMock()
+        ner_proc._engine._model.inference.return_value = [
             [{"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.95}],
         ]
 
@@ -41,9 +40,7 @@ class TestBuildPipeline:
         assert writer_result["chunk_count"] >= 1
 
     @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
-    @patch("grapsit.construct.relex_gliner.RelexGLiNERProcessor._load_model")
-    @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_full_pipeline_with_relex(self, mock_ner_load, mock_relex_load, mock_create_store):
+    def test_full_pipeline_with_relex(self, mock_create_store):
         """Test chunker -> NER -> relex -> graph_writer."""
         mock_store = MagicMock()
         mock_create_store.return_value = mock_store
@@ -60,20 +57,20 @@ class TestBuildPipeline:
 
         executor = builder.build()
 
-        # Mock NER (batched inference returns List[List[Dict]])
+        # Mock NER via engine
         ner_proc = executor.processors["ner"]
-        ner_proc._model = MagicMock()
-        ner_proc._model.inference.return_value = [
+        ner_proc._engine._model = MagicMock()
+        ner_proc._engine._model.inference.return_value = [
             [
                 {"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.95},
                 {"text": "Ulm", "label": "location", "start": 21, "end": 24, "score": 0.85},
             ],
         ]
 
-        # Mock relex
+        # Mock relex via engine
         relex_proc = executor.processors["relex"]
-        relex_proc._model = MagicMock()
-        relex_proc._model.inference.return_value = (
+        relex_proc._engine._model = MagicMock()
+        relex_proc._engine._model.inference.return_value = (
             [[{"text": "Einstein", "label": "person"}, {"text": "Ulm", "label": "location"}]],
             [[{
                 "head": {"entity_idx": 0},
@@ -88,7 +85,7 @@ class TestBuildPipeline:
         assert result.has("relex_result")
 
         # Verify relex received NER entities as input_spans
-        call_kwargs = relex_proc._model.inference.call_args[1]
+        call_kwargs = relex_proc._engine._model.inference.call_args[1]
         assert "input_spans" in call_kwargs
         spans = call_kwargs["input_spans"][0]
         assert any(s["text"] == "Einstein" for s in spans)
@@ -117,18 +114,18 @@ class TestBuildPipeline:
 
         executor = builder.build()
 
-        # Mock NER LLM client
+        # Mock NER LLM client via engine
         ner_proc = executor.processors["ner"]
-        ner_proc._client = MagicMock()
-        ner_proc._client.complete.return_value = json.dumps({"entities": [
+        ner_proc._engine._client = MagicMock()
+        ner_proc._engine._client.complete.return_value = json.dumps({"entities": [
             {"text": "Einstein", "label": "person", "start": 0, "end": 8},
             {"text": "Ulm", "label": "location", "start": 21, "end": 24},
         ]})
 
-        # Mock relex LLM client
+        # Mock relex LLM client via engine
         relex_proc = executor.processors["relex"]
-        relex_proc._client = MagicMock()
-        relex_proc._client.complete.return_value = json.dumps({"relations": [
+        relex_proc._engine._client = MagicMock()
+        relex_proc._engine._client.complete.return_value = json.dumps({"relations": [
             {"head": "Einstein", "tail": "Ulm", "relation": "born in"},
         ]})
 
@@ -143,8 +140,7 @@ class TestBuildPipeline:
         assert writer_result["relation_count"] >= 1
 
     @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
-    @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_mixed_pipeline_gliner_ner_llm_relex(self, mock_ner_load, mock_create_store):
+    def test_mixed_pipeline_gliner_ner_llm_relex(self, mock_create_store):
         """Test chunker -> ner_gliner -> relex_llm -> graph_writer."""
         mock_store = MagicMock()
         mock_create_store.return_value = mock_store
@@ -162,20 +158,20 @@ class TestBuildPipeline:
 
         executor = builder.build()
 
-        # Mock GLiNER NER
+        # Mock GLiNER NER via engine
         ner_proc = executor.processors["ner"]
-        ner_proc._model = MagicMock()
-        ner_proc._model.inference.return_value = [
+        ner_proc._engine._model = MagicMock()
+        ner_proc._engine._model.inference.return_value = [
             [
                 {"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.95},
                 {"text": "Ulm", "label": "location", "start": 21, "end": 24, "score": 0.85},
             ],
         ]
 
-        # Mock relex LLM client
+        # Mock relex LLM client via engine
         relex_proc = executor.processors["relex"]
-        relex_proc._client = MagicMock()
-        relex_proc._client.complete.return_value = json.dumps({"relations": [
+        relex_proc._engine._client = MagicMock()
+        relex_proc._engine._client.complete.return_value = json.dumps({"relations": [
             {"head": "Einstein", "tail": "Ulm", "relation": "born in"},
         ]})
 
@@ -211,10 +207,10 @@ class TestBuildPipeline:
 
         executor = builder.build()
 
-        # Mock relex LLM client
+        # Mock relex LLM client via engine
         relex_proc = executor.processors["relex"]
-        relex_proc._client = MagicMock()
-        relex_proc._client.complete.return_value = json.dumps({
+        relex_proc._engine._client = MagicMock()
+        relex_proc._engine._client.complete.return_value = json.dumps({
             "entities": [
                 {"text": "Einstein", "label": "person"},
                 {"text": "Ulm", "label": "location"},
@@ -232,6 +228,67 @@ class TestBuildPipeline:
         writer_result = result.get("writer_result")
         assert writer_result["entity_count"] >= 2
         assert writer_result["relation_count"] >= 1
+
+    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
+    def test_write_reversed_relations(self, mock_create_store):
+        """Test that write_reversed_relations writes both forward and reverse edges."""
+        mock_store = MagicMock()
+        mock_create_store.return_value = mock_store
+
+        builder = BuildConfigBuilder(name="reversed_test")
+        builder.chunker(method="sentence")
+        builder.ner_gliner(model="test-ner", labels=["person", "location"])
+        builder.relex_gliner(
+            model="test-relex",
+            entity_labels=["person", "location"],
+            relation_labels=["born in"],
+        )
+        builder.graph_writer(write_reversed_relations=True)
+
+        executor = builder.build()
+
+        # Mock NER
+        ner_proc = executor.processors["ner"]
+        ner_proc._engine._model = MagicMock()
+        ner_proc._engine._model.inference.return_value = [
+            [
+                {"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.95},
+                {"text": "Ulm", "label": "location", "start": 21, "end": 24, "score": 0.85},
+            ],
+        ]
+
+        # Mock relex
+        relex_proc = executor.processors["relex"]
+        relex_proc._engine._model = MagicMock()
+        relex_proc._engine._model.inference.return_value = (
+            [[{"text": "Einstein", "label": "person"}, {"text": "Ulm", "label": "location"}]],
+            [[{
+                "head": {"entity_idx": 0},
+                "tail": {"entity_idx": 1},
+                "relation": "born in",
+                "score": 0.8,
+            }]],
+        )
+
+        result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+        writer_result = result.get("writer_result")
+
+        assert writer_result["relation_count"] >= 1
+
+        # write_relation should be called twice per relation (forward + reverse)
+        write_calls = mock_store.write_relation.call_args_list
+        assert len(write_calls) == 2
+
+        # First call: forward relation (BORN_IN)
+        fwd_rel = write_calls[0][0][0]
+        assert fwd_rel.head_text == "Einstein"
+        assert fwd_rel.tail_text == "Ulm"
+
+        # Second call: reverse relation (REV_BORN_IN)
+        rev_rel = write_calls[1][0][0]
+        assert rev_rel.relation_type == "REV_BORN_IN"
+        assert rev_rel.head_text == "Ulm"
+        assert rev_rel.tail_text == "Einstein"
 
     def test_yaml_config_loading(self, tmp_path):
         """Test loading pipeline from YAML."""

@@ -49,9 +49,10 @@ Text:
 
 Return a JSON object with two fields:
 - "entities": array of {{"text": str, "label": str}}
-- "relations": array of {{"head": str, "tail": str, "relation": str}}
+- "relations": array of {{"head": str, "tail": str, "relation": str, "start_date": str or null, "end_date": str or null}}
 
 Where "head" and "tail" are the exact entity text as it appears in the text.
+"start_date" and "end_date" are optional ISO 8601 dates (e.g. "1879-03-14") indicating when the relationship started/ended. Use null if unknown.
 Return ONLY the JSON object, no other text."""
 
 RELEX_WITH_ENTITIES_PROMPT_TEMPLATE = """\
@@ -66,9 +67,10 @@ Text:
 \"\"\"{text}\"\"\"
 
 Return a JSON array of relationship objects:
-{{"head": str, "tail": str, "relation": str}}
+{{"head": str, "tail": str, "relation": str, "start_date": str or null, "end_date": str or null}}
 
 Where "head" and "tail" are the exact entity text from the list above.
+"start_date" and "end_date" are optional ISO 8601 dates (e.g. "1879-03-14") indicating when the relationship started/ended. Use null if unknown.
 Return ONLY the JSON array, no other text."""
 
 # ---------------------------------------------------------------------------

@@ -187,20 +187,24 @@ class DataIngestProcessor(BaseProcessor):
             # Build relations for this item
             item_relations: List[Relation] = []
             for rel in relations:
-                cid = chunk_ids[0] if chunk_ids else ""
-                r = Relation(
-                    head_text=rel["head"],
-                    tail_text=rel["tail"],
-                    relation_type=rel["type"],
-                    score=rel.get("score", 1.0),
-                    chunk_id=cid,
-                    head_label=rel.get("head_label", ""),
-                    tail_label=rel.get("tail_label", ""),
-                    properties=rel.get("properties", {}),
-                )
+                rel_kwargs: Dict[str, Any] = {
+                    "head_text": rel["head"],
+                    "tail_text": rel["tail"],
+                    "relation_type": rel["type"],
+                    "score": rel.get("score", 1.0),
+                    "chunk_id": list(chunk_ids),
+                    "head_label": rel.get("head_label", ""),
+                    "tail_label": rel.get("tail_label", ""),
+                    "properties": rel.get("properties", {}),
+                }
+                if rel.get("start_date") is not None:
+                    rel_kwargs["start_date"] = rel["start_date"]
+                if rel.get("end_date") is not None:
+                    rel_kwargs["end_date"] = rel["end_date"]
+                r = Relation(**rel_kwargs)
                 item_relations.append(r)
                 total_rels += 1
-                if cid:  # non-empty string = linked
+                if chunk_ids:
                     linked_rels += 1
             all_relations.append(item_relations)
 

@@ -60,7 +60,7 @@ class TestMemgraphOverrides:
     def test_setup_indexes_uses_memgraph_syntax(self, mock_memgraph_store):
         store, mock_session = mock_memgraph_store
         store.setup_indexes()
-        assert mock_session.run.call_count == 6
+        assert mock_session.run.call_count == 7
         # Verify Memgraph CREATE INDEX ON syntax (not Neo4j named constraints)
         first_query = mock_session.run.call_args_list[0][0][0]
         assert "CREATE INDEX ON" in first_query
@@ -176,6 +176,45 @@ class TestMemgraphInheritedBehavior:
         assert store._driver is not None
         store.close()
         assert store._driver is None
+
+
+class TestMemgraphMutationsInherited:
+    """Verify Memgraph instances have mutation methods (inherited from Neo4j)."""
+
+    def test_has_delete_entity(self):
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "delete_entity")
+
+    def test_has_delete_relation(self):
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "delete_relation")
+
+    def test_has_delete_chunk(self):
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "delete_chunk")
+
+    def test_has_update_entity(self):
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "update_entity")
+
+    def test_has_add_entity(self):
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "add_entity")
+
+    def test_has_add_relation(self):
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "add_relation")
+
+    def test_has_merge_entities(self):
+        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "merge_entities")
+
+    def test_delete_entity_calls_run(self, mock_memgraph_store):
+        """Spot-check that inherited delete_entity works through Memgraph."""
+        store, mock_session = mock_memgraph_store
+        # get_entity_by_id returns nothing → False
+        result = store.delete_entity("e999")
+        assert result is False
 
 
 class TestCreateStoreMemgraph:
