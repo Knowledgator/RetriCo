@@ -24,7 +24,7 @@ class FalkorDBLiteGraphStore(FalkorDBGraphStore):
     from :class:`FalkorDBGraphStore`.
 
     Args:
-        db_path: Path to the database file. Defaults to ``"grapsit.db"``
+        db_path: Path to the database file. Defaults to ``"retrico.db"``
             in the current working directory.
         graph: Graph name within the database.
         query_timeout: Query timeout in milliseconds (0 = no limit).
@@ -32,8 +32,8 @@ class FalkorDBLiteGraphStore(FalkorDBGraphStore):
 
     def __init__(
         self,
-        db_path: str = "grapsit.db",
-        graph: str = "grapsit",
+        db_path: str = "retrico.db",
+        graph: str = "retrico",
         query_timeout: int = 0,
     ):
         # Skip FalkorDBGraphStore.__init__ — we don't need host/port

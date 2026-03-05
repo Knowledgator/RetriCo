@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
-from grapsit.models.document import Chunk
-from grapsit.models.entity import EntityMention
-from grapsit.construct.linker import (
+from retrico.models.document import Chunk
+from retrico.models.entity import EntityMention
+from retrico.construct.linker import (
     EntityLinkerProcessor,
     _is_flat_entity_list,
     _mentions_to_glinker_spans,
@@ -122,7 +122,7 @@ class TestEntityLinkerProcessor:
         proc = EntityLinkerProcessor({"model": "test-model"})
         assert proc._executor is None
 
-    @patch("grapsit.construct.linker.EntityLinkerProcessor._ensure_executor")
+    @patch("retrico.construct.linker.EntityLinkerProcessor._ensure_executor")
     def test_build_mode_with_entities(self, mock_ensure):
         """Build mode: list-of-lists entities from NER."""
         executor = _make_mock_executor([
@@ -143,7 +143,7 @@ class TestEntityLinkerProcessor:
         assert result["entities"][0][0].linked_entity_id == "Q937"
         assert result["entities"][0][1].linked_entity_id == "Q3012"
 
-    @patch("grapsit.construct.linker.EntityLinkerProcessor._ensure_executor")
+    @patch("retrico.construct.linker.EntityLinkerProcessor._ensure_executor")
     def test_build_mode_without_entities_end_to_end(self, mock_ensure):
         """Build mode: no upstream NER, GLinker does end-to-end."""
         executor = _make_mock_executor([
@@ -161,7 +161,7 @@ class TestEntityLinkerProcessor:
         assert result["entities"][0][0].text == "Einstein"
         assert result["entities"][0][0].linked_entity_id == "Q937"
 
-    @patch("grapsit.construct.linker.EntityLinkerProcessor._ensure_executor")
+    @patch("retrico.construct.linker.EntityLinkerProcessor._ensure_executor")
     def test_query_mode_with_flat_entities(self, mock_ensure):
         """Query mode: flat entity list from parser."""
         executor = _make_mock_executor([
@@ -178,7 +178,7 @@ class TestEntityLinkerProcessor:
         assert result["query"] == "Where was Einstein born?"
         assert result["entities"][0].linked_entity_id == "Q937"
 
-    @patch("grapsit.construct.linker.EntityLinkerProcessor._ensure_executor")
+    @patch("retrico.construct.linker.EntityLinkerProcessor._ensure_executor")
     def test_query_mode_without_entities(self, mock_ensure):
         """Query mode: no parser, GLinker does end-to-end on query."""
         executor = _make_mock_executor([
@@ -194,7 +194,7 @@ class TestEntityLinkerProcessor:
         assert result["entities"][0].text == "Einstein"
         assert result["entities"][0].linked_entity_id == "Q937"
 
-    @patch("grapsit.construct.linker.EntityLinkerProcessor._ensure_executor")
+    @patch("retrico.construct.linker.EntityLinkerProcessor._ensure_executor")
     def test_unlinked_entities_pass_through(self, mock_ensure):
         """Entities not found in KB should have linked_entity_id=None."""
         executor = _make_mock_executor([
@@ -214,7 +214,7 @@ class TestEntityLinkerProcessor:
         assert result["entities"][0][0].linked_entity_id == "Q937"
         assert result["entities"][0][1].linked_entity_id is None
 
-    @patch("grapsit.construct.linker.EntityLinkerProcessor._ensure_executor")
+    @patch("retrico.construct.linker.EntityLinkerProcessor._ensure_executor")
     def test_empty_entities(self, mock_ensure):
         """Empty entity list returns empty."""
         executor = _make_mock_executor([])
@@ -224,7 +224,7 @@ class TestEntityLinkerProcessor:
         assert result["entities"] == []
         assert result["chunks"] == []
 
-    @patch("grapsit.construct.linker.EntityLinkerProcessor._ensure_executor")
+    @patch("retrico.construct.linker.EntityLinkerProcessor._ensure_executor")
     def test_no_inputs_returns_empty(self, mock_ensure):
         """No inputs at all returns empty."""
         proc = EntityLinkerProcessor({})
@@ -290,7 +290,7 @@ class TestEntityLinkerProcessor:
             mock_executor = MagicMock()
             mock_glinker.ProcessorFactory.create_simple.return_value = mock_executor
 
-            with patch("grapsit.store.graph.neo4j_store.GraphDatabase") as mock_gdb:
+            with patch("retrico.store.graph.neo4j_store.GraphDatabase") as mock_gdb:
                 mock_driver = MagicMock()
                 mock_session = MagicMock()
 
@@ -310,6 +310,7 @@ class TestEntityLinkerProcessor:
 
                 proc = EntityLinkerProcessor({
                     "model": "test-model",
+                    "store_type": "neo4j",
                     "neo4j_uri": "bolt://localhost:7687",
                 })
                 proc._ensure_executor(external_entities=False)
@@ -332,5 +333,5 @@ class TestEntityLinkerProcessor:
 
 class TestRegistration:
     def test_registered(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "entity_linker" in processor_registry._factories

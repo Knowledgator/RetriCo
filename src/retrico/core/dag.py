@@ -458,7 +458,14 @@ class DAGExecutor:
             raise ValueError(f"Cycle detected in pipeline DAG! Unvisited nodes: {unvisited}")
         return levels
 
-    def execute(self, pipeline_input: Any) -> PipeContext:
+    def run(self, pipeline_input: Any = None, **kwargs) -> PipeContext:
+        if kwargs:
+            if pipeline_input is None:
+                pipeline_input = kwargs
+            elif isinstance(pipeline_input, dict):
+                pipeline_input = {**pipeline_input, **kwargs}
+        if pipeline_input is None:
+            pipeline_input = {}
         context = PipeContext(pipeline_input)
         execution_levels = self._topological_sort()
 

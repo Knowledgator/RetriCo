@@ -1,4 +1,4 @@
-"""Centralized default LLM prompts for all grapsit processors.
+"""Centralized default LLM prompts for all retrico processors.
 
 Each processor that uses LLM prompting imports its defaults from here.
 Users can override any prompt via the processor's config dict by passing

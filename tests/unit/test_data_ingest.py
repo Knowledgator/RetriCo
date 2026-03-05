@@ -1,13 +1,13 @@
-"""Tests for data_ingest processor, IngestConfigBuilder, and JSON export."""
+"""Tests for data_ingest processor, RetriCoIngest, and JSON export."""
 
 import json
 import pytest
 from unittest.mock import patch, MagicMock
 
-from grapsit.construct.ingest import DataIngestProcessor
-from grapsit.models.entity import EntityMention
-from grapsit.models.relation import Relation
-from grapsit.core.builders import IngestConfigBuilder
+from retrico.construct.ingest import DataIngestProcessor
+from retrico.models.entity import EntityMention
+from retrico.models.relation import Relation
+from retrico.core.builders import RetriCoIngest
 
 
 class TestDataIngestProcessor:
@@ -127,16 +127,15 @@ class TestDataIngestProcessor:
 
     def test_entity_properties_flow_to_graph_writer(self):
         """Verify entity properties survive through the full pipeline."""
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder()
+            builder = RetriCoIngest()
             builder.graph_writer(setup_indexes=False)
             executor = builder.build()
 
-            ctx = executor.execute({
-                "data": [
+            ctx = executor.run(data=[
                     {
                         "entities": [
                             {
@@ -146,8 +145,7 @@ class TestDataIngestProcessor:
                             },
                         ],
                     },
-                ],
-            })
+                ])
 
             result = ctx.get("writer_result")
             entity = list(result["entity_map"].values())[0]
@@ -210,11 +208,11 @@ class TestDataIngestProcessor:
         assert isinstance(result["relations"][0], list)
 
 
-class TestIngestConfigBuilder:
-    """Unit tests for IngestConfigBuilder."""
+class TestRetriCoIngest:
+    """Unit tests for RetriCoIngest."""
 
     def test_default_config(self):
-        builder = IngestConfigBuilder(name="test")
+        builder = RetriCoIngest(name="test")
         config = builder.get_config()
         assert config["name"] == "test"
         assert len(config["nodes"]) == 2
@@ -222,7 +220,7 @@ class TestIngestConfigBuilder:
         assert config["nodes"][1]["processor"] == "graph_writer"
 
     def test_graph_writer_config(self):
-        builder = IngestConfigBuilder()
+        builder = RetriCoIngest()
         builder.graph_writer(neo4j_uri="bolt://myhost:7687", store_type="neo4j")
         config = builder.get_config()
         writer_node = config["nodes"][1]
@@ -230,35 +228,35 @@ class TestIngestConfigBuilder:
         assert writer_node["config"]["store_type"] == "neo4j"
 
     def test_dag_dependencies(self):
-        builder = IngestConfigBuilder()
+        builder = RetriCoIngest()
         config = builder.get_config()
         writer_node = config["nodes"][1]
         assert "data_ingest" in writer_node["requires"]
 
     def test_data_ingest_inputs(self):
-        builder = IngestConfigBuilder()
+        builder = RetriCoIngest()
         config = builder.get_config()
         ingest_node = config["nodes"][0]
         assert ingest_node["inputs"]["data"]["source"] == "$input"
 
     def test_writer_inputs_from_ingest(self):
-        builder = IngestConfigBuilder()
+        builder = RetriCoIngest()
         config = builder.get_config()
         writer_node = config["nodes"][1]
         assert writer_node["inputs"]["entities"]["source"] == "ingest_result"
         assert writer_node["inputs"]["relations"]["source"] == "ingest_result"
 
     def test_build_creates_executor(self):
-        builder = IngestConfigBuilder()
+        builder = RetriCoIngest()
         builder.graph_writer(setup_indexes=False)
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
             executor = builder.build()
             assert executor is not None
 
     def test_save_and_load(self, tmp_path):
-        builder = IngestConfigBuilder(name="save_test")
+        builder = RetriCoIngest(name="save_test")
         builder.graph_writer(neo4j_uri="bolt://localhost:7687")
         filepath = str(tmp_path / "ingest.yaml")
         builder.save(filepath)
@@ -274,16 +272,15 @@ class TestIngestIntegration:
     """Integration test: data_ingest -> graph_writer with mocked store."""
 
     def test_full_ingest_pipeline(self):
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder(name="integration_test")
+            builder = RetriCoIngest(name="integration_test")
             builder.graph_writer(setup_indexes=False)
             executor = builder.build()
 
-            ctx = executor.execute({
-                "data": [
+            ctx = executor.run(data=[
                     {
                         "entities": [
                             {"text": "Einstein", "label": "person"},
@@ -301,8 +298,7 @@ class TestIngestIntegration:
                             {"head": "Ulm", "tail": "Germany", "type": "located_in"},
                         ],
                     },
-                ],
-            })
+                ])
 
             result = ctx.get("writer_result")
             assert result["entity_count"] == 3
@@ -314,55 +310,51 @@ class TestIngestIntegration:
             assert mock_store.write_relation.call_count == 2
 
     def test_ingest_entities_only(self):
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder()
+            builder = RetriCoIngest()
             builder.graph_writer(setup_indexes=False)
             executor = builder.build()
 
-            ctx = executor.execute({
-                "data": [
+            ctx = executor.run(data=[
                     {"entities": [{"text": "Einstein", "label": "person"}]},
-                ],
-            })
+                ])
 
             result = ctx.get("writer_result")
             assert result["entity_count"] == 1
             assert result["relation_count"] == 0
 
     def test_ingest_with_entity_ids(self):
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder()
+            builder = RetriCoIngest()
             builder.graph_writer(setup_indexes=False)
             executor = builder.build()
 
-            ctx = executor.execute({
-                "data": [
+            ctx = executor.run(data=[
                     {
                         "entities": [
                             {"text": "Einstein", "label": "person", "id": "Q937"},
                             {"text": "Albert Einstein", "label": "person", "id": "Q937"},
                         ],
                     },
-                ],
-            })
+                ])
 
             result = ctx.get("writer_result")
             # Both mentions share the same linked_entity_id, so they dedup to 1 entity
             assert result["entity_count"] == 1
 
     def test_convenience_function(self):
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            import grapsit
-            ctx = grapsit.ingest_data(
+            import retrico
+            ctx = retrico.ingest_data(
                 data=[
                     {
                         "entities": [
@@ -386,16 +378,15 @@ class TestJsonExport:
 
     def test_json_output_creates_file(self, tmp_path):
         json_path = str(tmp_path / "output.json")
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder()
+            builder = RetriCoIngest()
             builder.graph_writer(setup_indexes=False, json_output=json_path)
             executor = builder.build()
 
-            executor.execute({
-                "data": [
+            executor.run(data=[
                     {
                         "entities": [
                             {"text": "Einstein", "label": "person"},
@@ -405,8 +396,7 @@ class TestJsonExport:
                             {"head": "Einstein", "tail": "Ulm", "type": "born_in", "score": 0.9},
                         ],
                     },
-                ],
-            })
+                ])
 
             with open(json_path) as f:
                 data = json.load(f)
@@ -430,19 +420,17 @@ class TestJsonExport:
 
     def test_json_output_entities_only(self, tmp_path):
         json_path = str(tmp_path / "entities_only.json")
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder()
+            builder = RetriCoIngest()
             builder.graph_writer(setup_indexes=False, json_output=json_path)
             executor = builder.build()
 
-            executor.execute({
-                "data": [
+            executor.run(data=[
                     {"entities": [{"text": "Einstein", "label": "person"}]},
-                ],
-            })
+                ])
 
             with open(json_path) as f:
                 data = json.load(f)
@@ -454,24 +442,22 @@ class TestJsonExport:
 
     def test_json_output_with_entity_ids(self, tmp_path):
         json_path = str(tmp_path / "with_ids.json")
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder()
+            builder = RetriCoIngest()
             builder.graph_writer(setup_indexes=False, json_output=json_path)
             executor = builder.build()
 
-            executor.execute({
-                "data": [
+            executor.run(data=[
                     {
                         "entities": [
                             {"text": "Einstein", "label": "person", "id": "Q937"},
                             {"text": "Albert Einstein", "label": "person", "id": "Q937"},
                         ],
                     },
-                ],
-            })
+                ])
 
             with open(json_path) as f:
                 data = json.load(f)
@@ -484,16 +470,15 @@ class TestJsonExport:
 
     def test_json_output_skips_unresolved_relations(self, tmp_path):
         json_path = str(tmp_path / "unresolved.json")
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder()
+            builder = RetriCoIngest()
             builder.graph_writer(setup_indexes=False, json_output=json_path)
             executor = builder.build()
 
-            executor.execute({
-                "data": [
+            executor.run(data=[
                     {
                         "entities": [{"text": "Einstein", "label": "person"}],
                         "relations": [
@@ -501,8 +486,7 @@ class TestJsonExport:
                             {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
                         ],
                     },
-                ],
-            })
+                ])
 
             with open(json_path) as f:
                 data = json.load(f)
@@ -513,38 +497,34 @@ class TestJsonExport:
             assert len(data[0]["relations"]) == 0
 
     def test_json_output_no_file_when_not_configured(self, tmp_path):
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder()
+            builder = RetriCoIngest()
             builder.graph_writer(setup_indexes=False)
             executor = builder.build()
 
-            executor.execute({
-                "data": [
+            executor.run(data=[
                     {"entities": [{"text": "Einstein", "label": "person"}]},
-                ],
-            })
+                ])
 
             # No JSON file should exist
             assert not list(tmp_path.iterdir())
 
     def test_json_output_creates_parent_dirs(self, tmp_path):
         json_path = str(tmp_path / "sub" / "dir" / "output.json")
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder()
+            builder = RetriCoIngest()
             builder.graph_writer(setup_indexes=False, json_output=json_path)
             executor = builder.build()
 
-            executor.execute({
-                "data": [
+            executor.run(data=[
                     {"entities": [{"text": "Einstein", "label": "person"}]},
-                ],
-            })
+                ])
 
             with open(json_path) as f:
                 data = json.load(f)
@@ -555,16 +535,15 @@ class TestJsonExport:
     def test_json_is_ingest_compatible(self, tmp_path):
         """Verify the JSON output can be fed back into ingest_data()."""
         json_path = str(tmp_path / "roundtrip.json")
-        with patch("grapsit.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
+        with patch("retrico.construct.graph_writer.resolve_from_pool_or_create") as mock_cs:
             mock_store = MagicMock()
             mock_cs.return_value = mock_store
 
-            builder = IngestConfigBuilder()
+            builder = RetriCoIngest()
             builder.graph_writer(setup_indexes=False, json_output=json_path)
             executor = builder.build()
 
-            executor.execute({
-                "data": [
+            executor.run(data=[
                     {
                         "entities": [
                             {"text": "Einstein", "label": "person"},
@@ -574,8 +553,7 @@ class TestJsonExport:
                             {"head": "Einstein", "tail": "Ulm", "type": "born_in"},
                         ],
                     },
-                ],
-            })
+                ])
 
             with open(json_path) as f:
                 exported = json.load(f)
@@ -588,10 +566,10 @@ class TestJsonExport:
             assert len(result["relations"][0]) == 1
 
     def test_build_config_builder_json_output(self, tmp_path):
-        """Test json_output works via BuildConfigBuilder too."""
+        """Test json_output works via RetriCoBuilder too."""
         json_path = str(tmp_path / "build_output.json")
-        from grapsit.core.builders import BuildConfigBuilder
-        builder = BuildConfigBuilder()
+        from retrico.core.builders import RetriCoBuilder
+        builder = RetriCoBuilder()
         builder.graph_writer(setup_indexes=False, json_output=json_path)
         builder.ner_gliner(labels=["person"])
         config = builder.get_config()

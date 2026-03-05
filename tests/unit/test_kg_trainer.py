@@ -34,7 +34,7 @@ mock_pykeen.pipeline = mock_pipeline_module
 sys.modules.setdefault("pykeen", mock_pykeen)
 sys.modules.setdefault("pykeen.pipeline", mock_pipeline_module)
 
-from grapsit.modeling.kg_trainer import KGTrainerProcessor
+from retrico.modeling.kg_trainer import KGTrainerProcessor
 
 
 # ---------------------------------------------------------------------------
@@ -138,5 +138,5 @@ class TestKGTrainer:
             mock_pipeline_module.pipeline = original_pipeline
 
     def test_processor_registration(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "kg_trainer" in processor_registry._factories

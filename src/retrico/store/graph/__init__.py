@@ -9,8 +9,8 @@ graph_store_registry = StoreRegistry("graph_store", BaseGraphStore)
 def _create_falkordb_lite(config: dict):
     from .falkordb_lite_store import FalkorDBLiteGraphStore
     return FalkorDBLiteGraphStore(
-        db_path=config.get("falkordb_lite_db_path", "grapsit.db"),
-        graph=config.get("falkordb_lite_graph", "grapsit"),
+        db_path=config.get("falkordb_lite_db_path", "retrico.db"),
+        graph=config.get("falkordb_lite_graph", "retrico"),
         query_timeout=config.get("falkordb_lite_query_timeout", 0),
     )
 
@@ -30,7 +30,7 @@ def _create_falkordb(config: dict):
     return FalkorDBGraphStore(
         host=config.get("falkordb_host", "localhost"),
         port=config.get("falkordb_port", 6379),
-        graph=config.get("falkordb_graph", "grapsit"),
+        graph=config.get("falkordb_graph", "retrico"),
         query_timeout=config.get("falkordb_query_timeout", 0),
     )
 

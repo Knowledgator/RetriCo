@@ -4,8 +4,8 @@ import pytest
 
 qdrant_client = pytest.importorskip("qdrant_client", reason="qdrant-client not installed")
 
-from grapsit.store.vector.qdrant import QdrantVectorStore
-from grapsit.store.vector import create_vector_store
+from retrico.store.vector.qdrant import QdrantVectorStore
+from retrico.store.vector import create_vector_store
 
 
 class TestQdrantVectorStore:

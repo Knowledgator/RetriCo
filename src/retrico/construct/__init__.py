@@ -10,3 +10,4 @@ from . import ingest as _ingest
 from . import chunk_embedder as _chunk_embedder
 from . import entity_embedder as _entity_embedder
 from . import store_reader as _store_reader
+from . import pdf_reader as _pdf_reader

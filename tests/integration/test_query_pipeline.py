@@ -4,8 +4,8 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.core.builders import QueryConfigBuilder
-from grapsit.models.graph import QueryResult
+from retrico.core.builders import RetriCoSearch
+from retrico.models.graph import QueryResult
 
 
 class TestQueryPipeline:
@@ -37,11 +37,11 @@ class TestQueryPipeline:
 
         return store
 
-    @patch("grapsit.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
-    @patch("grapsit.query.retriever.RetrieverProcessor._ensure_store")
+    @patch("retrico.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
+    @patch("retrico.query.retriever.RetrieverProcessor._ensure_store")
     def test_pipeline_without_reasoner(self, mock_ret_store, mock_chunk_store):
         """Test query_parser -> retriever -> chunk_retriever (no reasoner)."""
-        builder = QueryConfigBuilder(name="test_query")
+        builder = RetriCoSearch(name="test_query")
         builder.query_parser(method="gliner", labels=["person", "location"])
         builder.retriever(neo4j_uri="bolt://localhost:7687", max_hops=2)
         builder.chunk_retriever()
@@ -61,7 +61,7 @@ class TestQueryPipeline:
         executor.processors["retriever"]._store = mock_store
         executor.processors["chunk_retriever"]._store = mock_store
 
-        ctx = executor.execute({"query": "Where was Einstein born?"})
+        ctx = executor.run(query="Where was Einstein born?")
 
         assert ctx.has("parser_result")
         assert ctx.has("retriever_result")
@@ -73,11 +73,11 @@ class TestQueryPipeline:
         assert len(sg.relations) == 2
         assert len(sg.chunks) == 2  # c1, c2 deduplicated
 
-    @patch("grapsit.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
-    @patch("grapsit.query.retriever.RetrieverProcessor._ensure_store")
+    @patch("retrico.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
+    @patch("retrico.query.retriever.RetrieverProcessor._ensure_store")
     def test_pipeline_with_reasoner(self, mock_ret_store, mock_chunk_store):
         """Test full pipeline with LLM reasoner."""
-        builder = QueryConfigBuilder(name="test_query_reasoner")
+        builder = RetriCoSearch(name="test_query_reasoner")
         builder.query_parser(method="gliner", labels=["person", "location"])
         builder.retriever(neo4j_uri="bolt://localhost:7687")
         builder.chunk_retriever()
@@ -107,18 +107,18 @@ class TestQueryPipeline:
             metadata={"inferred_relation_count": 0},
         )
 
-        ctx = executor.execute({"query": "Where was Einstein born?"})
+        ctx = executor.run(query="Where was Einstein born?")
 
         assert ctx.has("reasoner_result")
         result = ctx.get("reasoner_result")["result"]
         assert isinstance(result, QueryResult)
         assert result.answer == "Einstein was born in Ulm, Germany."
 
-    @patch("grapsit.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
-    @patch("grapsit.query.retriever.RetrieverProcessor._ensure_store")
+    @patch("retrico.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
+    @patch("retrico.query.retriever.RetrieverProcessor._ensure_store")
     def test_llm_parser_pipeline(self, mock_ret_store, mock_chunk_store):
         """Test pipeline with LLM-based query parser."""
-        builder = QueryConfigBuilder(name="llm_parser_test")
+        builder = RetriCoSearch(name="llm_parser_test")
         builder.query_parser(method="llm", api_key="test", labels=["person"])
         builder.retriever(neo4j_uri="bolt://localhost:7687")
         builder.chunk_retriever()
@@ -138,43 +138,43 @@ class TestQueryPipeline:
         executor.processors["retriever"]._store = mock_store
         executor.processors["chunk_retriever"]._store = mock_store
 
-        ctx = executor.execute({"query": "Tell me about Einstein"})
+        ctx = executor.run(query="Tell me about Einstein")
 
         assert ctx.has("parser_result")
         parser_result = ctx.get("parser_result")
         assert len(parser_result["entities"]) == 1
         assert parser_result["entities"][0].text == "Einstein"
 
-    @patch("grapsit.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
-    @patch("grapsit.query.retriever.RetrieverProcessor._ensure_store")
+    @patch("retrico.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
+    @patch("retrico.query.retriever.RetrieverProcessor._ensure_store")
     def test_query_graph_convenience_without_reasoner(self, mock_ret_store, mock_chunk_store):
         """Test query_graph() convenience function without API key (no reasoner)."""
-        import grapsit
+        import retrico
 
         # We need to mock at the processor level after build
-        with patch.object(grapsit.QueryConfigBuilder, "build") as mock_build:
+        with patch.object(retrico.RetriCoSearch, "build") as mock_build:
             mock_executor = MagicMock()
             mock_ctx = MagicMock()
             mock_ctx.has.side_effect = lambda key: key == "chunk_result"
             mock_ctx.get.return_value = {
-                "subgraph": grapsit.Subgraph(
-                    entities=[grapsit.Entity(id="e1", label="Einstein")],
+                "subgraph": retrico.Subgraph(
+                    entities=[retrico.Entity(id="e1", label="Einstein")],
                 ),
             }
-            mock_executor.execute.return_value = mock_ctx
+            mock_executor.run.return_value = mock_ctx
             mock_build.return_value = mock_executor
 
-            result = grapsit.query_graph(
+            result = retrico.query_graph(
                 query="Where was Einstein born?",
                 entity_labels=["person", "location"],
             )
 
-            assert isinstance(result, grapsit.QueryResult)
+            assert isinstance(result, retrico.QueryResult)
             assert result.query == "Where was Einstein born?"
 
     def test_yaml_config_loading(self, tmp_path):
         """Test saving and loading query pipeline config."""
-        builder = QueryConfigBuilder(name="yaml_test")
+        builder = RetriCoSearch(name="yaml_test")
         builder.query_parser(method="gliner", labels=["person"])
         builder.retriever(neo4j_uri="bolt://localhost:7687")
         builder.chunk_retriever()
@@ -182,7 +182,7 @@ class TestQueryPipeline:
         yaml_path = str(tmp_path / "query.yaml")
         builder.save(yaml_path)
 
-        from grapsit.core.factory import ProcessorFactory
+        from retrico.core.factory import ProcessorFactory
         executor = ProcessorFactory.create_pipeline(yaml_path)
         assert executor.pipeline.name == "yaml_test"
         assert len(executor.nodes_map) == 3

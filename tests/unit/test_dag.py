@@ -1,7 +1,7 @@
 """Tests for the DAG engine."""
 
 import pytest
-from grapsit.core.dag import (
+from retrico.core.dag import (
     PipeContext,
     FieldResolver,
     InputConfig,
@@ -10,8 +10,8 @@ from grapsit.core.dag import (
     PipeNode,
     OutputConfig,
 )
-from grapsit.core.registry import processor_registry
-from grapsit.core.base import BaseProcessor
+from retrico.core.registry import processor_registry
+from retrico.core.base import BaseProcessor
 
 
 class TestPipeContext:
@@ -92,7 +92,7 @@ class TestDAGExecutor:
         )
 
         executor = DAGExecutor(pipeline)
-        ctx = executor.execute({"value": 5})
+        ctx = executor.run(value=5)
         assert ctx.get("step1_result") == {"result": 10}
 
     def test_dependency_chain(self):
@@ -126,5 +126,5 @@ class TestDAGExecutor:
         )
 
         executor = DAGExecutor(pipeline)
-        ctx = executor.execute({"value": 0})
+        ctx = executor.run(value=0)
         assert ctx.get("b_result") == {"result": 2}

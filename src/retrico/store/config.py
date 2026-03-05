@@ -87,8 +87,8 @@ class FalkorDBLiteConfig(BaseStoreConfig):
     """Configuration for FalkorDBLite embedded graph store (default, zero-config)."""
 
     store_type: str = "falkordb_lite"
-    db_path: str = "grapsit.db"
-    graph: str = "grapsit"
+    db_path: str = "retrico.db"
+    graph: str = "retrico"
 
     def to_flat_dict(self) -> dict:
         d = {
@@ -103,8 +103,8 @@ class FalkorDBLiteConfig(BaseStoreConfig):
     @classmethod
     def from_flat_dict(cls, d: dict) -> "FalkorDBLiteConfig":
         return cls(
-            db_path=d.get("falkordb_lite_db_path", "grapsit.db"),
-            graph=d.get("falkordb_lite_graph", "grapsit"),
+            db_path=d.get("falkordb_lite_db_path", "retrico.db"),
+            graph=d.get("falkordb_lite_graph", "retrico"),
             name=d.get("store_name", "default"),
         )
 
@@ -115,7 +115,7 @@ class FalkorDBConfig(BaseStoreConfig):
     store_type: str = "falkordb"
     host: str = "localhost"
     port: int = 6379
-    graph: str = "grapsit"
+    graph: str = "retrico"
 
     def to_flat_dict(self) -> dict:
         d = {
@@ -133,7 +133,7 @@ class FalkorDBConfig(BaseStoreConfig):
         return cls(
             host=d.get("falkordb_host", "localhost"),
             port=d.get("falkordb_port", 6379),
-            graph=d.get("falkordb_graph", "grapsit"),
+            graph=d.get("falkordb_graph", "retrico"),
             name=d.get("store_name", "default"),
         )
 
@@ -434,7 +434,7 @@ class PostgresRelationalConfig(BaseRelationalStoreConfig):
     port: int = 5432
     user: str = "postgres"
     password: str = ""
-    database: str = "grapsit"
+    database: str = "retrico"
 
     def to_flat_dict(self) -> dict:
         d: dict = {
@@ -456,7 +456,7 @@ class PostgresRelationalConfig(BaseRelationalStoreConfig):
             port=d.get("postgres_port", 5432),
             user=d.get("postgres_user", "postgres"),
             password=d.get("postgres_password", ""),
-            database=d.get("postgres_database", "grapsit"),
+            database=d.get("postgres_database", "retrico"),
             name=d.get("relational_store_name", "default"),
         )
 
@@ -467,7 +467,7 @@ class ElasticsearchRelationalConfig(BaseRelationalStoreConfig):
     relational_store_type: str = "elasticsearch"
     url: str = "http://localhost:9200"
     api_key: Optional[str] = None
-    index_prefix: str = "grapsit_"
+    index_prefix: str = "retrico_"
 
     def to_flat_dict(self) -> dict:
         d: dict = {
@@ -486,7 +486,7 @@ class ElasticsearchRelationalConfig(BaseRelationalStoreConfig):
         return cls(
             url=d.get("elasticsearch_url", "http://localhost:9200"),
             api_key=d.get("elasticsearch_api_key"),
-            index_prefix=d.get("elasticsearch_index_prefix", "grapsit_"),
+            index_prefix=d.get("elasticsearch_index_prefix", "retrico_"),
             name=d.get("relational_store_name", "default"),
         )
 

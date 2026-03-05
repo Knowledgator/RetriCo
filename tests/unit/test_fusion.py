@@ -2,13 +2,13 @@
 
 import pytest
 
-from grapsit.query.fusion import SubgraphFusionProcessor
-from grapsit.models.graph import Subgraph
-from grapsit.models.entity import Entity
-from grapsit.models.relation import Relation
-from grapsit.models.document import Chunk
-from grapsit.core.builders import QueryConfigBuilder, FusedQueryBuilder
-from grapsit.core.registry import query_registry
+from retrico.query.fusion import SubgraphFusionProcessor
+from retrico.models.graph import Subgraph
+from retrico.models.entity import Entity
+from retrico.models.relation import Relation
+from retrico.models.document import Chunk
+from retrico.core.builders import RetriCoSearch, RetriCoFusedSearch
+from retrico.core.registry import query_registry
 
 
 # -- Helpers -----------------------------------------------------------------
@@ -245,7 +245,7 @@ class TestBuilderSingleRetriever:
     """Single retriever should produce the same DAG as before."""
 
     def test_backward_compat_single_retriever(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(labels=["person"])
         builder.retriever(max_hops=2)
         builder.chunk_retriever()
@@ -262,7 +262,7 @@ class TestBuilderSingleRetriever:
         assert chunk_node["inputs"]["subgraph"]["source"] == "retriever_result"
 
     def test_backward_compat_query_based_retriever(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.community_retriever()
         builder.chunk_retriever()
         config = builder.get_config()
@@ -278,7 +278,7 @@ class TestBuilderMultiRetriever:
     """Multiple retrievers should produce retriever_0..N + fusion node."""
 
     def test_multi_retriever_dag_structure(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(labels=["person"])
         builder.retriever(max_hops=2)
         builder.path_retriever()
@@ -311,7 +311,7 @@ class TestBuilderMultiRetriever:
 
     def test_auto_default_fusion(self):
         """When no explicit fusion(), default union is used."""
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(labels=["person"])
         builder.retriever()
         builder.community_retriever()
@@ -322,7 +322,7 @@ class TestBuilderMultiRetriever:
         assert fusion_node["config"]["strategy"] == "union"
 
     def test_explicit_fusion_config(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(labels=["person"])
         builder.retriever()
         builder.path_retriever()
@@ -337,7 +337,7 @@ class TestBuilderMultiRetriever:
 
     def test_mixed_entity_and_query_strategies(self):
         """Entity-based + query-based retrievers wire inputs correctly."""
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(labels=["person"])
         builder.retriever(max_hops=2)  # entity-based
         builder.community_retriever()  # query-based
@@ -352,7 +352,7 @@ class TestBuilderMultiRetriever:
         assert "query" in r1["inputs"]
 
     def test_three_retrievers(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(labels=["person"])
         builder.retriever()
         builder.path_retriever()
@@ -373,13 +373,13 @@ class TestBuilderMultiRetriever:
         assert fusion_node["config"]["min_sources"] == 2
 
     def test_no_retriever_raises(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(labels=["person"])
         with pytest.raises(ValueError, match="Retriever config required"):
             builder.get_config()
 
     def test_reasoner_with_multi_retriever(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(labels=["person"])
         builder.retriever()
         builder.community_retriever()
@@ -393,21 +393,21 @@ class TestBuilderMultiRetriever:
         assert reasoner["requires"] == ["chunk_retriever"]
 
 
-# -- FusedQueryBuilder -------------------------------------------------------
+# -- RetriCoFusedSearch -------------------------------------------------------
 
-class TestFusedQueryBuilder:
-    """Tests for FusedQueryBuilder — wrapper combining multiple QueryConfigBuilders."""
+class TestRetriCoFusedSearch:
+    """Tests for RetriCoFusedSearch — wrapper combining multiple RetriCoSearchs."""
 
     def test_two_builders_dag_structure(self):
         """Two sub-builders produce retriever_0, retriever_1, fusion, chunk_retriever."""
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.query_parser(labels=["person"])
         b1.retriever(max_hops=2)
 
-        b2 = QueryConfigBuilder(name="community")
+        b2 = RetriCoSearch(name="community")
         b2.community_retriever()
 
-        fused = FusedQueryBuilder(b1, b2)
+        fused = RetriCoFusedSearch(b1, b2)
         fused.chunk_retriever()
         config = fused.get_config()
 
@@ -431,14 +431,14 @@ class TestFusedQueryBuilder:
 
     def test_parser_auto_inherited(self):
         """Parser is auto-inherited from first sub-builder that has one."""
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.query_parser(labels=["person", "location"])
         b1.retriever(max_hops=2)
 
-        b2 = QueryConfigBuilder(name="community")
+        b2 = RetriCoSearch(name="community")
         b2.community_retriever()
 
-        fused = FusedQueryBuilder(b1, b2)
+        fused = RetriCoFusedSearch(b1, b2)
         fused.chunk_retriever()
         config = fused.get_config()
 
@@ -449,14 +449,14 @@ class TestFusedQueryBuilder:
 
     def test_parser_inherited_from_second_builder(self):
         """If first builder has no parser, inherit from second."""
-        b1 = QueryConfigBuilder(name="community")
+        b1 = RetriCoSearch(name="community")
         b1.community_retriever()
 
-        b2 = QueryConfigBuilder(name="entity")
+        b2 = RetriCoSearch(name="entity")
         b2.query_parser(labels=["org"])
         b2.retriever(max_hops=1)
 
-        fused = FusedQueryBuilder(b1, b2)
+        fused = RetriCoFusedSearch(b1, b2)
         fused.chunk_retriever()
         config = fused.get_config()
 
@@ -465,14 +465,14 @@ class TestFusedQueryBuilder:
 
     def test_explicit_parser_overrides_sub_builders(self):
         """Explicit query_parser() on fused builder overrides sub-builder's."""
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.query_parser(labels=["person"])
         b1.retriever(max_hops=2)
 
-        b2 = QueryConfigBuilder(name="community")
+        b2 = RetriCoSearch(name="community")
         b2.community_retriever()
 
-        fused = FusedQueryBuilder(b1, b2)
+        fused = RetriCoFusedSearch(b1, b2)
         fused.query_parser(labels=["city", "country"])
         fused.chunk_retriever()
         config = fused.get_config()
@@ -482,17 +482,17 @@ class TestFusedQueryBuilder:
 
     def test_store_auto_inherited(self):
         """Store config inherited from first sub-builder that has one."""
-        from grapsit.store.config import Neo4jConfig
+        from retrico.store.config import Neo4jConfig
 
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.store(Neo4jConfig(uri="bolt://myhost:7687", password="secret"))
         b1.query_parser(labels=["person"])
         b1.retriever(max_hops=2)
 
-        b2 = QueryConfigBuilder(name="community")
+        b2 = RetriCoSearch(name="community")
         b2.community_retriever()
 
-        fused = FusedQueryBuilder(b1, b2)
+        fused = RetriCoFusedSearch(b1, b2)
         fused.chunk_retriever()
         config = fused.get_config()
 
@@ -502,14 +502,14 @@ class TestFusedQueryBuilder:
 
     def test_reasoner_on_fused_builder(self):
         """Reasoner configured on fused builder appears in DAG."""
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.query_parser(labels=["person"])
         b1.retriever()
 
-        b2 = QueryConfigBuilder(name="community")
+        b2 = RetriCoSearch(name="community")
         b2.community_retriever()
 
-        fused = FusedQueryBuilder(b1, b2)
+        fused = RetriCoFusedSearch(b1, b2)
         fused.chunk_retriever()
         fused.reasoner(api_key="test-key", model="gpt-4o-mini")
         config = fused.get_config()
@@ -522,14 +522,14 @@ class TestFusedQueryBuilder:
 
     def test_mixed_entity_and_query_strategies(self):
         """Entity-based + query-based retrievers wire inputs correctly."""
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.query_parser(labels=["person"])
         b1.retriever(max_hops=2)
 
-        b2 = QueryConfigBuilder(name="community")
+        b2 = RetriCoSearch(name="community")
         b2.community_retriever()
 
-        fused = FusedQueryBuilder(b1, b2)
+        fused = RetriCoFusedSearch(b1, b2)
         fused.chunk_retriever()
         config = fused.get_config()
 
@@ -542,28 +542,28 @@ class TestFusedQueryBuilder:
 
     def test_empty_builders_raises(self):
         """No retriever nodes → raises ValueError."""
-        b1 = QueryConfigBuilder(name="empty1")
+        b1 = RetriCoSearch(name="empty1")
         b1.query_parser(labels=["person"])
 
-        b2 = QueryConfigBuilder(name="empty2")
+        b2 = RetriCoSearch(name="empty2")
 
-        fused = FusedQueryBuilder(b1, b2)
+        fused = RetriCoFusedSearch(b1, b2)
         with pytest.raises(ValueError, match="No retriever nodes"):
             fused.get_config()
 
     def test_three_builders(self):
         """Three sub-builders produce 3 retrievers + fusion."""
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.query_parser(labels=["person"])
         b1.retriever()
 
-        b2 = QueryConfigBuilder(name="path")
+        b2 = RetriCoSearch(name="path")
         b2.path_retriever()
 
-        b3 = QueryConfigBuilder(name="community")
+        b3 = RetriCoSearch(name="community")
         b3.community_retriever()
 
-        fused = FusedQueryBuilder(b1, b2, b3, strategy="intersection", min_sources=2)
+        fused = RetriCoFusedSearch(b1, b2, b3, strategy="intersection", min_sources=2)
         fused.chunk_retriever()
         config = fused.get_config()
 
@@ -580,14 +580,14 @@ class TestFusedQueryBuilder:
 
     def test_fusion_override_after_init(self):
         """fusion() on fused builder overrides init kwargs."""
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.query_parser(labels=["person"])
         b1.retriever()
 
-        b2 = QueryConfigBuilder(name="community")
+        b2 = RetriCoSearch(name="community")
         b2.community_retriever()
 
-        fused = FusedQueryBuilder(b1, b2, strategy="union")
+        fused = RetriCoFusedSearch(b1, b2, strategy="union")
         fused.fusion(strategy="rrf", top_k=10, rrf_k=30)
         fused.chunk_retriever()
         config = fused.get_config()
@@ -598,12 +598,12 @@ class TestFusedQueryBuilder:
         assert fusion_node["config"]["rrf_k"] == 30
 
     def test_single_sub_builder_still_emits_fusion(self):
-        """Even with one sub-builder, FusedQueryBuilder emits a fusion node."""
-        b1 = QueryConfigBuilder(name="entity")
+        """Even with one sub-builder, RetriCoFusedSearch emits a fusion node."""
+        b1 = RetriCoSearch(name="entity")
         b1.query_parser(labels=["person"])
         b1.retriever(max_hops=2)
 
-        fused = FusedQueryBuilder(b1)
+        fused = RetriCoFusedSearch(b1)
         fused.chunk_retriever()
         config = fused.get_config()
 
@@ -613,14 +613,14 @@ class TestFusedQueryBuilder:
 
     def test_default_chunk_retriever(self):
         """chunk_retriever defaults to {} if not explicitly called."""
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.query_parser(labels=["person"])
         b1.retriever()
 
-        b2 = QueryConfigBuilder(name="community")
+        b2 = RetriCoSearch(name="community")
         b2.community_retriever()
 
-        fused = FusedQueryBuilder(b1, b2)
+        fused = RetriCoFusedSearch(b1, b2)
         # No explicit chunk_retriever() call
         config = fused.get_config()
 
@@ -629,18 +629,18 @@ class TestFusedQueryBuilder:
 
     def test_stores_merged_from_sub_builders(self):
         """Named stores from all sub-builders are merged."""
-        from grapsit.store.config import Neo4jConfig
+        from retrico.store.config import Neo4jConfig
 
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.graph_store(Neo4jConfig(uri="bolt://host1:7687"), name="store1")
         b1.query_parser(labels=["person"])
         b1.retriever()
 
-        b2 = QueryConfigBuilder(name="community")
+        b2 = RetriCoSearch(name="community")
         b2.graph_store(Neo4jConfig(uri="bolt://host2:7687"), name="store2")
         b2.community_retriever()
 
-        fused = FusedQueryBuilder(b1, b2)
+        fused = RetriCoFusedSearch(b1, b2)
         fused.chunk_retriever()
         config = fused.get_config()
 

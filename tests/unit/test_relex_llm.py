@@ -4,15 +4,15 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.construct.relex_llm import RelexLLMProcessor
-from grapsit.extraction.utils import (
+from retrico.construct.relex_llm import RelexLLMProcessor
+from retrico.extraction.utils import (
     parse_standalone_json as _parse_standalone_json,
     parse_relations_json as _parse_relations_json,
     format_entities_list as _format_entities_list,
     normalize_mentions as _normalize_mentions,
 )
-from grapsit.models.document import Chunk
-from grapsit.models.entity import EntityMention
+from retrico.models.document import Chunk
+from retrico.models.entity import EntityMention
 
 
 class TestParseStandaloneJson:

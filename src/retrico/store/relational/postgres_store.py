@@ -21,7 +21,7 @@ class PostgresRelationalStore(BaseRelationalStore):
         port: int = 5432,
         user: str = "postgres",
         password: str = "",
-        database: str = "grapsit",
+        database: str = "retrico",
     ):
         self.host = host
         self.port = port

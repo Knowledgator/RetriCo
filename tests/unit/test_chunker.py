@@ -1,7 +1,7 @@
 """Tests for the chunker processor."""
 
 import pytest
-from grapsit.construct.chunker import ChunkerProcessor
+from retrico.construct.chunker import ChunkerProcessor
 
 
 class TestChunkerProcessor:

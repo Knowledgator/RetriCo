@@ -4,7 +4,7 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.query.parser import QueryParserProcessor
+from retrico.query.parser import QueryParserProcessor
 
 
 class TestQueryParserGLiNER:

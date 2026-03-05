@@ -7,7 +7,7 @@ import torch
 import numpy as np
 from unittest.mock import MagicMock, patch
 
-from grapsit.modeling.kg_scorer import KGScorerProcessor, _extract_entity_labels
+from retrico.modeling.kg_scorer import KGScorerProcessor, _extract_entity_labels
 
 
 # ---------------------------------------------------------------------------
@@ -81,9 +81,9 @@ def simple_subgraph():
 @pytest.fixture
 def pydantic_subgraph():
     """A Pydantic Subgraph object."""
-    from grapsit.models.graph import Subgraph
-    from grapsit.models.entity import Entity
-    from grapsit.models.relation import Relation
+    from retrico.models.graph import Subgraph
+    from retrico.models.entity import Entity
+    from retrico.models.relation import Relation
 
     return Subgraph(
         entities=[
@@ -248,7 +248,7 @@ class TestKGScorer:
         assert proc.device == "cpu"
 
     def test_processor_registration(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "kg_scorer" in processor_registry._factories
 
 

@@ -5,8 +5,8 @@ import numpy as np
 
 faiss = pytest.importorskip("faiss", reason="faiss-cpu not installed")
 
-from grapsit.store.vector.faiss import FaissVectorStore
-from grapsit.store.vector import create_vector_store
+from retrico.store.vector.faiss import FaissVectorStore
+from retrico.store.vector import create_vector_store
 
 
 class TestFaissVectorStore:

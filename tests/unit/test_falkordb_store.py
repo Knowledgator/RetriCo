@@ -3,15 +3,15 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.models.document import Chunk, Document
-from grapsit.models.entity import Entity, EntityMention
-from grapsit.models.relation import Relation
+from retrico.models.document import Chunk, Document
+from retrico.models.entity import Entity, EntityMention
+from retrico.models.relation import Relation
 
 
 @pytest.fixture
 def mock_falkordb_store():
     """A mocked FalkorDBGraphStore."""
-    from grapsit.store.graph.falkordb_store import FalkorDBGraphStore
+    from retrico.store.graph.falkordb_store import FalkorDBGraphStore
     store = FalkorDBGraphStore(host="localhost", port=6379, graph="test")
 
     mock_graph = MagicMock()
@@ -213,19 +213,19 @@ class TestFalkorDBGraphStore:
         assert store._db is None
 
     def test_node_to_dict_with_dict(self):
-        from grapsit.store.graph.falkordb_store import _node_to_dict
+        from retrico.store.graph.falkordb_store import _node_to_dict
         d = {"id": "e1", "label": "test"}
         assert _node_to_dict(d) == d
 
     def test_node_to_dict_with_node(self):
-        from grapsit.store.graph.falkordb_store import _node_to_dict
+        from retrico.store.graph.falkordb_store import _node_to_dict
         node = MagicMock()
         node.properties = {"id": "e1", "label": "test"}
         result = _node_to_dict(node)
         assert result == {"id": "e1", "label": "test"}
 
     def test_sanitize_label(self):
-        from grapsit.store.graph.falkordb_store import _sanitize_label
+        from retrico.store.graph.falkordb_store import _sanitize_label
         assert _sanitize_label("born in") == "BORN_IN"
         assert _sanitize_label("works-at") == "WORKS_AT"
         assert _sanitize_label("123test") == "_123TEST"
@@ -233,7 +233,7 @@ class TestFalkorDBGraphStore:
 
     def test_lazy_connection(self):
         """Verify connection is not established until first query."""
-        from grapsit.store.graph.falkordb_store import FalkorDBGraphStore
+        from retrico.store.graph.falkordb_store import FalkorDBGraphStore
         store = FalkorDBGraphStore()
         assert store._graph is None
         assert store._db is None
@@ -394,7 +394,7 @@ class TestFalkorDBMutations:
     """Test FalkorDB mutation methods with controlled side effects."""
 
     def _make_store_with_run(self, side_effects):
-        from grapsit.store.graph.falkordb_store import FalkorDBGraphStore
+        from retrico.store.graph.falkordb_store import FalkorDBGraphStore
         store = FalkorDBGraphStore.__new__(FalkorDBGraphStore)
         store._db = MagicMock()
         store._graph = MagicMock()
@@ -542,11 +542,11 @@ class TestFalkorDBMutations:
 
 class TestFalkorDBIsBaseGraphStore:
     def test_isinstance(self):
-        from grapsit.store.graph.base import BaseGraphStore
-        from grapsit.store.graph.falkordb_store import FalkorDBGraphStore
+        from retrico.store.graph.base import BaseGraphStore
+        from retrico.store.graph.falkordb_store import FalkorDBGraphStore
         assert issubclass(FalkorDBGraphStore, BaseGraphStore)
 
     def test_neo4j_isinstance(self):
-        from grapsit.store.graph.base import BaseGraphStore
-        from grapsit.store.graph.neo4j_store import Neo4jGraphStore
+        from retrico.store.graph.base import BaseGraphStore
+        from retrico.store.graph.neo4j_store import Neo4jGraphStore
         assert issubclass(Neo4jGraphStore, BaseGraphStore)

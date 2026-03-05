@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.construct.ner_gliner import NERGLiNERProcessor
-from grapsit.models.document import Chunk
+from retrico.construct.ner_gliner import NERGLiNERProcessor
+from retrico.models.document import Chunk
 
 
 class TestNERGLiNERProcessor:

@@ -4,10 +4,10 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.models.relation import Relation
-from grapsit.models.graph import KGTriple, Subgraph
-from grapsit.models.entity import EntityMention, Entity
-from grapsit.models.document import Chunk, Document
+from retrico.models.relation import Relation
+from retrico.models.graph import KGTriple, Subgraph
+from retrico.models.entity import EntityMention, Entity
+from retrico.models.document import Chunk, Document
 
 
 # ---------------------------------------------------------------------------
@@ -78,13 +78,13 @@ class TestKGTripleChunkIdMigration:
 class TestGraphWriterChunkIdAccumulation:
     """Graph writer deduplicates relations and accumulates chunk_ids."""
 
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
     def test_same_relation_in_two_chunks_accumulates(self, mock_resolve):
         mock_store = MagicMock()
         mock_store.setup_indexes = MagicMock()
         mock_resolve.return_value = mock_store
 
-        from grapsit.construct.graph_writer import GraphWriterProcessor
+        from retrico.construct.graph_writer import GraphWriterProcessor
 
         writer = GraphWriterProcessor({"store_type": "neo4j", "setup_indexes": False})
 
@@ -117,13 +117,13 @@ class TestGraphWriterChunkIdAccumulation:
         written_rel = mock_store.write_relation.call_args[0][0]
         assert sorted(written_rel.chunk_id) == ["c1", "c2"]
 
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
     def test_different_relations_not_merged(self, mock_resolve):
         mock_store = MagicMock()
         mock_store.setup_indexes = MagicMock()
         mock_resolve.return_value = mock_store
 
-        from grapsit.construct.graph_writer import GraphWriterProcessor
+        from retrico.construct.graph_writer import GraphWriterProcessor
 
         writer = GraphWriterProcessor({"store_type": "neo4j", "setup_indexes": False})
 
@@ -144,13 +144,13 @@ class TestGraphWriterChunkIdAccumulation:
         assert result["relation_count"] == 2
         assert mock_store.write_relation.call_count == 2
 
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
     def test_reversed_relations_use_list_chunk_id(self, mock_resolve):
         mock_store = MagicMock()
         mock_store.setup_indexes = MagicMock()
         mock_resolve.return_value = mock_store
 
-        from grapsit.construct.graph_writer import GraphWriterProcessor
+        from retrico.construct.graph_writer import GraphWriterProcessor
 
         writer = GraphWriterProcessor({
             "store_type": "neo4j",
@@ -186,7 +186,7 @@ class TestIngestChunkIdList:
     """Data ingest sets all chunk_ids on relations."""
 
     def test_relation_gets_all_chunk_ids(self):
-        from grapsit.construct.ingest import DataIngestProcessor
+        from retrico.construct.ingest import DataIngestProcessor
 
         proc = DataIngestProcessor({})
 
@@ -211,7 +211,7 @@ class TestIngestChunkIdList:
         assert isinstance(rels[0].chunk_id, list)
 
     def test_relation_without_text_gets_empty_chunk_ids(self):
-        from grapsit.construct.ingest import DataIngestProcessor
+        from retrico.construct.ingest import DataIngestProcessor
 
         proc = DataIngestProcessor({})
 
@@ -239,7 +239,7 @@ class TestIngestChunkIdList:
 
 def _make_retriever(config=None):
     """Create a concrete BaseRetriever subclass for testing."""
-    from grapsit.query.base_retriever import BaseRetriever
+    from retrico.query.base_retriever import BaseRetriever
 
     class _TestRetriever(BaseRetriever):
         def __call__(self, **kwargs):
@@ -335,7 +335,7 @@ class TestPathRetrieverChunkSource:
     """Path retriever fetches relation-derived chunks when chunk_source is set."""
 
     def _make_proc(self, **overrides):
-        from grapsit.query.path_retriever import PathRetrieverProcessor
+        from retrico.query.path_retriever import PathRetrieverProcessor
 
         config = {"neo4j_uri": "bolt://localhost:7687", "max_path_length": 5, "top_k": 3}
         config.update(overrides)
@@ -441,7 +441,7 @@ class TestToolRetrieverChunkSource:
     """Tool retriever merges relation-derived chunks when chunk_source is set."""
 
     def _make_proc(self, **overrides):
-        from grapsit.query.tool_retriever import ToolRetrieverProcessor
+        from retrico.query.tool_retriever import ToolRetrieverProcessor
 
         config = {
             "neo4j_uri": "bolt://localhost:7687",
@@ -503,13 +503,13 @@ class TestGetChunksForRelationTool:
     """New LLM tool: get_chunks_for_relation."""
 
     def test_tool_definition_exists(self):
-        from grapsit.llm.tools import GRAPH_TOOLS
+        from retrico.llm.tools import GRAPH_TOOLS
 
         names = [t["function"]["name"] for t in GRAPH_TOOLS]
         assert "get_chunks_for_relation" in names
 
     def test_translator_registered(self):
-        from grapsit.llm.tools import tool_call_to_cypher
+        from retrico.llm.tools import tool_call_to_cypher
 
         cypher, params = tool_call_to_cypher("get_chunks_for_relation", {
             "head_entity_id": "e1",
@@ -520,7 +520,7 @@ class TestGetChunksForRelationTool:
         assert params["tail_id"] == "e2"
 
     def test_translator_with_relation_type(self):
-        from grapsit.llm.tools import tool_call_to_cypher
+        from retrico.llm.tools import tool_call_to_cypher
 
         cypher, params = tool_call_to_cypher("get_chunks_for_relation", {
             "head_entity_id": "e1",
@@ -539,9 +539,9 @@ class TestBuilderChunkSource:
     """Builders pass chunk_source to retriever configs."""
 
     def test_path_retriever_chunk_source(self):
-        from grapsit.core.builders import QueryConfigBuilder
+        from retrico.core.builders import RetriCoSearch
 
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(method="gliner", labels=["person"])
         builder.path_retriever(chunk_source="relation")
 
@@ -552,9 +552,9 @@ class TestBuilderChunkSource:
         assert retriever_node["config"]["chunk_source"] == "relation"
 
     def test_tool_retriever_chunk_source(self):
-        from grapsit.core.builders import QueryConfigBuilder
+        from retrico.core.builders import RetriCoSearch
 
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(method="gliner", labels=["person"])
         builder.tool_retriever(api_key="test", chunk_source="both")
 
@@ -565,9 +565,9 @@ class TestBuilderChunkSource:
         assert retriever_node["config"]["chunk_source"] == "both"
 
     def test_path_retriever_default_chunk_source(self):
-        from grapsit.core.builders import QueryConfigBuilder
+        from retrico.core.builders import RetriCoSearch
 
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(method="gliner", labels=["person"])
         builder.path_retriever()
 
@@ -587,7 +587,7 @@ class TestStoreGetChunksByIds:
     """BaseGraphStore.get_chunks_by_ids default implementation."""
 
     def test_default_implementation(self):
-        from grapsit.store.graph.base import BaseGraphStore
+        from retrico.store.graph.base import BaseGraphStore
 
         # Create a concrete subclass with get_chunk_by_id implemented
         class TestStore(BaseGraphStore):
@@ -621,7 +621,7 @@ class TestStoreGetChunksByIds:
         assert {r["id"] for r in results} == {"c1", "c2"}
 
     def test_empty_ids(self):
-        from grapsit.store.graph.base import BaseGraphStore
+        from retrico.store.graph.base import BaseGraphStore
 
         class TestStore(BaseGraphStore):
             def setup_indexes(self): pass

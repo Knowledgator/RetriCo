@@ -4,7 +4,7 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.extraction import (
+from retrico.extraction import (
     GLiNEREngine,
     LLMExtractionEngine,
     ExtractionResult,
@@ -19,8 +19,8 @@ from grapsit.extraction import (
     format_entities_list,
     mentions_to_gliner_spans,
 )
-from grapsit.models.entity import EntityMention
-from grapsit.models.relation import Relation
+from retrico.models.entity import EntityMention
+from retrico.models.relation import Relation
 
 
 # -- Utils tests ---------------------------------------------------------------

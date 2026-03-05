@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "grapsit"
+name = "retrico"
 version = "0.1.0"
 description = "End-to-end Graph RAG using Knowledgator technologies"
 readme = "README.md"
@@ -13,13 +13,14 @@ license = {text = "MIT"}
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
-    "gliner>=0.2",
+    "gliner>=0.2.25",
     "neo4j>=5.0",
     "click>=8.0",
+    "falkordblite>=0.1"
 ]
 
 [project.scripts]
-grapsit = "grapsit.cli:cli"
+retrico = "retrico.cli:cli"
 
 [project.optional-dependencies]
 dev = [
@@ -34,6 +35,10 @@ falkordb = [
 ]
 linking = [
     "glinker>=0.1.1"
+]
+pdf = [
+    "pdfminer.six>=20221105",
+    "pdfplumber>=0.9",
 ]
 [tool.setuptools.packages.find]
 where = ["src"]

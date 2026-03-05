@@ -3,10 +3,10 @@
 import pytest
 from unittest.mock import MagicMock
 
-from grapsit.query.chunk_retriever import ChunkRetrieverProcessor
-from grapsit.models.entity import Entity
-from grapsit.models.relation import Relation
-from grapsit.models.graph import Subgraph
+from retrico.query.chunk_retriever import ChunkRetrieverProcessor
+from retrico.models.entity import Entity
+from retrico.models.relation import Relation
+from retrico.models.graph import Subgraph
 
 
 class TestChunkRetrieverProcessor:

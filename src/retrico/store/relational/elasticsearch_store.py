@@ -19,7 +19,7 @@ class ElasticsearchRelationalStore(BaseRelationalStore):
         self,
         url: str = "http://localhost:9200",
         api_key: Optional[str] = None,
-        index_prefix: str = "grapsit_",
+        index_prefix: str = "retrico_",
     ):
         self.url = url
         self.api_key = api_key

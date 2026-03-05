@@ -1,12 +1,12 @@
-"""Tests for BuildConfigBuilder."""
+"""Tests for RetriCoBuilder."""
 
 import pytest
-from grapsit.core.builders import BuildConfigBuilder
+from retrico.core.builders import RetriCoBuilder
 
 
-class TestBuildConfigBuilder:
+class TestRetriCoBuilder:
     def test_minimal_config(self):
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.ner_gliner(labels=["person"])
         config = builder.get_config()
 
@@ -19,7 +19,7 @@ class TestBuildConfigBuilder:
         assert "graph_writer" in node_ids
 
     def test_with_relex(self):
-        builder = BuildConfigBuilder()
+        builder = RetriCoBuilder()
         builder.ner_gliner(labels=["person", "location"])
         builder.relex_gliner(
             entity_labels=["person", "location"],
@@ -30,7 +30,7 @@ class TestBuildConfigBuilder:
 
     def test_chunks_only_pipeline_valid(self):
         """A pipeline with only chunker + graph_writer is valid (no NER/relex)."""
-        builder = BuildConfigBuilder()
+        builder = RetriCoBuilder()
         config = builder.get_config()
         node_ids = [n["id"] for n in config["nodes"]]
         assert "chunker" in node_ids
@@ -39,7 +39,7 @@ class TestBuildConfigBuilder:
         assert "entities" not in writer_node["inputs"]
 
     def test_graph_writer_config(self):
-        builder = BuildConfigBuilder()
+        builder = RetriCoBuilder()
         builder.ner_gliner(labels=["person"])
         builder.graph_writer(neo4j_uri="bolt://custom:7687", neo4j_password="secret")
         config = builder.get_config()

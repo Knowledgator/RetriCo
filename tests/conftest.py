@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.models.document import Chunk, Document
-from grapsit.models.entity import EntityMention
-from grapsit.models.relation import Relation
+from retrico.models.document import Chunk, Document
+from retrico.models.entity import EntityMention
+from retrico.models.relation import Relation
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def sample_relations():
 @pytest.fixture
 def mock_neo4j_store():
     """A mocked Neo4jGraphStore."""
-    with patch("grapsit.store.graph.neo4j_store.GraphDatabase") as mock_gdb:
+    with patch("retrico.store.graph.neo4j_store.GraphDatabase") as mock_gdb:
         mock_driver = MagicMock()
         mock_session = MagicMock()
         mock_result = MagicMock()
@@ -79,7 +79,7 @@ def mock_neo4j_store():
         mock_driver.session.return_value = mock_session
         mock_gdb.driver.return_value = mock_driver
 
-        from grapsit.store.graph.neo4j_store import Neo4jGraphStore
+        from retrico.store.graph.neo4j_store import Neo4jGraphStore
         store = Neo4jGraphStore()
         yield store
 
@@ -87,7 +87,7 @@ def mock_neo4j_store():
 @pytest.fixture
 def mock_falkordb_store():
     """A mocked FalkorDBGraphStore."""
-    from grapsit.store.graph.falkordb_store import FalkorDBGraphStore
+    from retrico.store.graph.falkordb_store import FalkorDBGraphStore
     store = FalkorDBGraphStore(host="localhost", port=6379, graph="test")
 
     mock_graph = MagicMock()

@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import MagicMock, patch, call
 
-from grapsit.models.document import Chunk, Document
-from grapsit.models.entity import Entity, EntityMention
-from grapsit.models.relation import Relation
+from retrico.models.document import Chunk, Document
+from retrico.models.entity import Entity, EntityMention
+from retrico.models.relation import Relation
 
 
 class TestNeo4jGraphStore:
@@ -29,7 +29,7 @@ class TestNeo4jGraphStore:
         mock_neo4j_store.write_relation(rel, "e1", "e2")
 
     def test_sanitize_label(self):
-        from grapsit.store.graph.neo4j_store import _sanitize_label
+        from retrico.store.graph.neo4j_store import _sanitize_label
         assert _sanitize_label("born in") == "BORN_IN"
         assert _sanitize_label("works-at") == "WORKS_AT"
         assert _sanitize_label("123test") == "_123TEST"
@@ -86,7 +86,7 @@ class TestBaseGraphStoreDefaults:
     """Verify new methods raise NotImplementedError on a minimal concrete subclass."""
 
     def _make_store(self):
-        from grapsit.store.graph.base import BaseGraphStore
+        from retrico.store.graph.base import BaseGraphStore
 
         class MinimalStore(BaseGraphStore):
             def setup_indexes(self): pass
@@ -174,7 +174,7 @@ class TestNeo4jMutations:
 
     def _make_store_with_run(self, side_effects):
         """Create a Neo4jGraphStore with _run mocked to return successive values."""
-        from grapsit.store.graph.neo4j_store import Neo4jGraphStore
+        from retrico.store.graph.neo4j_store import Neo4jGraphStore
         store = Neo4jGraphStore.__new__(Neo4jGraphStore)
         store._driver = MagicMock()
         store._run = MagicMock(side_effect=side_effects)

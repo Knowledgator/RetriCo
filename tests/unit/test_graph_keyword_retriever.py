@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.query.keyword_retriever import KeywordRetrieverProcessor
-from grapsit.models.graph import Subgraph
-from grapsit.core.builders import QueryConfigBuilder
+from retrico.query.keyword_retriever import KeywordRetrieverProcessor
+from retrico.models.graph import Subgraph
+from retrico.core.builders import RetriCoSearch
 
 
 class TestKeywordRetrieverGraphSourceConfig:
@@ -249,17 +249,17 @@ class TestKeywordRetrieverGraphEnsureStore:
 
 
 class TestKeywordRetrieverBuilderGraphSource:
-    """Test QueryConfigBuilder.keyword_retriever() with search_source='graph'."""
+    """Test RetriCoSearch.keyword_retriever() with search_source='graph'."""
 
     def test_builder_graph_source(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.keyword_retriever(search_source="graph")
         assert builder._retriever_type == "keyword_retriever"
         assert builder._retriever_config["search_source"] == "graph"
         assert builder._retriever_config["expand_entities"] is True  # default for graph
 
     def test_builder_graph_source_custom(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.keyword_retriever(
             search_source="graph",
             top_k=5,
@@ -274,7 +274,7 @@ class TestKeywordRetrieverBuilderGraphSource:
         assert builder._retriever_config["fulltext_index"] == "my_idx"
 
     def test_builder_graph_source_produces_valid_config(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.keyword_retriever(
             search_source="graph",
             top_k=5,
@@ -291,12 +291,12 @@ class TestKeywordRetrieverBuilderGraphSource:
         assert retriever_node["requires"] == []
 
     def test_builder_relational_source_default(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.keyword_retriever()
         assert builder._retriever_config["search_source"] == "relational"
         assert builder._retriever_config["expand_entities"] is False
 
     def test_builder_returns_self(self):
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         result = builder.keyword_retriever(search_source="graph")
         assert result is builder

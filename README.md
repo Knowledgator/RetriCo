@@ -1,8 +1,8 @@
-# grapsit
+# retrico
 
 End-to-end Graph RAG framework that turns unstructured text into a queryable knowledge graph. Built on [Knowledgator](https://github.com/Knowledgator) technologies (GLiNER, GLinker) with Neo4j, FalkorDB, or Memgraph for graph storage.
 
-**Build pipeline**: `text chunking → entity recognition → entity linking → relation extraction → graph store (Neo4j / FalkorDB / Memgraph) → chunk/entity embedding (optional)` — texts can come from `$input` or be pulled from a relational store via `store_reader`
+**Build pipeline**: `text chunking → entity recognition → entity linking → relation extraction → graph store (Neo4j / FalkorDB / Memgraph) → chunk/entity embedding (optional)` — texts can come from `$input`, be pulled from a relational store via `store_reader`, or extracted from PDF files via `pdf_reader` (with tables converted to Markdown)
 
 **Ingest pipeline**: `structured JSON → graph store` (bypass NER/relex, write pre-structured data directly)
 
@@ -17,7 +17,7 @@ Supports multiple extraction backends — mix and match freely:
 - **LLM** — any OpenAI-compatible API (OpenAI, vLLM, Ollama, LM Studio, etc.)
 - **GLinker** — entity linking against a reference knowledge base
 
-Use via Python API, YAML configs, or the `grapsit` CLI (interactive wizards, graph CRUD, query REPL).
+Use via Python API, YAML configs, or the `retrico` CLI (interactive wizards, graph CRUD, query REPL).
 
 ## Installation
 
@@ -45,6 +45,13 @@ pip install falkordb
 
 Memgraph uses the same Neo4j Python driver (Bolt protocol), so no additional dependencies are needed beyond `neo4j`.
 
+For PDF processing (text + table extraction):
+
+```bash
+pip install 'retrico[pdf]'
+# or: pip install pdfminer.six pdfplumber
+```
+
 For KG embedding training with PyKEEN:
 
 ```bash
@@ -55,7 +62,7 @@ Requires Python 3.10+ and a running graph database — [Neo4j](https://neo4j.com
 
 ## Database stores
 
-grapsit uses three categories of database stores — each serves a distinct purpose in the pipeline. You can mix and match backends freely within each category.
+retrico uses three categories of database stores — each serves a distinct purpose in the pipeline. You can mix and match backends freely within each category.
 
 ### Store categories
 
@@ -76,7 +83,7 @@ Graph stores hold the knowledge graph — entities as nodes, relations as edges,
 | [Memgraph](https://memgraph.com/) | `MemgraphConfig` | `neo4j` (shared driver) | `docker run -p 7687:7687 memgraph/memgraph-platform` |
 
 ```python
-from grapsit import Neo4jConfig, FalkorDBConfig, MemgraphConfig
+from retrico import Neo4jConfig, FalkorDBConfig, MemgraphConfig
 
 # Neo4j
 neo4j_cfg = Neo4jConfig(
@@ -123,7 +130,7 @@ Vector stores hold embeddings for chunks, entities, and community summaries. Use
 | Graph DB native | `GraphDBVectorConfig` | — | Uses the graph store's built-in vector index (Neo4j, FalkorDB) |
 
 ```python
-from grapsit import InMemoryVectorConfig, FaissVectorConfig, QdrantVectorConfig, GraphDBVectorConfig
+from retrico import InMemoryVectorConfig, FaissVectorConfig, QdrantVectorConfig, GraphDBVectorConfig
 
 in_mem = InMemoryVectorConfig()
 faiss_cfg = FaissVectorConfig(use_gpu=False)
@@ -146,7 +153,7 @@ Relational stores hold text chunks and documents in a tabular format with full-t
 | [Elasticsearch](https://www.elastic.co/) | `ElasticsearchRelationalConfig` | `elasticsearch` | Multi-match queries |
 
 ```python
-from grapsit import SqliteRelationalConfig, PostgresRelationalConfig, ElasticsearchRelationalConfig
+from retrico import SqliteRelationalConfig, PostgresRelationalConfig, ElasticsearchRelationalConfig
 
 sqlite_cfg = SqliteRelationalConfig(path="chunks.db")  # or ":memory:" for in-memory
 postgres_cfg = PostgresRelationalConfig(
@@ -159,7 +166,7 @@ postgres_cfg = PostgresRelationalConfig(
 es_cfg = ElasticsearchRelationalConfig(
     url="http://localhost:9200",
     api_key="...",              # optional
-    index_prefix="grapsit_",   # default prefix for ES indices
+    index_prefix="retrico_",   # default prefix for ES indices
 )
 ```
 
@@ -170,9 +177,9 @@ All relational stores auto-create tables and indexes on first write — no manua
 Use the builder's `graph_store()`, `vector_store()`, and `chunk_store()` methods to register named stores that are shared across all pipeline nodes:
 
 ```python
-from grapsit import BuildConfigBuilder, Neo4jConfig, FaissVectorConfig, SqliteRelationalConfig
+from retrico import RetriCoBuilder, Neo4jConfig, FaissVectorConfig, SqliteRelationalConfig
 
-builder = BuildConfigBuilder(name="full_pipeline")
+builder = RetriCoBuilder(name="full_pipeline")
 
 # Register named stores (shared across all processors)
 builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687", password="pass"), name="main")
@@ -186,7 +193,7 @@ builder.graph_writer()          # uses "main" graph store + "chunks" relational 
 builder.chunk_embedder()        # uses "main" graph store + "embeddings" vector store
 
 with builder.build() as executor:
-    result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+    result = executor.run({"texts": ["Einstein was born in Ulm."]})
 # All connections closed automatically
 ```
 
@@ -197,7 +204,7 @@ Without explicit store registration, processors create their own connections fro
 For programmatic use outside a pipeline:
 
 ```python
-from grapsit import create_graph_store, create_vector_store, create_relational_store
+from retrico import create_graph_store, create_vector_store, create_relational_store
 
 # From flat dicts
 graph = create_graph_store({"store_type": "neo4j", "neo4j_uri": "bolt://localhost:7687"})
@@ -211,8 +218,8 @@ graph = create_graph_store(Neo4jConfig(uri="bolt://localhost:7687").to_flat_dict
 Or import store classes directly:
 
 ```python
-from grapsit import Neo4jGraphStore, FalkorDBGraphStore, MemgraphGraphStore
-from grapsit import SqliteRelationalStore, PostgresRelationalStore, ElasticsearchRelationalStore
+from retrico import Neo4jGraphStore, FalkorDBGraphStore, MemgraphGraphStore
+from retrico import SqliteRelationalStore, PostgresRelationalStore, ElasticsearchRelationalStore
 
 store = Neo4jGraphStore(uri="bolt://localhost:7687", password="password")
 entity = store.get_entity_by_label("Einstein")
@@ -224,9 +231,9 @@ store.close()
 One function call to go from raw text to a populated knowledge graph:
 
 ```python
-import grapsit
+import retrico
 
-result = grapsit.build_graph(
+result = retrico.build_graph(
     texts=[
         "Albert Einstein was born in Ulm, Germany in 1879.",
         "Marie Curie worked at the University of Paris.",
@@ -244,7 +251,7 @@ print(f"Entities: {stats['entity_count']}, Relations: {stats['relation_count']}"
 Query the graph with natural language:
 
 ```python
-answer = grapsit.query_graph(
+answer = retrico.query_graph(
     query="Where was Albert Einstein born?",
     entity_labels=["person", "location"],
     neo4j_uri="bolt://localhost:7687",
@@ -261,7 +268,8 @@ print(answer.subgraph)      # retrieved entities, relations, source chunks
 **Build pipeline:**
 
 1. **Store reading** (optional) — pulls texts from a relational store (SQLite, PostgreSQL, or Elasticsearch) instead of requiring them in `$input`
-2. **Chunking** — splits texts into sentences (configurable: sentence/paragraph/fixed)
+1. **PDF reading** (optional) — extracts text and tables from PDF files, one chunk per page, tables converted to Markdown format
+2. **Chunking** — splits texts into sentences (configurable: sentence/paragraph/fixed/page)
 3. **NER** — [GLiNER](https://github.com/urchade/GLiNER) or LLM extracts entities matching your labels
 4. **Entity linking** (optional) — [GLinker](https://github.com/Knowledgator/GLinker) links entity mentions to a reference knowledge base
 5. **Relation extraction** — [GLiNER-relex](https://huggingface.co/knowledgator/gliner-relex-large-v0.5) or LLM finds relations between entities
@@ -287,11 +295,11 @@ print(answer.subgraph)      # retrieved entities, relations, source chunks
 
 ## CLI
 
-grapsit includes a full command-line interface. After installation (`pip install -e .`), the `grapsit` command is available.
+retrico includes a full command-line interface. After installation (`pip install -e .`), the `retrico` command is available.
 
 ```
-grapsit
-├── connect      — Save database connection to .grapsit.yaml
+retrico
+├── connect      — Save database connection to .retrico.yaml
 ├── build        — Build KG from text (interactive wizard or flags/config)
 ├── ingest       — Ingest structured JSON data
 ├── query        — Query the KG (interactive wizard or flags/config)
@@ -319,25 +327,25 @@ Save a database connection once, and all subsequent commands use it automaticall
 
 ```bash
 # Interactive setup
-grapsit connect
+retrico connect
 # → Store type? [neo4j/falkordb/memgraph]
 # → URI, user, password...
-# → Saved to .grapsit.yaml
+# → Saved to .retrico.yaml
 
 # Or with flags
-grapsit connect --store-type neo4j --neo4j-uri bolt://localhost:7687 --neo4j-password secret
+retrico connect --store-type neo4j --neo4j-uri bolt://localhost:7687 --neo4j-password secret
 
 # Show / clear saved connection
-grapsit connect --show
-grapsit connect --clear
+retrico connect --show
+retrico connect --clear
 ```
 
 After connecting, all commands work without store flags:
 
 ```bash
-grapsit graph stats
-grapsit query "Who is Einstein?" --entity-labels person,location
-grapsit build --config build.yaml
+retrico graph stats
+retrico query "Who is Einstein?" --entity-labels person,location
+retrico build --config build.yaml
 ```
 
 ### API key
@@ -347,11 +355,11 @@ The OpenAI API key can be provided via `--api-key` flag or the `OPENAI_API_KEY` 
 ```bash
 # Via environment variable (recommended)
 export OPENAI_API_KEY=sk-...
-grapsit build --text "..." --entity-labels person --method llm
-grapsit query "Where was Einstein born?" --entity-labels person
+retrico build --text "..." --entity-labels person --method llm
+retrico query "Where was Einstein born?" --entity-labels person
 
 # Via flag (overrides env var)
-grapsit query "..." --entity-labels person --api-key sk-...
+retrico query "..." --entity-labels person --api-key sk-...
 ```
 
 Interactive wizards will also pick up `OPENAI_API_KEY` automatically and skip the API key prompt.
@@ -362,27 +370,27 @@ Pipeline commands support two modes: **argument-based** (flags or `--config`) an
 
 ```bash
 # From a YAML config
-grapsit build --config configs/build_gliner.yaml --text "Einstein was born in Ulm."
+retrico build --config configs/build_gliner.yaml --text "Einstein was born in Ulm."
 
 # With flags (GLiNER)
-grapsit build \
+retrico build \
   --text "Einstein was born in Ulm." \
   --entity-labels person,location \
   --relation-labels "born in" \
   --neo4j-uri bolt://localhost:7687
 
 # LLM method
-grapsit build \
+retrico build \
   --text "Einstein was born in Ulm." \
   --entity-labels person,location \
   --method llm --api-key sk-... --llm-model gpt-4o-mini
 
 # Interactive wizard (just run with no args)
-grapsit build
+retrico build
 # → walks you through input, store, chunking, NER, relex, embeddings...
 
 # Save the pipeline config for reuse
-grapsit build --text "..." --entity-labels person --save-config my_pipeline.yaml
+retrico build --text "..." --entity-labels person --save-config my_pipeline.yaml
 ```
 
 Input can come from `--text` (repeatable) or `--file` (repeatable, reads file contents).
@@ -391,28 +399,28 @@ Input can come from `--text` (repeatable) or `--file` (repeatable, reads file co
 
 ```bash
 # With flags
-grapsit query "Where was Einstein born?" \
+retrico query "Where was Einstein born?" \
   --entity-labels person,location \
   --api-key sk-... --llm-model gpt-4o-mini
 
 # Different retrieval strategy
-grapsit query "..." --entity-labels person --strategy community
+retrico query "..." --entity-labels person --strategy community
 
 # Multi-retriever fusion
-grapsit query "..." --entity-labels person --strategy entity,community,path
+retrico query "..." --entity-labels person --strategy entity,community,path
 
 # From config
-grapsit query "Where was Einstein born?" --config configs/query_gliner.yaml
+retrico query "Where was Einstein born?" --config configs/query_gliner.yaml
 
 # Interactive wizard
-grapsit query
+retrico query
 ```
 
 ### Ingesting structured data
 
 ```bash
-grapsit ingest data.json
-grapsit ingest data.json --json-output backup.json --verbose
+retrico ingest data.json
+retrico ingest data.json --json-output backup.json --verbose
 ```
 
 The JSON file must be a list of objects matching the `ingest_data()` format (each with `entities`, optional `relations`, `text`, `metadata`).
@@ -420,17 +428,17 @@ The JSON file must be a list of objects matching the `ingest_data()` format (eac
 ### Community detection
 
 ```bash
-grapsit community --method louvain --levels 2
-grapsit community --method leiden --api-key sk-...  # enables LLM summarization
-grapsit community   # interactive wizard
+retrico community --method louvain --levels 2
+retrico community --method leiden --api-key sk-...  # enables LLM summarization
+retrico community   # interactive wizard
 ```
 
 ### KG embedding training
 
 ```bash
-grapsit model --kg-model RotatE --epochs 100 --embedding-dim 128
-grapsit model --config model_config.yaml
-grapsit model   # interactive wizard
+retrico model --kg-model RotatE --epochs 100 --embedding-dim 128
+retrico model --config model_config.yaml
+retrico model   # interactive wizard
 ```
 
 ### Config generation
@@ -438,52 +446,52 @@ grapsit model   # interactive wizard
 Generate a full pipeline config YAML interactively:
 
 ```bash
-grapsit init build    # walks through build pipeline config
-grapsit init query    # walks through query pipeline config
-grapsit init community
-grapsit init model
+retrico init build    # walks through build pipeline config
+retrico init query    # walks through query pipeline config
+retrico init community
+retrico init model
 ```
 
 ### Direct graph operations
 
 ```bash
-grapsit graph entities                    # list all entities
-grapsit graph entities --type person      # filter by type
-grapsit graph relations "Einstein"        # relations for an entity
-grapsit graph search "quantum physics"    # full-text search chunks
-grapsit graph add-entity "Einstein" --type person --properties '{"birth_year": 1879}'
-grapsit graph add-relation "Einstein" "Ulm" "BORN_IN"
-grapsit graph update <entity-id> --label "Albert Einstein"
-grapsit graph delete --entity <id>
-grapsit graph merge <source-id> <target-id>
-grapsit graph stats
-grapsit graph cypher "MATCH (n) RETURN count(n)"
-grapsit graph clear --yes
+retrico graph entities                    # list all entities
+retrico graph entities --type person      # filter by type
+retrico graph relations "Einstein"        # relations for an entity
+retrico graph search "quantum physics"    # full-text search chunks
+retrico graph add-entity "Einstein" --type person --properties '{"birth_year": 1879}'
+retrico graph add-relation "Einstein" "Ulm" "BORN_IN"
+retrico graph update <entity-id> --label "Albert Einstein"
+retrico graph delete --entity <id>
+retrico graph merge <source-id> <target-id>
+retrico graph stats
+retrico graph cypher "MATCH (n) RETURN count(n)"
+retrico graph clear --yes
 ```
 
 ### Interactive shell
 
 ```bash
-grapsit shell --entity-labels person,location --api-key sk-...
+retrico shell --entity-labels person,location --api-key sk-...
 ```
 
 ```
-grapsit> Where was Einstein born?
+retrico> Where was Einstein born?
 Answer: Albert Einstein was born in Ulm, Germany.
 Entities (3): ...
 
-grapsit> :entities person
+retrico> :entities person
 id        label             entity_type
 --------  ----------------  -----------
 a1b2c3..  Albert Einstein   person
 d4e5f6..  Marie Curie       person
 
-grapsit> :relations Einstein
-grapsit> :search quantum physics
-grapsit> :cypher MATCH (n:Entity) RETURN n.label LIMIT 5
-grapsit> :labels person,org,location    # change default labels
-grapsit> :help
-grapsit> :quit
+retrico> :relations Einstein
+retrico> :search quantum physics
+retrico> :cypher MATCH (n:Entity) RETURN n.label LIMIT 5
+retrico> :labels person,org,location    # change default labels
+retrico> :help
+retrico> :quit
 ```
 
 ## Building the graph
@@ -493,9 +501,9 @@ grapsit> :quit
 Simplest way — pass texts and labels, get a graph:
 
 ```python
-import grapsit
+import retrico
 
-result = grapsit.build_graph(
+result = retrico.build_graph(
     texts=["Einstein developed relativity at the Swiss Patent Office in Bern."],
     entity_labels=["person", "organization", "location", "concept"],
     relation_labels=["works at", "developed", "located in"],
@@ -524,9 +532,9 @@ Skip relation extraction by omitting `relation_labels` — only entities will be
 Fine-grained control over each pipeline stage:
 
 ```python
-from grapsit import BuildConfigBuilder
+from retrico import RetriCoBuilder
 
-builder = BuildConfigBuilder(name="my_pipeline")
+builder = RetriCoBuilder(name="my_pipeline")
 
 builder.chunker(method="sentence")
 
@@ -551,7 +559,7 @@ builder.graph_writer(
 
 # Build the executor and run
 executor = builder.build(verbose=True)
-result = executor.execute({"texts": ["Isaac Newton worked at Cambridge."]})
+result = executor.run({"texts": ["Isaac Newton worked at Cambridge."]})
 
 # Save config for reproducibility
 builder.save("configs/my_pipeline.yaml")
@@ -594,9 +602,9 @@ ollama pull qwen2.5:7b
 Both NER and relation extraction are performed by the LLM:
 
 ```python
-from grapsit import BuildConfigBuilder
+from retrico import RetriCoBuilder
 
-builder = BuildConfigBuilder(name="llm_pipeline")
+builder = RetriCoBuilder(name="llm_pipeline")
 builder.chunker(method="sentence")
 
 builder.ner_llm(
@@ -622,7 +630,7 @@ builder.graph_writer(
 )
 
 executor = builder.build(verbose=True)
-result = executor.execute({"texts": ["Einstein was born in Ulm, Germany."]})
+result = executor.run({"texts": ["Einstein was born in Ulm, Germany."]})
 ```
 
 #### Using OpenAI
@@ -640,9 +648,9 @@ builder.ner_llm(
 Combine GLiNER's fast local NER with LLM's higher-quality relation extraction:
 
 ```python
-from grapsit import BuildConfigBuilder
+from retrico import RetriCoBuilder
 
-builder = BuildConfigBuilder(name="mixed_pipeline")
+builder = RetriCoBuilder(name="mixed_pipeline")
 builder.chunker(method="sentence")
 
 # Fast local NER with GLiNER
@@ -667,7 +675,7 @@ builder.graph_writer(
 )
 
 executor = builder.build(verbose=True)
-result = executor.execute({"texts": ["Einstein worked at Princeton."]})
+result = executor.run({"texts": ["Einstein worked at Princeton."]})
 ```
 
 All NER and relex processors are interchangeable — any combination works:
@@ -691,7 +699,7 @@ Full control over the GLinker pipeline:
 
 ```python
 from glinker import ProcessorFactory as GLinkerFactory
-from grapsit import BuildConfigBuilder
+from retrico import RetriCoBuilder
 
 # Define your knowledge base
 kb_entities = [
@@ -707,7 +715,7 @@ glinker_executor = GLinkerFactory.create_simple(
     external_entities=True,  # will receive pre-extracted NER entities
 )
 
-builder = BuildConfigBuilder(name="linked_pipeline")
+builder = RetriCoBuilder(name="linked_pipeline")
 builder.chunker(method="sentence")
 builder.ner_gliner(labels=["person", "location"])
 builder.linker(executor=glinker_executor)      # links NER entities to KB
@@ -715,7 +723,7 @@ builder.relex_llm(api_key="sk-...", entity_labels=["person", "location"], relati
 builder.graph_writer(neo4j_uri="bolt://localhost:7687", neo4j_password="password")
 
 executor = builder.build(verbose=True)
-result = executor.execute({"texts": ["Einstein was born in Ulm, Germany."]})
+result = executor.run({"texts": ["Einstein was born in Ulm, Germany."]})
 
 # Linked entities use KB IDs (e.g. "Q937") instead of auto-generated UUIDs
 linker_result = result.get("linker_result")
@@ -724,9 +732,9 @@ for chunk_ents in linker_result["entities"]:
         print(f"{ent.text} -> {ent.linked_entity_id}")  # "Einstein -> Q937"
 ```
 
-#### With grapsit-managed initialization
+#### With retrico-managed initialization
 
-Let grapsit create the GLinker executor from parameters:
+Let retrico create the GLinker executor from parameters:
 
 ```python
 builder.linker(
@@ -741,7 +749,7 @@ builder.linker(
 GLinker can do NER + linking in one step. Skip `ner_gliner()`/`ner_llm()`:
 
 ```python
-builder = BuildConfigBuilder(name="linker_only")
+builder = RetriCoBuilder(name="linker_only")
 builder.chunker()
 builder.linker(executor=glinker_executor)  # does NER + linking
 builder.graph_writer(neo4j_uri="bolt://localhost:7687", neo4j_password="password")
@@ -750,7 +758,7 @@ builder.graph_writer(neo4j_uri="bolt://localhost:7687", neo4j_password="password
 #### With `build_graph()` convenience function
 
 ```python
-result = grapsit.build_graph(
+result = retrico.build_graph(
     texts=["Einstein was born in Ulm."],
     entity_labels=["person", "location"],
     relation_labels=["born in"],
@@ -836,10 +844,10 @@ nodes:
 ```
 
 ```python
-from grapsit import ProcessorFactory
+from retrico import ProcessorFactory
 
 executor = ProcessorFactory.create_pipeline("pipeline.yaml", verbose=True)
-result = executor.execute({"texts": ["Your text here."]})
+result = executor.run({"texts": ["Your text here."]})
 ```
 
 ### Using FalkorDB instead of Neo4j
@@ -855,9 +863,9 @@ docker run -p 6379:6379 -it --rm falkordb/falkordb
 #### `build_graph()` with FalkorDB
 
 ```python
-import grapsit
+import retrico
 
-result = grapsit.build_graph(
+result = retrico.build_graph(
     texts=["Einstein was born in Ulm, Germany in 1879."],
     entity_labels=["person", "location", "date"],
     relation_labels=["born in"],
@@ -871,9 +879,9 @@ result = grapsit.build_graph(
 #### Builder API with FalkorDB
 
 ```python
-from grapsit import BuildConfigBuilder
+from retrico import RetriCoBuilder
 
-builder = BuildConfigBuilder(name="falkordb_pipeline")
+builder = RetriCoBuilder(name="falkordb_pipeline")
 builder.chunker(method="sentence")
 builder.ner_gliner(labels=["person", "organization", "location"])
 builder.relex_gliner(
@@ -888,13 +896,13 @@ builder.graph_writer(
 )
 
 executor = builder.build(verbose=True)
-result = executor.execute({"texts": ["Einstein worked at Princeton."]})
+result = executor.run({"texts": ["Einstein worked at Princeton."]})
 ```
 
 #### Querying with FalkorDB
 
 ```python
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Where was Einstein born?",
     entity_labels=["person", "location"],
     store_type="falkordb",
@@ -910,9 +918,9 @@ print(result.answer)
 #### Query builder API with FalkorDB
 
 ```python
-from grapsit import QueryConfigBuilder
+from retrico import RetriCoSearch
 
-builder = QueryConfigBuilder(name="falkordb_query")
+builder = RetriCoSearch(name="falkordb_query")
 builder.query_parser(method="gliner", labels=["person", "location"])
 builder.retriever(
     store_type="falkordb",
@@ -925,13 +933,13 @@ builder.chunk_retriever()
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")
 
 executor = builder.build()
-ctx = executor.execute({"query": "Where was Einstein born?"})
+ctx = executor.run({"query": "Where was Einstein born?"})
 ```
 
 #### Direct FalkorDB queries
 
 ```python
-from grapsit import FalkorDBGraphStore
+from retrico import FalkorDBGraphStore
 
 store = FalkorDBGraphStore(host="localhost", port=6379, graph="my_knowledge_graph")
 
@@ -972,14 +980,14 @@ docker run -p 7687:7687 memgraph/memgraph
 docker run -p 7687:7687 -p 3000:3000 -p 7444:7444 memgraph/memgraph-mage
 ```
 
-> **Note:** Community detection (`grapsit.detect_communities()`) requires the [MAGE](https://memgraph.com/docs/advanced-algorithms/install) extensions. Use the `memgraph/memgraph-mage` image or install MAGE manually.
+> **Note:** Community detection (`retrico.detect_communities()`) requires the [MAGE](https://memgraph.com/docs/advanced-algorithms/install) extensions. Use the `memgraph/memgraph-mage` image or install MAGE manually.
 
 #### `build_graph()` with Memgraph
 
 ```python
-import grapsit
+import retrico
 
-result = grapsit.build_graph(
+result = retrico.build_graph(
     texts=["Einstein was born in Ulm, Germany in 1879."],
     entity_labels=["person", "location", "date"],
     relation_labels=["born in"],
@@ -991,9 +999,9 @@ result = grapsit.build_graph(
 #### Builder API with Memgraph
 
 ```python
-from grapsit import BuildConfigBuilder
+from retrico import RetriCoBuilder
 
-builder = BuildConfigBuilder(name="memgraph_pipeline")
+builder = RetriCoBuilder(name="memgraph_pipeline")
 builder.chunker(method="sentence")
 builder.ner_gliner(labels=["person", "organization", "location"])
 builder.relex_gliner(
@@ -1006,13 +1014,13 @@ builder.graph_writer(
 )
 
 executor = builder.build(verbose=True)
-result = executor.execute({"texts": ["Einstein worked at Princeton."]})
+result = executor.run({"texts": ["Einstein worked at Princeton."]})
 ```
 
 #### Querying with Memgraph
 
 ```python
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Where was Einstein born?",
     entity_labels=["person", "location"],
     store_type="memgraph",
@@ -1026,9 +1034,9 @@ print(result.answer)
 #### Query builder API with Memgraph
 
 ```python
-from grapsit import QueryConfigBuilder
+from retrico import RetriCoSearch
 
-builder = QueryConfigBuilder(name="memgraph_query")
+builder = RetriCoSearch(name="memgraph_query")
 builder.query_parser(method="gliner", labels=["person", "location"])
 builder.retriever(
     store_type="memgraph",
@@ -1039,13 +1047,13 @@ builder.chunk_retriever()
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")
 
 executor = builder.build()
-ctx = executor.execute({"query": "Where was Einstein born?"})
+ctx = executor.run({"query": "Where was Einstein born?"})
 ```
 
 #### Direct Memgraph queries
 
 ```python
-from grapsit import MemgraphGraphStore
+from retrico import MemgraphGraphStore
 
 store = MemgraphGraphStore(uri="bolt://localhost:7687")
 
@@ -1077,9 +1085,9 @@ If you already have structured entities and relations (e.g. from an external sou
 ### `ingest_data()` convenience function
 
 ```python
-import grapsit
+import retrico
 
-ctx = grapsit.ingest_data(
+ctx = retrico.ingest_data(
     entities=[
         {"text": "Albert Einstein", "label": "person"},
         {"text": "Ulm", "label": "location"},
@@ -1121,16 +1129,16 @@ The `head` and `tail` values must match an entity `text` (case-insensitive).
 ### Ingest builder API
 
 ```python
-from grapsit import IngestConfigBuilder
+from retrico import RetriCoIngest
 
-builder = IngestConfigBuilder(name="my_ingest")
+builder = RetriCoIngest(name="my_ingest")
 builder.graph_writer(
     store_type="memgraph",
     memgraph_uri="bolt://localhost:7687",
 )
 
 executor = builder.build()
-ctx = executor.execute({
+ctx = executor.run({
     "entities": [
         {"text": "Einstein", "label": "person"},
         {"text": "Ulm", "label": "location"},
@@ -1150,12 +1158,12 @@ The ingest format is designed to be loaded directly from JSON:
 
 ```python
 import json
-import grapsit
+import retrico
 
 with open("data/knowledge_graph.json") as f:
     data = json.load(f)
 
-ctx = grapsit.ingest_data(
+ctx = retrico.ingest_data(
     entities=data["entities"],
     relations=data["relations"],
     neo4j_uri="bolt://localhost:7687",
@@ -1169,7 +1177,7 @@ The `graph_writer` can save extracted data to a JSON file alongside writing to t
 ### With `build_graph()`
 
 ```python
-result = grapsit.build_graph(
+result = retrico.build_graph(
     texts=["Einstein was born in Ulm, Germany in 1879."],
     entity_labels=["person", "location"],
     relation_labels=["born in"],
@@ -1182,7 +1190,7 @@ result = grapsit.build_graph(
 ### With the builder API
 
 ```python
-builder = BuildConfigBuilder(name="my_pipeline")
+builder = RetriCoBuilder(name="my_pipeline")
 builder.chunker(method="sentence")
 builder.ner_gliner(labels=["person", "location"])
 builder.relex_gliner(
@@ -1195,7 +1203,7 @@ builder.graph_writer(
 )
 
 executor = builder.build()
-result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+result = executor.run({"texts": ["Einstein was born in Ulm."]})
 ```
 
 ### Output format
@@ -1226,10 +1234,10 @@ Export from one database and import into another:
 
 ```python
 import json
-import grapsit
+import retrico
 
 # Build graph and export to JSON
-grapsit.build_graph(
+retrico.build_graph(
     texts=["Einstein was born in Ulm."],
     entity_labels=["person", "location"],
     relation_labels=["born in"],
@@ -1241,7 +1249,7 @@ grapsit.build_graph(
 with open("data/graph_export.json") as f:
     data = json.load(f)
 
-grapsit.ingest_data(
+retrico.ingest_data(
     data=data,
     store_type="memgraph",
     memgraph_uri="bolt://localhost:7688",
@@ -1257,9 +1265,9 @@ Both embedders run **after** `graph_writer` in the build pipeline. They use the 
 ### With `build_graph()`
 
 ```python
-import grapsit
+import retrico
 
-result = grapsit.build_graph(
+result = retrico.build_graph(
     texts=["Einstein was born in Ulm, Germany in 1879."],
     entity_labels=["person", "location", "date"],
     relation_labels=["born in"],
@@ -1284,9 +1292,9 @@ print(f"Embedded {entity_emb['embedded_count']} entities (dim={entity_emb['dimen
 ### With the builder API
 
 ```python
-from grapsit import BuildConfigBuilder
+from retrico import RetriCoBuilder
 
-builder = BuildConfigBuilder(name="embedded_pipeline")
+builder = RetriCoBuilder(name="embedded_pipeline")
 builder.chunker(method="sentence")
 builder.ner_gliner(labels=["person", "organization", "location"])
 builder.relex_gliner(
@@ -1313,7 +1321,7 @@ builder.entity_embedder(
 )
 
 executor = builder.build(verbose=True)
-result = executor.execute({"texts": ["Einstein worked at Princeton."]})
+result = executor.run({"texts": ["Einstein worked at Princeton."]})
 
 # Save config (embedder nodes included)
 builder.save("configs/my_embedded_pipeline.yaml")
@@ -1362,9 +1370,9 @@ Instead of passing texts directly via `execute({"texts": [...]})`, you can pull 
 ### `build_graph_from_store()` convenience function
 
 ```python
-import grapsit
+import retrico
 
-result = grapsit.build_graph_from_store(
+result = retrico.build_graph_from_store(
     # Relational store config
     table="articles",
     text_field="body",              # column containing the text
@@ -1387,9 +1395,9 @@ result = grapsit.build_graph_from_store(
 ### Builder API
 
 ```python
-from grapsit import BuildConfigBuilder
+from retrico import RetriCoBuilder
 
-builder = BuildConfigBuilder(name="from_store")
+builder = RetriCoBuilder(name="from_store")
 
 # Configure relational store (SQLite, Postgres, or Elasticsearch)
 builder.chunk_store(type="sqlite", sqlite_path="/data/articles.db")
@@ -1412,7 +1420,7 @@ builder.relex_gliner(
 builder.graph_writer(neo4j_uri="bolt://localhost:7687", neo4j_password="password")
 
 executor = builder.build(verbose=True)
-result = executor.execute({})  # empty input — store_reader provides texts
+result = executor.run({})  # empty input — store_reader provides texts
 ```
 
 The chunker receives `texts` and `documents` from the store_reader output. When `documents` are provided, the chunker uses them directly (preserving source metadata) instead of creating new Document objects.
@@ -1420,7 +1428,7 @@ The chunker receives `texts` and `documents` from the store_reader output. When 
 ### With PostgreSQL
 
 ```python
-builder = BuildConfigBuilder(name="from_postgres")
+builder = RetriCoBuilder(name="from_postgres")
 builder.chunk_store(
     type="postgres",
     postgres_host="localhost",
@@ -1435,13 +1443,13 @@ builder.ner_gliner(labels=["person", "organization"])
 builder.graph_writer(neo4j_uri="bolt://localhost:7687", neo4j_password="password")
 
 executor = builder.build()
-result = executor.execute({})
+result = executor.run({})
 ```
 
 ### With Elasticsearch
 
 ```python
-builder = BuildConfigBuilder(name="from_elasticsearch")
+builder = RetriCoBuilder(name="from_elasticsearch")
 builder.chunk_store(
     type="elasticsearch",
     elasticsearch_url="http://localhost:9200",
@@ -1453,12 +1461,104 @@ builder.ner_gliner(labels=["person", "location"])
 builder.graph_writer(neo4j_uri="bolt://localhost:7687", neo4j_password="password")
 
 executor = builder.build()
-result = executor.execute({})
+result = executor.run({})
 ```
 
 ### Backward compatibility
 
 Without `store_reader()`, the pipeline behaves exactly as before — the chunker reads from `$input.texts`. The store_reader is purely additive.
+
+## Building from PDF files
+
+Extract text and tables from PDF documents and build a knowledge graph. Uses [pdfminer.six](https://github.com/pdfminer/pdfminer.six) for layout analysis and [pdfplumber](https://github.com/jsvine/pdfplumber) for table extraction, following the approach described in [Knowledgator's PDF extraction guide](https://medium.com/@knowledgrator/extract-custom-table-from-pdf-with-llms-2ad678c26200).
+
+**Pipeline**: `pdf_reader → NER → relex → graph_writer`
+
+Each PDF page becomes one chunk. Tables are detected and converted to Markdown format (pipe-separated columns). Chunk metadata includes `page_number` and `source_pdf`.
+
+Install the PDF dependencies:
+
+```bash
+pip install 'retrico[pdf]'
+```
+
+### `build_graph_from_pdf()` convenience function
+
+```python
+import retrico
+
+result = retrico.build_graph_from_pdf(
+    pdf_paths=["reports/annual_report.pdf", "papers/research.pdf"],
+    entity_labels=["person", "organization", "location"],
+    relation_labels=["works at", "born in", "located in"],
+    extract_tables=True,        # convert tables to Markdown (default: True)
+    page_ids=None,              # None = all pages, or [0, 1, 2] for specific pages
+)
+
+stats = result.get("writer_result")
+print(f"Entities: {stats['entity_count']}, Relations: {stats['relation_count']}")
+
+# Access page-level chunks with metadata
+chunks = result.get("chunker_result")["chunks"]
+for chunk in chunks:
+    print(f"  Page {chunk.metadata['page_number']} from {chunk.metadata['source_pdf']}")
+    print(f"  {chunk.text[:100]}...")
+```
+
+### Builder API
+
+```python
+from retrico import RetriCoBuilder
+
+builder = RetriCoBuilder(name="pdf_pipeline")
+
+# PDF reader replaces the chunker — each page becomes one chunk
+builder.pdf_reader(
+    extract_text=True,          # extract regular text (default: True)
+    extract_tables=True,        # extract tables as Markdown (default: True)
+    page_ids=None,              # specific pages (0-indexed), or None for all
+)
+
+builder.ner_gliner(labels=["person", "organization", "location"])
+builder.relex_gliner(
+    entity_labels=["person", "organization", "location"],
+    relation_labels=["works at", "born in"],
+)
+builder.graph_writer(neo4j_uri="bolt://localhost:7687", neo4j_password="password")
+
+executor = builder.build(verbose=True)
+result = executor.run(pdf_paths=["document.pdf"])
+```
+
+### How it works
+
+1. **Layout analysis** — `pdfminer.six` extracts page elements (text containers, rectangles/table boundaries)
+2. **Table detection** — `pdfplumber` identifies and extracts table structures
+3. **Table → Markdown** — tables are converted to pipe-separated Markdown format:
+   ```
+   |Product|Revenue|Change|
+   |Widget A|$1.2M|+15%|
+   |Widget B|$800K|-3%|
+   ```
+4. **Text normalization** — handles line breaks, whitespace, and indentation to produce clean text
+5. **Page chunking** — each page becomes a `Chunk` with metadata `{"page_number": N, "source_pdf": "filename.pdf"}`
+6. **Document creation** — one `Document` per PDF file with metadata `{"source_pdf": "filename.pdf", "pdf_path": "/full/path"}`
+
+### Page-level chunking (without PDF reader)
+
+If you already have page-separated text (e.g. from another PDF tool), use the `"page"` chunking method. It splits on form-feed characters (`\f`):
+
+```python
+builder = RetriCoBuilder(name="page_chunks")
+builder.chunker(method="page")  # splits on \f characters
+builder.ner_gliner(labels=["person", "location"])
+builder.graph_writer()
+
+# Text with form-feed page separators
+text = "Page 1 content here...\fPage 2 content here...\fPage 3..."
+executor = builder.build()
+result = executor.run(texts=[text])
+```
 
 ## Querying the graph
 
@@ -1467,10 +1567,10 @@ Without `store_reader()`, the pipeline behaves exactly as before — the chunker
 Use `query_graph()` for end-to-end query processing:
 
 ```python
-import grapsit
+import retrico
 
 # With LLM reasoner (generates natural language answer)
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Where was Albert Einstein born?",
     entity_labels=["person", "location"],
     neo4j_uri="bolt://localhost:7687",
@@ -1485,7 +1585,7 @@ print(result.subgraph.relations)# relations in the subgraph
 print(result.subgraph.chunks)   # relevant source chunks
 
 # Without reasoner (returns subgraph only, no LLM needed)
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Tell me about Marie Curie",
     entity_labels=["person", "organization"],
     neo4j_uri="bolt://localhost:7687",
@@ -1499,9 +1599,9 @@ result = grapsit.query_graph(
 For full control over the query pipeline:
 
 ```python
-from grapsit import QueryConfigBuilder
+from retrico import RetriCoSearch
 
-builder = QueryConfigBuilder(name="my_query")
+builder = RetriCoSearch(name="my_query")
 
 # Parse the query to extract entities
 builder.query_parser(method="gliner", labels=["person", "location"])
@@ -1521,7 +1621,7 @@ builder.chunk_retriever()
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")
 
 executor = builder.build(verbose=True)
-ctx = executor.execute({"query": "Where was Einstein born?"})
+ctx = executor.run({"query": "Where was Einstein born?"})
 
 # Access intermediate results
 parser_result = ctx.get("parser_result")    # {"query": str, "entities": List[EntityMention]}
@@ -1533,7 +1633,7 @@ reasoner_result = ctx.get("reasoner_result")    # {"result": QueryResult}
 
 ### Retrieval strategies
 
-grapsit supports 9 retrieval strategies. Each strategy plugs into the same downstream pipeline (`chunk_retriever → reasoner`), so you can swap strategies without changing anything else. You can also combine multiple strategies with [fusion](#multi-retriever-fusion).
+retrico supports 9 retrieval strategies. Each strategy plugs into the same downstream pipeline (`chunk_retriever → reasoner`), so you can swap strategies without changing anything else. You can also combine multiple strategies with [fusion](#multi-retriever-fusion).
 
 ```
 query → parser → entities → entity lookup → subgraph → chunks     (entity — default)
@@ -1553,7 +1653,7 @@ Parses the query for entities, looks them up in the graph, and expands to a k-ho
 
 ```python
 # Convenience function
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Where was Einstein born?",
     entity_labels=["person", "location"],
     neo4j_uri="bolt://localhost:7687",
@@ -1563,13 +1663,13 @@ result = grapsit.query_graph(
 )
 
 # Builder API
-builder = QueryConfigBuilder(name="entity_query")
+builder = RetriCoSearch(name="entity_query")
 builder.query_parser(labels=["person", "location"])
 builder.retriever(neo4j_uri="bolt://localhost:7687", max_hops=2)
 builder.chunk_retriever()
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")  # optional
 executor = builder.build()
-ctx = executor.execute({"query": "Where was Einstein born?"})
+ctx = executor.run({"query": "Where was Einstein born?"})
 ```
 
 #### Strategy 2: Entity lookup with linking
@@ -1577,7 +1677,7 @@ ctx = executor.execute({"query": "Where was Einstein born?"})
 Same as entity, but links parsed entities to a knowledge base first for precise lookup by stable ID.
 
 ```python
-builder = QueryConfigBuilder(name="linked_query")
+builder = RetriCoSearch(name="linked_query")
 builder.query_parser(labels=["person", "location"])
 builder.linker(executor=glinker_executor)  # or neo4j_uri= to load KB from graph
 builder.retriever(neo4j_uri="bolt://localhost:7687", max_hops=2)
@@ -1589,11 +1689,11 @@ executor = builder.build()
 
 Embeds the query, searches community embeddings, and retrieves subgraphs around community members. No parser needed — works directly on the query text.
 
-**Prerequisites:** Run `grapsit.detect_communities()` with `api_key` to generate community summaries and embeddings first.
+**Prerequisites:** Run `retrico.detect_communities()` with `api_key` to generate community summaries and embeddings first.
 
 ```python
 # Convenience function
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Tell me about the physics research group",
     retrieval_strategy="community",
     neo4j_uri="bolt://localhost:7687",
@@ -1608,7 +1708,7 @@ result = grapsit.query_graph(
 )
 
 # Builder API
-builder = QueryConfigBuilder(name="community_query")
+builder = RetriCoSearch(name="community_query")
 builder.community_retriever(
     neo4j_uri="bolt://localhost:7687",
     top_k=3,
@@ -1620,7 +1720,7 @@ builder.community_retriever(
 builder.chunk_retriever()
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")  # optional
 executor = builder.build()
-ctx = executor.execute({"query": "Tell me about the physics research group"})
+ctx = executor.run({"query": "Tell me about the physics research group"})
 ```
 
 #### Strategy 4: Chunk embedding retrieval
@@ -1631,7 +1731,7 @@ Embeds the query, searches pre-computed chunk embeddings, gets entities from mat
 
 ```python
 # Convenience function
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="What happened in 1905?",
     retrieval_strategy="chunk_embedding",
     neo4j_uri="bolt://localhost:7687",
@@ -1644,7 +1744,7 @@ result = grapsit.query_graph(
 )
 
 # Builder API
-builder = QueryConfigBuilder(name="chunk_emb_query")
+builder = RetriCoSearch(name="chunk_emb_query")
 builder.chunk_embedding_retriever(
     neo4j_uri="bolt://localhost:7687",
     top_k=5,
@@ -1662,7 +1762,7 @@ Parses the query for entities, embeds their text, searches pre-computed entity e
 
 ```python
 # Convenience function
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Who is similar to Einstein?",
     entity_labels=["person"],
     retrieval_strategy="entity_embedding",
@@ -1676,7 +1776,7 @@ result = grapsit.query_graph(
 )
 
 # Builder API
-builder = QueryConfigBuilder(name="entity_emb_query")
+builder = RetriCoSearch(name="entity_emb_query")
 builder.query_parser(labels=["person"])
 builder.entity_embedding_retriever(
     neo4j_uri="bolt://localhost:7687",
@@ -1693,7 +1793,7 @@ An LLM agent receives the query and graph schema, then uses function calling to 
 
 ```python
 # Convenience function
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="What companies did Einstein work at, and where are they located?",
     api_key="sk-...",
     model="gpt-4o-mini",
@@ -1708,7 +1808,7 @@ result = grapsit.query_graph(
 )
 
 # Builder API
-builder = QueryConfigBuilder(name="tool_query")
+builder = RetriCoSearch(name="tool_query")
 builder.tool_retriever(
     api_key="sk-...",
     model="gpt-4o-mini",
@@ -1720,7 +1820,7 @@ builder.tool_retriever(
 builder.chunk_retriever()
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")  # optional
 executor = builder.build()
-ctx = executor.execute({"query": "What companies did Einstein work at?"})
+ctx = executor.run({"query": "What companies did Einstein work at?"})
 ```
 
 The tool retriever uses the same 7 built-in graph tools described in the [LLM function calling](#llm-function-calling-tool-use) section. When a relational store is configured (via `chunk_store()` or pool), the 3 [relational tools](#relational-chunkdocument-tools) (`search_chunks`, `get_chunk`, `query_records`) are also available. The LLM sees the graph schema and decides which tools to call — it does **not** generate raw Cypher.
@@ -1731,7 +1831,7 @@ Parses the query for entities, looks them up, generates entity pairs, and finds 
 
 ```python
 # Convenience function
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="How are Einstein and Bohr connected?",
     entity_labels=["person"],
     retrieval_strategy="path",
@@ -1744,7 +1844,7 @@ result = grapsit.query_graph(
 )
 
 # Builder API
-builder = QueryConfigBuilder(name="path_query")
+builder = RetriCoSearch(name="path_query")
 builder.query_parser(labels=["person"])
 builder.path_retriever(
     neo4j_uri="bolt://localhost:7687",
@@ -1753,18 +1853,18 @@ builder.path_retriever(
 )
 builder.chunk_retriever()
 executor = builder.build()
-ctx = executor.execute({"query": "How are Einstein and Bohr connected?"})
+ctx = executor.run({"query": "How are Einstein and Bohr connected?"})
 ```
 
 #### Strategy 8: KG-scored retrieval (tool parser + KG embeddings)
 
 Uses an LLM tool-calling parser to decompose the query into structured triple patterns (`head?, relation?, tail?`), then resolves those against the graph store and scores them with trained KG embeddings. The KG scorer acts as a universal retriever — no separate retriever node is needed.
 
-**Prerequisites:** A trained KG embedding model (optional but recommended — without it, graph store scores are used). Use `grapsit.train_kg_model()` to train one.
+**Prerequisites:** A trained KG embedding model (optional but recommended — without it, graph store scores are used). Use `retrico.train_kg_model()` to train one.
 
 ```python
 # Convenience function
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Where was Einstein born?",
     api_key="sk-...",
     model="gpt-4o-mini",
@@ -1782,7 +1882,7 @@ result = grapsit.query_graph(
 )
 
 # Builder API
-builder = QueryConfigBuilder(name="kg_scored_query")
+builder = RetriCoSearch(name="kg_scored_query")
 builder.query_parser(
     method="tool",
     api_key="sk-...",
@@ -1802,7 +1902,7 @@ builder.kg_scorer(
 builder.chunk_retriever(chunk_entity_source="both")  # "all", "head", "tail", or "both"
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")  # optional
 executor = builder.build()
-ctx = executor.execute({"query": "Where was Einstein born?"})
+ctx = executor.run({"query": "Where was Einstein born?"})
 
 # Access results
 scorer_result = ctx.get("kg_scorer_result")
@@ -1838,7 +1938,7 @@ Two entity modes:
 
 ```python
 # Relational source — chunks-only (default)
-builder = QueryConfigBuilder(name="keyword_query")
+builder = RetriCoSearch(name="keyword_query")
 builder.keyword_retriever(
     top_k=10,
     chunk_table="chunks",
@@ -1847,12 +1947,12 @@ builder.keyword_retriever(
 )
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")  # optional
 executor = builder.build()
-ctx = executor.execute({"query": "Where was Einstein born?"})
+ctx = executor.run({"query": "Where was Einstein born?"})
 ```
 
 ```python
 # Relational source — with entity expansion
-builder = QueryConfigBuilder(name="keyword_expanded")
+builder = RetriCoSearch(name="keyword_expanded")
 builder.keyword_retriever(
     top_k=10,
     expand_entities=True,
@@ -1868,7 +1968,7 @@ executor = builder.build()
 
 ```python
 # Graph DB source — uses native FTS index (entity expansion by default)
-builder = QueryConfigBuilder(name="graph_keyword_query")
+builder = RetriCoSearch(name="graph_keyword_query")
 builder.keyword_retriever(
     search_source="graph",
     top_k=10,
@@ -1877,7 +1977,7 @@ builder.keyword_retriever(
 builder.chunk_retriever()
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")  # optional
 executor = builder.build()
-ctx = executor.execute({"query": "Where was Einstein born?"})
+ctx = executor.run({"query": "Where was Einstein born?"})
 ```
 
 Graph DB native FTS works with all three graph backends — each uses its native FTS engine:
@@ -1930,7 +2030,7 @@ $input.query ───┴──> retriever_2 (community) ────┤
 
 ```python
 # Single strategy (unchanged)
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Where was Einstein born?",
     entity_labels=["person", "location"],
     retrieval_strategy="entity",
@@ -1939,7 +2039,7 @@ result = grapsit.query_graph(
 )
 
 # Multiple strategies — auto-triggers fusion
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Where was Einstein born?",
     entity_labels=["person", "location"],
     retrieval_strategy=["entity", "path", "community"],
@@ -1951,29 +2051,29 @@ result = grapsit.query_graph(
 )
 ```
 
-#### Builder API — FusedQueryBuilder (recommended)
+#### Builder API — RetriCoFusedSearch (recommended)
 
-Configure each retrieval strategy as a separate `QueryConfigBuilder`, then combine via `FusedQueryBuilder`. Each builder can have its own strategy-specific settings:
+Configure each retrieval strategy as a separate `RetriCoSearch`, then combine via `RetriCoFusedSearch`. Each builder can have its own strategy-specific settings:
 
 ```python
-from grapsit import QueryConfigBuilder, FusedQueryBuilder, Neo4jConfig
+from retrico import RetriCoSearch, RetriCoFusedSearch, Neo4jConfig
 
 store = Neo4jConfig(uri="bolt://localhost:7687", password="password")
 
 # Entity lookup — parse query for entities, expand to 3-hop subgraph
-entity_builder = QueryConfigBuilder(name="entity")
+entity_builder = RetriCoSearch(name="entity")
 entity_builder.store(store)
 entity_builder.query_parser(labels=["person", "organization", "location"])
 entity_builder.retriever(max_hops=3)
 
 # Shortest paths — find connections between parsed entities
-path_builder = QueryConfigBuilder(name="path")
+path_builder = RetriCoSearch(name="path")
 path_builder.store(store)
 path_builder.query_parser(labels=["person", "organization", "location"])
 path_builder.path_retriever(max_path_length=5, max_pairs=10)
 
 # Community search — find relevant topic clusters via embeddings
-community_builder = QueryConfigBuilder(name="community")
+community_builder = RetriCoSearch(name="community")
 community_builder.store(store)
 community_builder.community_retriever(
     top_k=3,
@@ -1982,7 +2082,7 @@ community_builder.community_retriever(
 )
 
 # Chunk embedding — semantic search over source text chunks
-chunk_emb_builder = QueryConfigBuilder(name="chunk_emb")
+chunk_emb_builder = RetriCoSearch(name="chunk_emb")
 chunk_emb_builder.store(store)
 chunk_emb_builder.chunk_embedding_retriever(
     top_k=5,
@@ -1991,7 +2091,7 @@ chunk_emb_builder.chunk_embedding_retriever(
 )
 
 # Keyword search — BM25/full-text over chunks stored in the graph DB
-keyword_builder = QueryConfigBuilder(name="keyword")
+keyword_builder = RetriCoSearch(name="keyword")
 keyword_builder.store(store)
 keyword_builder.keyword_retriever(
     top_k=10,
@@ -2001,7 +2101,7 @@ keyword_builder.keyword_retriever(
 )
 
 # Combine all five strategies with RRF fusion, keep top 25 entities
-fused = FusedQueryBuilder(
+fused = RetriCoFusedSearch(
     entity_builder, path_builder, community_builder,
     chunk_emb_builder, keyword_builder,
     strategy="rrf",
@@ -2011,7 +2111,7 @@ fused.chunk_retriever()
 fused.reasoner(api_key="sk-...", model="gpt-4o-mini")
 
 executor = fused.build()
-ctx = executor.execute({"query": "What is the relationship between Einstein and quantum mechanics?"})
+ctx = executor.run({"query": "What is the relationship between Einstein and quantum mechanics?"})
 print(ctx.get("reasoner_result")["result"].answer)
 ```
 
@@ -2021,16 +2121,16 @@ The parser is auto-inherited from the first sub-builder that has one, so you onl
 
 ```python
 # Entity lookup + community search with weighted fusion
-entity = QueryConfigBuilder(name="entity")
+entity = RetriCoSearch(name="entity")
 entity.store(store)
 entity.query_parser(labels=["person", "location"])
 entity.retriever(max_hops=2)
 
-community = QueryConfigBuilder(name="community")
+community = RetriCoSearch(name="community")
 community.store(store)
 community.community_retriever(top_k=5)
 
-fused = FusedQueryBuilder(
+fused = RetriCoFusedSearch(
     entity, community,
     strategy="weighted",
     weights=[2.0, 1.0],  # prioritize entity matches
@@ -2038,17 +2138,17 @@ fused = FusedQueryBuilder(
 )
 fused.chunk_retriever()
 executor = fused.build()
-ctx = executor.execute({"query": "Where was Einstein born?"})
+ctx = executor.run({"query": "Where was Einstein born?"})
 ```
 
-#### Builder API — single QueryConfigBuilder (also works)
+#### Builder API — single RetriCoSearch (also works)
 
-Calling multiple retriever methods on a single `QueryConfigBuilder` still works:
+Calling multiple retriever methods on a single `RetriCoSearch` still works:
 
 ```python
-from grapsit import QueryConfigBuilder
+from retrico import RetriCoSearch
 
-builder = QueryConfigBuilder(name="hybrid_query")
+builder = RetriCoSearch(name="hybrid_query")
 builder.query_parser(labels=["person", "location"])
 
 # Add multiple retrievers (each call appends)
@@ -2063,7 +2163,7 @@ builder.chunk_retriever()
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")
 
 executor = builder.build()
-ctx = executor.execute({"query": "Where was Einstein born?"})
+ctx = executor.run({"query": "Where was Einstein born?"})
 ```
 
 #### Fusion strategies
@@ -2092,7 +2192,7 @@ A single retriever produces the exact same DAG as before (no fusion node) — fu
 After building, use `Neo4jGraphStore` to query directly (see [FalkorDB section](#direct-falkordb-queries) for FalkorDB, [Memgraph section](#direct-memgraph-queries) for Memgraph):
 
 ```python
-from grapsit import Neo4jGraphStore
+from retrico import Neo4jGraphStore
 
 store = Neo4jGraphStore(uri="bolt://localhost:7687", password="password")
 
@@ -2130,7 +2230,7 @@ store.close()
 All graph stores (Neo4j, FalkorDB, Memgraph) support high-level mutation methods for surgical changes without raw Cypher:
 
 ```python
-from grapsit import Neo4jGraphStore
+from retrico import Neo4jGraphStore
 
 store = Neo4jGraphStore(uri="bolt://localhost:7687", password="password")
 
@@ -2172,7 +2272,7 @@ store.close()
 
 ## LLM function calling (tool use)
 
-grapsit includes a tool-calling layer that lets an LLM query the knowledge graph via structured function calls. The LLM receives the graph schema (entity types, relation types, property keys) as context, produces structured tool calls, and each call is translated into a parameterised Cypher query.
+retrico includes a tool-calling layer that lets an LLM query the knowledge graph via structured function calls. The LLM receives the graph schema (entity types, relation types, property keys) as context, produces structured tool calls, and each call is translated into a parameterised Cypher query.
 
 ### Built-in tools
 
@@ -2236,9 +2336,9 @@ These tools use the same filter syntax as graph tools:
 The tool retriever automatically includes relational tools when a relational store is available (via the store pool or direct config). The LLM agent can then combine graph queries and chunk searches in a single session:
 
 ```python
-from grapsit import QueryConfigBuilder
+from retrico import RetriCoSearch
 
-builder = QueryConfigBuilder(name="tool_with_chunks")
+builder = RetriCoSearch(name="tool_with_chunks")
 builder.chunk_store(type="sqlite", sqlite_path="chunks.db")
 builder.tool_retriever(
     api_key="sk-...",
@@ -2250,7 +2350,7 @@ builder.tool_retriever(
 )
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")
 executor = builder.build()
-ctx = executor.execute({"query": "What did Einstein publish about relativity?"})
+ctx = executor.run({"query": "What did Einstein publish about relativity?"})
 ```
 
 The agent can call `search_entity` to find Einstein in the graph, `get_entity_relations` to find related concepts, and `search_chunks` to find source passages mentioning relativity — all in one agentic loop.
@@ -2260,8 +2360,8 @@ The agent can call `search_entity` to find Einstein in the graph, `get_entity_re
 You can also dispatch relational tool calls manually:
 
 ```python
-from grapsit.llm.tools import RELATIONAL_TOOLS, execute_relational_tool
-from grapsit.store.relational.sqlite_store import SqliteRelationalStore
+from retrico.llm.tools import RELATIONAL_TOOLS, execute_relational_tool
+from retrico.store.relational.sqlite_store import SqliteRelationalStore
 
 store = SqliteRelationalStore(path="chunks.db")
 
@@ -2283,7 +2383,7 @@ results = execute_relational_tool("query_records", {
 `RELATIONAL_TOOLS` contains the OpenAI function-calling tool definitions, so you can pass them to any LLM alongside `GRAPH_TOOLS`:
 
 ```python
-from grapsit.llm.tools import GRAPH_TOOLS, RELATIONAL_TOOLS
+from retrico.llm.tools import GRAPH_TOOLS, RELATIONAL_TOOLS
 
 all_tools = GRAPH_TOOLS + RELATIONAL_TOOLS
 result = client.complete_with_tools(messages=[...], tools=all_tools)
@@ -2292,8 +2392,8 @@ result = client.complete_with_tools(messages=[...], tools=all_tools)
 ### Using `complete_with_tools()`
 
 ```python
-from grapsit.llm.openai_client import OpenAIClient
-from grapsit.llm.tools import build_graph_schema_prompt, tool_call_to_cypher, GRAPH_TOOLS
+from retrico.llm.openai_client import OpenAIClient
+from retrico.llm.tools import build_graph_schema_prompt, tool_call_to_cypher, GRAPH_TOOLS
 
 client = OpenAIClient(api_key="sk-...", model="gpt-4o-mini")
 
@@ -2326,7 +2426,7 @@ for tc in result["tool_calls"]:
 `tool_call_to_cypher()` converts each tool call into a parameterised Cypher query:
 
 ```python
-from grapsit.llm.tools import tool_call_to_cypher
+from retrico.llm.tools import tool_call_to_cypher
 
 # search_entity
 cypher, params = tool_call_to_cypher("search_entity", {"label": "Einstein"})
@@ -2361,7 +2461,7 @@ cypher, params = tool_call_to_cypher("find_shortest_path", {
 Add your own tools by defining a tool schema and registering a Cypher translator:
 
 ```python
-from grapsit.llm.tools import GRAPH_TOOLS, register_tool_translator
+from retrico.llm.tools import GRAPH_TOOLS, register_tool_translator
 
 # Define a custom tool
 my_tool = {
@@ -2399,10 +2499,10 @@ After building a knowledge graph, you can detect communities of densely connecte
 ### `detect_communities()` convenience function
 
 ```python
-import grapsit
+import retrico
 
 # Detection only (no LLM needed)
-result = grapsit.detect_communities(
+result = retrico.detect_communities(
     neo4j_uri="bolt://localhost:7687",
     neo4j_password="password",
     method="louvain",    # "louvain" or "leiden"
@@ -2414,7 +2514,7 @@ print(f"Found {detector_result['community_count']} communities across {detector_
 # detector_result["communities"] is a dict: {level: {entity_id: community_id}}
 
 # Detection + LLM summarization + embedding (provide api_key to enable)
-result = grapsit.detect_communities(
+result = retrico.detect_communities(
     neo4j_uri="bolt://localhost:7687",
     neo4j_password="password",
     method="louvain",
@@ -2440,9 +2540,9 @@ for comm_id, s in summaries.items():
 For full control over the pipeline:
 
 ```python
-from grapsit import CommunityConfigBuilder
+from retrico import RetriCoCommunity
 
-builder = CommunityConfigBuilder(name="my_communities")
+builder = RetriCoCommunity(name="my_communities")
 
 # Step 1: Detector (required)
 builder.detector(
@@ -2469,7 +2569,7 @@ builder.embedder(
 )
 
 executor = builder.build(verbose=True)
-result = executor.execute({})
+result = executor.run({})
 
 # Save config for reproducibility
 builder.save("configs/community.yaml")
@@ -2508,7 +2608,7 @@ The community pipeline adds these nodes and relationships:
 
 ```python
 # FalkorDB
-result = grapsit.detect_communities(
+result = retrico.detect_communities(
     store_type="falkordb",
     falkordb_host="localhost",
     falkordb_port=6379,
@@ -2516,7 +2616,7 @@ result = grapsit.detect_communities(
 )
 
 # Memgraph
-result = grapsit.detect_communities(
+result = retrico.detect_communities(
     store_type="memgraph",
     memgraph_uri="bolt://localhost:7687",
 )
@@ -2533,9 +2633,9 @@ After building a knowledge graph, you can train knowledge graph embeddings using
 ### `train_kg_model()` convenience function
 
 ```python
-import grapsit
+import retrico
 
-result = grapsit.train_kg_model(
+result = retrico.train_kg_model(
     # Triple source
     source="graph_store",           # "graph_store" or "tsv"
     # tsv_path="triples.tsv",      # if source="tsv"
@@ -2575,9 +2675,9 @@ print(f"Model saved to: {storer['model_path']}")
 ### KG modeling builder API
 
 ```python
-from grapsit import KGModelingConfigBuilder
+from retrico import RetriCoModeling
 
-builder = KGModelingConfigBuilder(name="my_kg_model")
+builder = RetriCoModeling(name="my_kg_model")
 
 # Step 1: Read triples from the graph
 builder.triple_reader(
@@ -2607,7 +2707,7 @@ builder.storer(
 )
 
 executor = builder.build(verbose=True)
-result = executor.execute({})
+result = executor.run({})
 
 # Save config for reproducibility
 builder.save("configs/kg_modeling.yaml")
@@ -2620,9 +2720,9 @@ Store parameters set on the triple reader are automatically inherited by the sto
 Add a `kg_scorer` node to any query pipeline to score existing triples and predict missing links:
 
 ```python
-from grapsit import QueryConfigBuilder
+from retrico import RetriCoSearch
 
-builder = QueryConfigBuilder(name="scored_query")
+builder = RetriCoSearch(name="scored_query")
 builder.query_parser(labels=["person", "location"])
 builder.retriever(neo4j_uri="bolt://localhost:7687", max_hops=2)
 builder.chunk_retriever()
@@ -2639,7 +2739,7 @@ builder.kg_scorer(
 
 builder.reasoner(api_key="sk-...", model="gpt-4o-mini")  # optional
 executor = builder.build()
-ctx = executor.execute({"query": "Where was Einstein born?"})
+ctx = executor.run({"query": "Where was Einstein born?"})
 
 # Access scoring results
 scorer_result = ctx.get("kg_scorer_result")
@@ -2662,8 +2762,8 @@ The KG scorer can also act as a **universal retriever** using the `kg_scored` st
 See `configs/kg_modeling.yaml` for a complete training pipeline config. Load it with:
 
 ```python
-executor = grapsit.ProcessorFactory.create_pipeline("configs/kg_modeling.yaml")
-result = executor.execute({})
+executor = retrico.ProcessorFactory.create_pipeline("configs/kg_modeling.yaml")
+result = executor.run({})
 ```
 
 ## Store pool (shared connections)
@@ -2675,9 +2775,9 @@ By default, each processor in a pipeline creates its own store connection. The *
 When using the builder API, all processors automatically share connections — no extra configuration needed:
 
 ```python
-from grapsit import BuildConfigBuilder
+from retrico import RetriCoBuilder
 
-builder = BuildConfigBuilder(name="my_pipeline")
+builder = RetriCoBuilder(name="my_pipeline")
 builder.chunker(method="sentence")
 builder.ner_gliner(labels=["person", "organization", "location"])
 builder.graph_writer(neo4j_uri="bolt://localhost:7687", neo4j_password="password")
@@ -2686,7 +2786,7 @@ builder.entity_embedder(embedding_method="sentence_transformer", model_name="all
 
 # graph_writer, chunk_embedder, and entity_embedder all share the same Neo4j connection
 executor = builder.build(verbose=True)
-result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+result = executor.run({"texts": ["Einstein was born in Ulm."]})
 ```
 
 ### Context manager
@@ -2695,7 +2795,7 @@ result = executor.execute({"texts": ["Einstein was born in Ulm."]})
 
 ```python
 with builder.build() as executor:
-    result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+    result = executor.run({"texts": ["Einstein was born in Ulm."]})
 # All store connections are closed here
 ```
 
@@ -2704,9 +2804,9 @@ with builder.build() as executor:
 Register multiple stores by name and reference them from different pipeline nodes:
 
 ```python
-from grapsit import BuildConfigBuilder, Neo4jConfig, FaissVectorConfig
+from retrico import RetriCoBuilder, Neo4jConfig, FaissVectorConfig
 
-builder = BuildConfigBuilder(name="multi_store")
+builder = RetriCoBuilder(name="multi_store")
 builder.chunker(method="sentence")
 builder.ner_gliner(labels=["person", "location"])
 
@@ -2718,7 +2818,7 @@ builder.graph_writer()
 builder.chunk_embedder()
 
 with builder.build() as executor:
-    result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+    result = executor.run({"texts": ["Einstein was born in Ulm."]})
 ```
 
 ### Typed store configs
@@ -2728,7 +2828,7 @@ Graph and vector stores can be configured with typed Pydantic config objects:
 **Graph store configs:**
 
 ```python
-from grapsit import Neo4jConfig, FalkorDBConfig, MemgraphConfig
+from retrico import Neo4jConfig, FalkorDBConfig, MemgraphConfig
 
 neo4j = Neo4jConfig(uri="bolt://localhost:7687", password="password")
 falkor = FalkorDBConfig(host="localhost", port=6379, graph="my_graph")
@@ -2738,7 +2838,7 @@ memgraph = MemgraphConfig(uri="bolt://localhost:7687")
 **Vector store configs:**
 
 ```python
-from grapsit import InMemoryVectorConfig, FaissVectorConfig, QdrantVectorConfig, GraphDBVectorConfig
+from retrico import InMemoryVectorConfig, FaissVectorConfig, QdrantVectorConfig, GraphDBVectorConfig
 
 in_mem = InMemoryVectorConfig()
 faiss = FaissVectorConfig(use_gpu=True)
@@ -2751,7 +2851,7 @@ graph_db = GraphDBVectorConfig(graph_store_name="main")  # reuses a named graph 
 For advanced use cases, create and manage a `StorePool` directly:
 
 ```python
-from grapsit import StorePool
+from retrico import StorePool
 
 pool = StorePool()
 pool.register_graph("main", {"store_type": "neo4j", "neo4j_uri": "bolt://localhost:7687"})
@@ -2799,10 +2899,10 @@ All existing configs and calling patterns continue to work unchanged:
 
 ## Accessing intermediate results
 
-`build_graph()` and `executor.execute()` return a `PipeContext` containing every pipeline stage output:
+`build_graph()` and `executor.run()` return a `PipeContext` containing every pipeline stage output:
 
 ```python
-result = grapsit.build_graph(texts=..., entity_labels=...)
+result = retrico.build_graph(texts=..., entity_labels=...)
 
 # Texts pulled from a relational store (if store_reader was used)
 # store_reader_result = result.get("store_reader_result")  # {"texts", "documents", "source_records"}
@@ -2860,7 +2960,7 @@ MATCH (e:Entity {label: "Albert Einstein"})-[r]-(n) RETURN e, r, n
 
 ## Pipeline architecture
 
-grapsit uses a DAG (directed acyclic graph) pipeline engine adapted from [GLinker](https://github.com/Knowledgator/GLinker). Each pipeline is a set of **nodes** connected by data dependencies:
+retrico uses a DAG (directed acyclic graph) pipeline engine adapted from [GLinker](https://github.com/Knowledgator/GLinker). Each pipeline is a set of **nodes** connected by data dependencies:
 
 **Build pipeline:**
 
@@ -2972,13 +3072,14 @@ When a `StorePool` is attached to the executor (via builders or YAML `stores` se
 | Processor | Description | Key config |
 |-----------|-------------|------------|
 | `store_reader` | Pull texts from a relational store | `table`, `text_field`, `id_field`, `metadata_fields`, `limit`, `offset`, `filter_empty`, relational store params |
-| `chunker` | Split text into chunks | `method` (sentence/paragraph/fixed), `chunk_size`, `overlap` |
+| `pdf_reader` | Extract text + tables from PDFs (page-level chunks) | `extract_text`, `extract_tables`, `page_ids` |
+| `chunker` | Split text into chunks | `method` (sentence/paragraph/fixed/page), `chunk_size`, `overlap` |
 | `ner_gliner` | Entity extraction with GLiNER | `model`, `labels`, `threshold`, `device` |
 | `ner_llm` | Entity extraction with LLM | `model`, `labels`, `api_key`, `base_url`, `temperature` |
 | `entity_linker` | Entity linking with GLinker | `executor`, `model`, `threshold`, `entities` |
 | `relex_gliner` | Relation extraction with GLiNER-relex | `model`, `entity_labels`, `relation_labels`, `threshold`, `relation_threshold` |
 | `relex_llm` | Relation extraction with LLM | `model`, `entity_labels`, `relation_labels`, `api_key`, `base_url`, `temperature` |
-| `data_ingest` | Convert flat JSON to graph_writer format | (used internally by `IngestConfigBuilder`) |
+| `data_ingest` | Convert flat JSON to graph_writer format | (used internally by `RetriCoIngest`) |
 | `graph_writer` | Deduplicate and write to graph store | `store_type`, `neo4j_uri`/`falkordb_host`/`memgraph_uri`, `json_output`, `setup_indexes`, `graph_store_name`, … |
 | `chunk_embedder` | Embed chunk texts into vector store | `embedding_method`, `model_name`, `vector_store_type`, `vector_index_name`, store params |
 | `entity_embedder` | Embed entity labels into vector store | `embedding_method`, `model_name`, `vector_store_type`, `vector_index_name`, store params |
@@ -3002,7 +3103,7 @@ You can add your own graph database backend by implementing `BaseGraphStore` and
 
 ```python
 # my_store.py
-from grapsit.store.graph.base import BaseGraphStore
+from retrico.store.graph.base import BaseGraphStore
 
 
 class TigerGraphStore(BaseGraphStore):
@@ -3073,12 +3174,12 @@ class TigerGraphStore(BaseGraphStore):
     # ... implement remaining abstract methods (write_document, write_chunk, etc.)
 ```
 
-`BaseGraphStore` has ~20 abstract methods. For a minimal working backend, the critical ones are: `setup_indexes`, `close`, `write_entity`, `write_relation`, `get_entity_by_label`, `get_entity_by_id`, `get_entity_neighbors`, `get_entity_relations`, `get_chunks_for_entity`, and `get_subgraph`. See `src/grapsit/store/graph/neo4j_store.py` for a complete reference implementation.
+`BaseGraphStore` has ~20 abstract methods. For a minimal working backend, the critical ones are: `setup_indexes`, `close`, `write_entity`, `write_relation`, `get_entity_by_label`, `get_entity_by_id`, `get_entity_neighbors`, `get_entity_relations`, `get_chunks_for_entity`, and `get_subgraph`. See `src/retrico/store/graph/neo4j_store.py` for a complete reference implementation.
 
 ### Step 2: Register the store
 
 ```python
-import grapsit
+import retrico
 
 def create_tigergraph(config):
     from my_store import TigerGraphStore
@@ -3089,13 +3190,13 @@ def create_tigergraph(config):
         token=config.get("tigergraph_token"),
     )
 
-grapsit.register_graph_store("tigergraph", create_tigergraph)
+retrico.register_graph_store("tigergraph", create_tigergraph)
 ```
 
 Or use the decorator form on the registry directly:
 
 ```python
-from grapsit.store.graph import graph_store_registry
+from retrico.store.graph import graph_store_registry
 
 @graph_store_registry.register("tigergraph")
 def create_tigergraph(config):
@@ -3114,7 +3215,7 @@ Once registered, `store_type="tigergraph"` works across all APIs:
 
 ```python
 # Convenience function
-result = grapsit.build_graph(
+result = retrico.build_graph(
     texts=["Einstein was born in Ulm."],
     entity_labels=["person", "location"],
     relation_labels=["born in"],
@@ -3125,7 +3226,7 @@ result = grapsit.build_graph(
 )
 
 # Builder API
-builder = grapsit.BuildConfigBuilder(name="tigergraph_pipeline")
+builder = retrico.RetriCoBuilder(name="tigergraph_pipeline")
 builder.chunker(method="sentence")
 builder.ner_gliner(labels=["person", "location"])
 builder.graph_writer(
@@ -3134,10 +3235,10 @@ builder.graph_writer(
     tigergraph_graph="KnowledgeGraph",
 )
 executor = builder.build()
-result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+result = executor.run({"texts": ["Einstein was born in Ulm."]})
 
 # Query pipeline
-result = grapsit.query_graph(
+result = retrico.query_graph(
     query="Where was Einstein born?",
     entity_labels=["person", "location"],
     store_type="tigergraph",
@@ -3148,7 +3249,7 @@ result = grapsit.query_graph(
 # Store pool (shared connection)
 builder.graph_store({"store_type": "tigergraph", "tigergraph_host": "localhost"}, name="main")
 with builder.build() as executor:
-    result = executor.execute({"texts": [...]})
+    result = executor.run({"texts": [...]})
 ```
 
 YAML configs work too:
@@ -3168,8 +3269,8 @@ nodes:
 The same pattern applies to vector stores:
 
 ```python
-import grapsit
-from grapsit.store.vector.base import BaseVectorStore
+import retrico
+from retrico.store.vector.base import BaseVectorStore
 
 
 class PineconeVectorStore(BaseVectorStore):
@@ -3198,7 +3299,7 @@ def create_pinecone(config):
         environment=config.get("pinecone_environment", "us-east-1"),
     )
 
-grapsit.register_vector_store("pinecone", create_pinecone)
+retrico.register_vector_store("pinecone", create_pinecone)
 
 # Now use it
 builder.chunk_embedder(
@@ -3215,8 +3316,8 @@ The same registry pattern applies to pipeline processors. There are three catego
 **Example: custom NER processor**
 
 ```python
-import grapsit
-from grapsit.core.base import BaseProcessor
+import retrico
+from retrico.core.base import BaseProcessor
 
 
 class SpacyNERProcessor(BaseProcessor):
@@ -3232,7 +3333,7 @@ class SpacyNERProcessor(BaseProcessor):
             import spacy
             self._nlp = spacy.load(self.config.get("model", "en_core_web_sm"))
 
-        from grapsit.models import EntityMention
+        from retrico.models import EntityMention
 
         all_entities = []
         for chunk in chunks:
@@ -3250,13 +3351,13 @@ class SpacyNERProcessor(BaseProcessor):
 
 
 # Register it
-grapsit.register_construct_processor("ner_spacy", lambda config, pipeline=None: SpacyNERProcessor(config, pipeline))
+retrico.register_construct_processor("ner_spacy", lambda config, pipeline=None: SpacyNERProcessor(config, pipeline))
 ```
 
 Use the decorator form for more concise registration:
 
 ```python
-from grapsit.core.registry import construct_registry
+from retrico.core.registry import construct_registry
 
 @construct_registry.register("ner_spacy")
 def create_spacy_ner(config, pipeline=None):
@@ -3267,7 +3368,7 @@ Once registered, the processor works in builder and YAML pipelines:
 
 ```python
 # Builder API — use any registered processor by name
-builder = grapsit.BuildConfigBuilder(name="spacy_pipeline")
+builder = retrico.RetriCoBuilder(name="spacy_pipeline")
 builder.chunker(method="sentence")
 builder.add_node(
     id="ner", processor="ner_spacy",
@@ -3278,7 +3379,7 @@ builder.add_node(
 builder.relex_llm(api_key="sk-...", entity_labels=["person", "org"], relation_labels=["works at"])
 builder.graph_writer(neo4j_uri="bolt://localhost:7687")
 executor = builder.build()
-result = executor.execute({"texts": ["Einstein worked at Princeton."]})
+result = executor.run({"texts": ["Einstein worked at Princeton."]})
 ```
 
 ```yaml
@@ -3297,7 +3398,7 @@ nodes:
 **Example: custom retriever**
 
 ```python
-from grapsit.core.registry import query_registry
+from retrico.core.registry import query_registry
 
 @query_registry.register("my_hybrid_retriever")
 def create_hybrid_retriever(config, pipeline=None):
@@ -3308,10 +3409,10 @@ def create_hybrid_retriever(config, pipeline=None):
 
 | Registry | Category | Convenience function |
 |----------|----------|---------------------|
-| `grapsit.construct_registry` | Build pipeline (chunker, NER, relex, graph_writer, ...) | `grapsit.register_construct_processor()` |
-| `grapsit.query_registry` | Query pipeline (parser, retrievers, reasoner, ...) | `grapsit.register_query_processor()` |
-| `grapsit.modeling_registry` | KG modeling (community detection, KG training, ...) | `grapsit.register_modeling_processor()` |
-| `grapsit.processor_registry` | Composite — searches all three registries | N/A (use category-specific functions) |
+| `retrico.construct_registry` | Build pipeline (chunker, NER, relex, graph_writer, ...) | `retrico.register_construct_processor()` |
+| `retrico.query_registry` | Query pipeline (parser, retrievers, reasoner, ...) | `retrico.register_query_processor()` |
+| `retrico.modeling_registry` | KG modeling (community detection, KG training, ...) | `retrico.register_modeling_processor()` |
+| `retrico.processor_registry` | Composite — searches all three registries | N/A (use category-specific functions) |
 
 ## Development
 
@@ -3339,5 +3440,5 @@ python3 -m venv .venv
 - ~~**KG modeling** — PyKEEN KG embedding training, storage, and query-time link prediction~~ Done
 - ~~**Store pool** — named store pool with shared connections, typed vector store configs, context manager support~~ Done
 - ~~**Multi-retriever fusion** — combine multiple retrieval strategies (union, RRF, weighted, intersection) with automatic DAG wiring~~ Done
-- ~~**CLI** — `grapsit build --config pipeline.yaml`, interactive wizards, graph CRUD, REPL shell~~ Done
+- ~~**CLI** — `retrico build --config pipeline.yaml`, interactive wizards, graph CRUD, REPL shell~~ Done
 - **In-memory store** — testing without a database

@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.query.keyword_retriever import KeywordRetrieverProcessor
+from retrico.query.keyword_retriever import KeywordRetrieverProcessor
 
 
 class TestKeywordRetrieverChunksOnly:
@@ -229,7 +229,7 @@ class TestKeywordRetrieverConfig:
 
         mock_store = MagicMock()
         with patch(
-            "grapsit.store.pool.resolve_from_pool_or_create",
+            "retrico.store.pool.resolve_from_pool_or_create",
             return_value=mock_store,
         ) as mock_resolve:
             proc._ensure_relational_store()
@@ -242,7 +242,7 @@ class TestKeywordRetrieverConfig:
         existing = proc._relational_store
 
         with patch(
-            "grapsit.store.pool.resolve_from_pool_or_create"
+            "retrico.store.pool.resolve_from_pool_or_create"
         ) as mock_resolve:
             proc._ensure_relational_store()
             mock_resolve.assert_not_called()
@@ -251,6 +251,6 @@ class TestKeywordRetrieverConfig:
 
 class TestKeywordRetrieverRegistration:
     def test_registered(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         factory = processor_registry.get("keyword_retriever")
         assert factory is not None

@@ -4,12 +4,12 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.construct.ner_llm import NERLLMProcessor
-from grapsit.extraction.utils import (
+from retrico.construct.ner_llm import NERLLMProcessor
+from retrico.extraction.utils import (
     parse_entities_json as _parse_entities_json,
     find_entity_offsets as _find_entity_offsets,
 )
-from grapsit.models.document import Chunk
+from retrico.models.document import Chunk
 
 
 class TestParseEntitiesJson:

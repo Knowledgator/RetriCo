@@ -16,7 +16,7 @@ class EntityLinkerProcessor(BaseProcessor):
 
     Supports three usage modes:
     1. Pre-built executor: user passes their own GLinker DAGExecutor
-    2. From parameters: grapsit initializes GLinker from config
+    2. From parameters: retrico initializes GLinker from config
     3. End-to-end: GLinker does its own NER + linking when no upstream entities
 
     Config keys:

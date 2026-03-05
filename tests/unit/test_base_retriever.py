@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import MagicMock
 
-from grapsit.query.base_retriever import BaseRetriever
-from grapsit.models.entity import EntityMention
+from retrico.query.base_retriever import BaseRetriever
+from retrico.models.entity import EntityMention
 
 
 class ConcreteRetriever(BaseRetriever):

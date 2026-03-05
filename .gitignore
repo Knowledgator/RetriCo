@@ -7,7 +7,7 @@ __pycache__/
 *.so
 
 # Configs
-.grapsit.yaml
+.retrico.yaml
 
 # Distribution / packaging
 .Python

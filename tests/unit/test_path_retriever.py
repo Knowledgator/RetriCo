@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import MagicMock
 
-from grapsit.query.path_retriever import PathRetrieverProcessor
-from grapsit.models.entity import EntityMention
+from retrico.query.path_retriever import PathRetrieverProcessor
+from retrico.models.entity import EntityMention
 
 
 class TestPathRetrieverProcessor:

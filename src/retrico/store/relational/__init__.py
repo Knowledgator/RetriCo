@@ -18,7 +18,7 @@ def _create_postgres(config: dict):
         port=config.get("postgres_port", 5432),
         user=config.get("postgres_user", "postgres"),
         password=config.get("postgres_password", ""),
-        database=config.get("postgres_database", "grapsit"),
+        database=config.get("postgres_database", "retrico"),
     )
 
 
@@ -27,7 +27,7 @@ def _create_elasticsearch(config: dict):
     return ElasticsearchRelationalStore(
         url=config.get("elasticsearch_url", "http://localhost:9200"),
         api_key=config.get("elasticsearch_api_key"),
-        index_prefix=config.get("elasticsearch_index_prefix", "grapsit_"),
+        index_prefix=config.get("elasticsearch_index_prefix", "retrico_"),
     )
 
 

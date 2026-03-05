@@ -54,6 +54,8 @@ class ChunkerProcessor(BaseProcessor):
             return self._sentence_chunk(text, document_id)
         elif self.method == "paragraph":
             return self._paragraph_chunk(text, document_id)
+        elif self.method == "page":
+            return self._page_chunk(text, document_id)
         else:
             return self._fixed_chunk(text, document_id)
 
@@ -87,6 +89,27 @@ class ChunkerProcessor(BaseProcessor):
                 start_char=start if start >= 0 else 0,
                 end_char=(start + len(para)) if start >= 0 else len(para),
             ))
+        return chunks
+
+    def _page_chunk(self, text: str, document_id: str) -> List[Chunk]:
+        """Split text by form-feed characters (page breaks)."""
+        pages = text.split("\f")
+        chunks = []
+        offset = 0
+        for i, page in enumerate(pages):
+            if not page.strip():
+                offset += len(page) + 1
+                continue
+            start = offset
+            end = offset + len(page)
+            chunks.append(Chunk(
+                document_id=document_id,
+                text=page.strip(),
+                index=i,
+                start_char=start,
+                end_char=end,
+            ))
+            offset = end + 1  # +1 for the \f character
         return chunks
 
     def _fixed_chunk(self, text: str, document_id: str) -> List[Chunk]:

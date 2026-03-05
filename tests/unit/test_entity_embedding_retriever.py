@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import MagicMock
 
-from grapsit.query.entity_embedding_retriever import EntityEmbeddingRetrieverProcessor
-from grapsit.models.entity import EntityMention
+from retrico.query.entity_embedding_retriever import EntityEmbeddingRetrieverProcessor
+from retrico.models.entity import EntityMention
 
 
 class TestEntityEmbeddingRetrieverProcessor:

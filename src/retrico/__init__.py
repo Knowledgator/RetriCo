@@ -1,4 +1,4 @@
-"""grapsit — End-to-end Graph RAG using Knowledgator technologies."""
+"""retrico — End-to-end Graph RAG using Knowledgator technologies."""
 
 # Register all construct processors on import.
 from . import construct as _construct  # noqa: F401
@@ -9,7 +9,13 @@ from . import modeling as _modeling  # noqa: F401
 
 from .core.dag import DAGExecutor, PipeContext
 from .core.factory import ProcessorFactory
-from .core.builders import BuildConfigBuilder, QueryConfigBuilder, IngestConfigBuilder, CommunityConfigBuilder, KGModelingConfigBuilder, FusedQueryBuilder
+from .core.builders import (
+    RetriCoBuilder, RetriCoSearch, RetriCoIngest, RetriCoCommunity,
+    RetriCoModeling, RetriCoFusedSearch,
+    # Backward-compatible aliases
+    BuildConfigBuilder, QueryConfigBuilder, IngestConfigBuilder,
+    CommunityConfigBuilder, KGModelingConfigBuilder, FusedQueryBuilder,
+)
 from .core.registry import (
     processor_registry, construct_registry, query_registry, modeling_registry,
 )
@@ -102,6 +108,7 @@ __all__ = [
     # Public API
     "build_graph",
     "build_graph_from_store",
+    "build_graph_from_pdf",
     "query_graph",
     "ingest_data",
     "detect_communities",
@@ -116,6 +123,13 @@ __all__ = [
     "DAGExecutor",
     "PipeContext",
     "ProcessorFactory",
+    "RetriCoBuilder",
+    "RetriCoSearch",
+    "RetriCoIngest",
+    "RetriCoCommunity",
+    "RetriCoModeling",
+    "RetriCoFusedSearch",
+    # Backward-compatible aliases
     "BuildConfigBuilder",
     "QueryConfigBuilder",
     "IngestConfigBuilder",
@@ -197,7 +211,7 @@ def build_graph(
     store_type: str = "falkordb_lite",
     falkordb_host: str = "localhost",
     falkordb_port: int = 6379,
-    falkordb_graph: str = "grapsit",
+    falkordb_graph: str = "retrico",
     memgraph_uri: str = "bolt://localhost:7687",
     memgraph_user: str = "",
     memgraph_password: str = "",
@@ -247,7 +261,7 @@ def build_graph(
             memgraph_database=memgraph_database,
         )
 
-    builder = BuildConfigBuilder(name="build_graph")
+    builder = RetriCoBuilder(name="build_graph")
     builder.store(store_config)
     builder.chunker(method=chunk_method)
     builder.ner_gliner(model=ner_model, labels=entity_labels, threshold=ner_threshold, device=device)
@@ -288,7 +302,97 @@ def build_graph(
         )
 
     executor = builder.build(verbose=verbose)
-    return executor.execute({"texts": texts})
+    return executor.run(texts=texts)
+
+
+def build_graph_from_pdf(
+    pdf_paths: List[str],
+    *,
+    entity_labels: List[str],
+    relation_labels: List[str] = None,
+    extract_text: bool = True,
+    extract_tables: bool = True,
+    page_ids: List[int] = None,
+    ner_model: str = "urchade/gliner_multi-v2.1",
+    relex_model: str = "knowledgator/gliner-relex-large-v0.5",
+    ner_threshold: float = 0.3,
+    relex_threshold: float = 0.5,
+    device: str = "cpu",
+    verbose: bool = False,
+    json_output: str = None,
+    store_type: str = "falkordb_lite",
+    neo4j_uri: str = "bolt://localhost:7687",
+    neo4j_user: str = "neo4j",
+    neo4j_password: str = "password",
+    neo4j_database: str = "neo4j",
+    falkordb_host: str = "localhost",
+    falkordb_port: int = 6379,
+    falkordb_graph: str = "retrico",
+    store_config: BaseStoreConfig = None,
+    write_reversed_relations: bool = False,
+) -> PipeContext:
+    """Build a knowledge graph from PDF files.
+
+    Each PDF page becomes one chunk.  Tables are extracted and converted
+    to Markdown format.  Chunk metadata includes ``page_number`` and
+    ``source_pdf``.
+
+    Args:
+        pdf_paths: List of paths to PDF files.
+        entity_labels: Entity types for NER.
+        relation_labels: Relation types. If None, relex is skipped.
+        extract_text: Extract regular text from pages.
+        extract_tables: Extract tables and convert to Markdown.
+        page_ids: Specific page numbers to extract (0-indexed). None = all.
+        ner_model: GLiNER model for NER.
+        relex_model: GLiNER-relex model for relation extraction.
+        ner_threshold: NER confidence threshold.
+        relex_threshold: Relation extraction threshold.
+        device: "cpu" or "cuda".
+        verbose: Enable verbose logging.
+        json_output: Path to save extracted data as JSON.
+        store_config: A BaseStoreConfig object. Overrides individual store params.
+        write_reversed_relations: If True, write reversed relations.
+
+    Returns:
+        PipeContext with all intermediate results.
+    """
+    if store_config is None:
+        store_config = resolve_store_config(
+            store_type=store_type, neo4j_uri=neo4j_uri, neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password, neo4j_database=neo4j_database,
+            falkordb_host=falkordb_host, falkordb_port=falkordb_port,
+            falkordb_graph=falkordb_graph,
+        )
+
+    builder = RetriCoBuilder(name="build_graph_from_pdf")
+    builder.store(store_config)
+    builder.pdf_reader(
+        extract_text=extract_text,
+        extract_tables=extract_tables,
+        page_ids=page_ids,
+    )
+    builder.ner_gliner(
+        model=ner_model, labels=entity_labels,
+        threshold=ner_threshold, device=device,
+    )
+
+    if relation_labels:
+        builder.relex_gliner(
+            model=relex_model,
+            entity_labels=entity_labels,
+            relation_labels=relation_labels,
+            threshold=relex_threshold,
+            device=device,
+        )
+
+    builder.graph_writer(
+        json_output=json_output,
+        write_reversed_relations=write_reversed_relations,
+    )
+
+    executor = builder.build(verbose=verbose)
+    return executor.run(pdf_paths=pdf_paths)
 
 
 def build_graph_from_store(
@@ -308,10 +412,10 @@ def build_graph_from_store(
     postgres_port: int = 5432,
     postgres_user: str = "postgres",
     postgres_password: str = "",
-    postgres_database: str = "grapsit",
+    postgres_database: str = "retrico",
     elasticsearch_url: str = "http://localhost:9200",
     elasticsearch_api_key: str = None,
-    elasticsearch_index_prefix: str = "grapsit_",
+    elasticsearch_index_prefix: str = "retrico_",
     ner_model: str = "urchade/gliner_multi-v2.1",
     relex_model: str = "knowledgator/gliner-relex-large-v0.5",
     ner_threshold: float = 0.3,
@@ -360,7 +464,7 @@ def build_graph_from_store(
             neo4j_password=neo4j_password, neo4j_database=neo4j_database,
         )
 
-    builder = BuildConfigBuilder(name="build_graph_from_store")
+    builder = RetriCoBuilder(name="build_graph_from_store")
     builder.store(store_config)
 
     # Configure relational store for store_reader
@@ -402,7 +506,7 @@ def build_graph_from_store(
     builder.graph_writer(json_output=json_output)
 
     executor = builder.build(verbose=verbose)
-    return executor.execute({})
+    return executor.run()
 
 
 def query_graph(
@@ -427,7 +531,7 @@ def query_graph(
     store_type: str = "falkordb_lite",
     falkordb_host: str = "localhost",
     falkordb_port: int = 6379,
-    falkordb_graph: str = "grapsit",
+    falkordb_graph: str = "retrico",
     memgraph_uri: str = "bolt://localhost:7687",
     memgraph_user: str = "",
     memgraph_password: str = "",
@@ -585,10 +689,10 @@ def query_graph(
                 builder.linker(**linker_kw)
 
     if is_multi:
-        # Multi-strategy: create separate builders, combine via FusedQueryBuilder
+        # Multi-strategy: create separate builders, combine via RetriCoFusedSearch
         sub_builders = []
         for strategy in strategies:
-            sb = QueryConfigBuilder(name=f"query_{strategy}")
+            sb = RetriCoSearch(name=f"query_{strategy}")
             sb.store(store_config)
             _add_parser_and_linker(sb)
             _configure_retriever(sb, strategy)
@@ -600,7 +704,7 @@ def query_graph(
         if fusion_strategy == "intersection":
             fusion_kw["min_sources"] = fusion_min_sources
 
-        fused = FusedQueryBuilder(*sub_builders, name="query_graph", **fusion_kw)
+        fused = RetriCoFusedSearch(*sub_builders, name="query_graph", **fusion_kw)
 
         chunk_kw = {}
         if "chunk_entity_source" in retriever_kwargs:
@@ -612,8 +716,8 @@ def query_graph(
 
         executor = fused.build(verbose=verbose)
     else:
-        # Single strategy: use QueryConfigBuilder directly (backward compatible)
-        builder = QueryConfigBuilder(name="query_graph")
+        # Single strategy: use RetriCoSearch directly (backward compatible)
+        builder = RetriCoSearch(name="query_graph")
         builder.store(store_config)
         _add_parser_and_linker(builder)
         _configure_retriever(builder, strategies[0])
@@ -628,7 +732,7 @@ def query_graph(
 
         executor = builder.build(verbose=verbose)
 
-    ctx = executor.execute({"query": query})
+    ctx = executor.run(query=query)
 
     # Extract QueryResult from the appropriate output
     if api_key is not None and ctx.has("reasoner_result"):
@@ -653,7 +757,7 @@ def ingest_data(
     store_type: str = "falkordb_lite",
     falkordb_host: str = "localhost",
     falkordb_port: int = 6379,
-    falkordb_graph: str = "grapsit",
+    falkordb_graph: str = "retrico",
     memgraph_uri: str = "bolt://localhost:7687",
     memgraph_user: str = "",
     memgraph_password: str = "",
@@ -687,9 +791,9 @@ def ingest_data(
 
     Example::
 
-        import grapsit
+        import retrico
 
-        result = grapsit.ingest_data(
+        result = retrico.ingest_data(
             data=[
                 {
                     "entities": [
@@ -715,12 +819,12 @@ def ingest_data(
             memgraph_database=memgraph_database,
         )
 
-    builder = IngestConfigBuilder(name="ingest_data")
+    builder = RetriCoIngest(name="ingest_data")
     builder.store(store_config)
     builder.graph_writer(json_output=json_output, write_reversed_relations=write_reversed_relations)
 
     executor = builder.build(verbose=verbose)
-    return executor.execute({"data": data})
+    return executor.run(data=data)
 
 
 def detect_communities(
@@ -735,7 +839,7 @@ def detect_communities(
     store_type: str = "falkordb_lite",
     falkordb_host: str = "localhost",
     falkordb_port: int = 6379,
-    falkordb_graph: str = "grapsit",
+    falkordb_graph: str = "retrico",
     memgraph_uri: str = "bolt://localhost:7687",
     memgraph_user: str = "",
     memgraph_password: str = "",
@@ -786,7 +890,7 @@ def detect_communities(
             memgraph_database=memgraph_database,
         )
 
-    builder = CommunityConfigBuilder(name="detect_communities")
+    builder = RetriCoCommunity(name="detect_communities")
     builder.store(store_config)
     builder.detector(
         method=method,
@@ -803,7 +907,7 @@ def detect_communities(
         )
 
     executor = builder.build(verbose=verbose)
-    return executor.execute({})
+    return executor.run()
 
 
 def train_kg_model(
@@ -829,7 +933,7 @@ def train_kg_model(
     store_type: str = "falkordb_lite",
     falkordb_host: str = "localhost",
     falkordb_port: int = 6379,
-    falkordb_graph: str = "grapsit",
+    falkordb_graph: str = "retrico",
     memgraph_uri: str = "bolt://localhost:7687",
     memgraph_user: str = "",
     memgraph_password: str = "",
@@ -878,7 +982,7 @@ def train_kg_model(
             memgraph_database=memgraph_database,
         )
 
-    builder = KGModelingConfigBuilder(name="train_kg_model")
+    builder = RetriCoModeling(name="train_kg_model")
     builder.store(store_config)
     builder.triple_reader(
         source=source,
@@ -901,7 +1005,7 @@ def train_kg_model(
         store_to_graph=store_to_graph,
     )
     executor = builder.build(verbose=verbose)
-    return executor.execute({})
+    return executor.run()
 
 
 def extract(

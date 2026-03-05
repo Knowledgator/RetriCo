@@ -1,4 +1,4 @@
-"""grapsit CLI — command-line interface for the grapsit Graph RAG package."""
+"""retrico CLI — command-line interface for the retrico Graph RAG package."""
 
 import json
 import os
@@ -14,11 +14,11 @@ import yaml
 # Connection config file helpers
 # ---------------------------------------------------------------------------
 
-_CONFIG_FILE = ".grapsit.yaml"
+_CONFIG_FILE = ".retrico.yaml"
 
 
 def _load_saved_config() -> Dict[str, Any]:
-    """Load store config from .grapsit.yaml in cwd (if it exists)."""
+    """Load store config from .retrico.yaml in cwd (if it exists)."""
     p = Path(_CONFIG_FILE)
     if p.exists():
         with open(p) as f:
@@ -28,7 +28,7 @@ def _load_saved_config() -> Dict[str, Any]:
 
 
 def _save_config(store_cfg: Dict[str, Any]) -> None:
-    """Save store config to .grapsit.yaml."""
+    """Save store config to .retrico.yaml."""
     with open(_CONFIG_FILE, "w") as f:
         yaml.dump({"store": store_cfg}, f, default_flow_style=False, sort_keys=False)
 
@@ -74,13 +74,13 @@ def _resolve_store_kwargs(**cli_kwargs) -> Dict[str, Any]:
 
 def _make_store_config(kw: Dict[str, Any]):
     """Create a BaseStoreConfig from the merged kwargs dict."""
-    from grapsit.store.config import resolve_store_config
+    from retrico.store.config import resolve_store_config
     return resolve_store_config(**kw)
 
 
 def _open_store(kw: Dict[str, Any]):
     """Create and return a graph store from merged kwargs."""
-    from grapsit.store import create_graph_store
+    from retrico.store import create_graph_store
     cfg = _make_store_config(kw)
     store = create_graph_store(cfg)
     return store
@@ -142,8 +142,8 @@ def _prompt_store_connection() -> Dict[str, Any]:
     )
     cfg: Dict[str, Any] = {"store_type": store_type}
     if store_type == "falkordb_lite":
-        cfg["falkordb_lite_db_path"] = click.prompt("Database file path", default="grapsit.db")
-        cfg["falkordb_lite_graph"] = click.prompt("Graph name", default="grapsit")
+        cfg["falkordb_lite_db_path"] = click.prompt("Database file path", default="retrico.db")
+        cfg["falkordb_lite_graph"] = click.prompt("Graph name", default="retrico")
     elif store_type == "neo4j":
         cfg["neo4j_uri"] = click.prompt("Neo4j URI", default="bolt://localhost:7687")
         cfg["neo4j_user"] = click.prompt("Neo4j user", default="neo4j")
@@ -152,7 +152,7 @@ def _prompt_store_connection() -> Dict[str, Any]:
     elif store_type == "falkordb":
         cfg["falkordb_host"] = click.prompt("FalkorDB host", default="localhost")
         cfg["falkordb_port"] = click.prompt("FalkorDB port", default=6379, type=int)
-        cfg["falkordb_graph"] = click.prompt("FalkorDB graph", default="grapsit")
+        cfg["falkordb_graph"] = click.prompt("FalkorDB graph", default="retrico")
     elif store_type == "memgraph":
         cfg["memgraph_uri"] = click.prompt("Memgraph URI", default="bolt://localhost:7687")
         cfg["memgraph_user"] = click.prompt("Memgraph user", default="")
@@ -205,9 +205,9 @@ def _read_texts_interactive() -> List[str]:
 # ---------------------------------------------------------------------------
 
 @click.group()
-@click.version_option(package_name="grapsit")
+@click.version_option(package_name="retrico")
 def cli():
-    """grapsit — End-to-end Graph RAG CLI.
+    """retrico — End-to-end Graph RAG CLI.
 
     Build knowledge graphs, query them, detect communities, and manage
     graph data from the command line.
@@ -224,11 +224,11 @@ def cli():
 @click.option("--clear", is_flag=True, help="Clear saved connection.")
 @_store_options
 def connect(show, clear, **kwargs):
-    """Save database connection to .grapsit.yaml."""
+    """Save database connection to .retrico.yaml."""
     if show:
         saved = _load_saved_config()
         if not saved:
-            click.echo("No saved connection. Run 'grapsit connect' to set one up.")
+            click.echo("No saved connection. Run 'retrico connect' to set one up.")
         else:
             # Mask password
             display = dict(saved)
@@ -287,7 +287,7 @@ def build(config_file, texts, files, entity_labels, relation_labels, method,
           json_output, embed_chunks, embed_entities, verbose, interactive,
           save_config_file, **store_kwargs):
     """Build a knowledge graph from text."""
-    import grapsit
+    import retrico
 
     store_kw = _resolve_store_kwargs(**store_kwargs)
 
@@ -298,11 +298,11 @@ def build(config_file, texts, files, entity_labels, relation_labels, method,
         all_texts = list(texts)
         for fp in files:
             all_texts.append(Path(fp).read_text())
-        executor = grapsit.ProcessorFactory.create_pipeline(config_file)
+        executor = retrico.ProcessorFactory.create_pipeline(config_file)
         input_data = {}
         if all_texts:
             input_data["texts"] = all_texts
-        ctx = executor.execute(input_data)
+        ctx = executor.run(input_data)
         _echo_success("Build complete.")
         if ctx.has("writer_result"):
             wr = ctx.get("writer_result")
@@ -344,7 +344,7 @@ def build(config_file, texts, files, entity_labels, relation_labels, method,
             return
 
         if save_config_file:
-            builder = grapsit.BuildConfigBuilder(name="cli_build")
+            builder = retrico.RetriCoBuilder(name="cli_build")
             builder.store(_make_store_config(store_kw))
             builder.chunker(method=chunk_method or "sentence")
             builder.ner_gliner(model=ner_model or "gliner-community/gliner_small-v2.5", labels=ent_labels)
@@ -357,7 +357,7 @@ def build(config_file, texts, files, entity_labels, relation_labels, method,
             builder.save(save_config_file)
             _echo_success(f"Config saved to {save_config_file}")
 
-        ctx = grapsit.build_graph(**build_kwargs)
+        ctx = retrico.build_graph(**build_kwargs)
         _echo_success("Build complete.")
         if ctx.has("writer_result"):
             wr = ctx.get("writer_result")
@@ -447,7 +447,7 @@ def build(config_file, texts, files, entity_labels, relation_labels, method,
             build_kwargs["relex_model"] = relex_model
 
         if _save_path:
-            builder = grapsit.BuildConfigBuilder(name="cli_build")
+            builder = retrico.RetriCoBuilder(name="cli_build")
             builder.store(_make_store_config(store_kw))
             builder.chunker(method=_chunk_method)
             builder.ner_gliner(model=ner_model or "gliner-community/gliner_small-v2.5", labels=_ent_labels)
@@ -460,7 +460,7 @@ def build(config_file, texts, files, entity_labels, relation_labels, method,
             builder.save(_save_path)
             _echo_success(f"Config saved to {_save_path}")
 
-        ctx = grapsit.build_graph(**build_kwargs)
+        ctx = retrico.build_graph(**build_kwargs)
         _echo_success("Build complete.")
         if ctx.has("writer_result"):
             wr = ctx.get("writer_result")
@@ -473,9 +473,9 @@ def _run_llm_build(texts, ent_labels, rel_labels, api_key, llm_model,
                     store_kw, verbose, json_output, embed_chunks, embed_entities,
                     chunk_method, save_config_file):
     """Run a build pipeline using LLM-based NER/relex."""
-    import grapsit
+    import retrico
 
-    builder = grapsit.BuildConfigBuilder(name="cli_build_llm")
+    builder = retrico.RetriCoBuilder(name="cli_build_llm")
     builder.store(_make_store_config(store_kw))
     builder.chunker(method=chunk_method or "sentence")
     builder.ner_llm(api_key=api_key, model=llm_model or "gpt-4o-mini", labels=ent_labels)
@@ -491,7 +491,7 @@ def _run_llm_build(texts, ent_labels, rel_labels, api_key, llm_model,
         _echo_success(f"Config saved to {save_config_file}")
 
     executor = builder.build(verbose=verbose)
-    ctx = executor.execute({"texts": texts})
+    ctx = executor.run(texts=texts)
     _echo_success("Build complete.")
     if ctx.has("writer_result"):
         wr = ctx.get("writer_result")
@@ -511,7 +511,7 @@ def _run_llm_build(texts, ent_labels, rel_labels, api_key, llm_model,
 @_store_options
 def ingest(file, json_output, verbose, **store_kwargs):
     """Ingest structured JSON data into the graph."""
-    import grapsit
+    import retrico
 
     store_kw = _resolve_store_kwargs(**store_kwargs)
 
@@ -522,7 +522,7 @@ def ingest(file, json_output, verbose, **store_kwargs):
         _echo_error("JSON file must contain a list of objects.")
         sys.exit(1)
 
-    ctx = grapsit.ingest_data(
+    ctx = retrico.ingest_data(
         data=data,
         json_output=json_output,
         verbose=verbose,
@@ -555,7 +555,7 @@ def ingest(file, json_output, verbose, **store_kwargs):
 def query(query_text, config_file, entity_labels, strategy, method, api_key,
           llm_model, max_hops, verbose, interactive, **store_kwargs):
     """Query the knowledge graph."""
-    import grapsit
+    import retrico
 
     store_kw = _resolve_store_kwargs(**store_kwargs)
 
@@ -563,8 +563,8 @@ def query(query_text, config_file, entity_labels, strategy, method, api_key,
     if config_file and not interactive:
         if not query_text:
             query_text = click.prompt("Query")
-        executor = grapsit.ProcessorFactory.create_pipeline(config_file)
-        ctx = executor.execute({"query": query_text})
+        executor = retrico.ProcessorFactory.create_pipeline(config_file)
+        ctx = executor.run(query=query_text)
         _print_query_result(ctx, query_text)
         return
 
@@ -593,7 +593,7 @@ def query(query_text, config_file, entity_labels, strategy, method, api_key,
             else:
                 query_kwargs["retrieval_strategy"] = strategies
 
-        result = grapsit.query_graph(**query_kwargs)
+        result = retrico.query_graph(**query_kwargs)
         _print_query_result_obj(result)
         return
 
@@ -652,7 +652,7 @@ def query(query_text, config_file, entity_labels, strategy, method, api_key,
     if max_hops is not None:
         query_kwargs["max_hops"] = max_hops
 
-    result = grapsit.query_graph(**query_kwargs)
+    result = retrico.query_graph(**query_kwargs)
     _print_query_result_obj(result)
 
 
@@ -662,7 +662,7 @@ def _print_query_result(ctx, query_text: str):
         result = ctx.get("reasoner_result")["result"]
         _print_query_result_obj(result)
     elif ctx.has("chunk_result"):
-        from grapsit.models import QueryResult
+        from retrico.models import QueryResult
         subgraph = ctx.get("chunk_result")["subgraph"]
         result = QueryResult(query=query_text, subgraph=subgraph)
         _print_query_result_obj(result)
@@ -722,13 +722,13 @@ def _print_query_result_obj(result):
 def community(config_file, method, levels, resolution, api_key, llm_model,
               verbose, interactive, **store_kwargs):
     """Detect communities in the knowledge graph."""
-    import grapsit
+    import retrico
 
     store_kw = _resolve_store_kwargs(**store_kwargs)
 
     if config_file and not interactive:
-        executor = grapsit.ProcessorFactory.create_pipeline(config_file)
-        ctx = executor.execute({})
+        executor = retrico.ProcessorFactory.create_pipeline(config_file)
+        ctx = executor.run()
         _echo_success("Community detection complete.")
         if ctx.has("detector_result"):
             dr = ctx.get("detector_result")
@@ -753,7 +753,7 @@ def community(config_file, method, levels, resolution, api_key, llm_model,
         if llm_model:
             comm_kwargs["model"] = llm_model
 
-        ctx = grapsit.detect_communities(**comm_kwargs)
+        ctx = retrico.detect_communities(**comm_kwargs)
         _echo_success("Community detection complete.")
         if ctx.has("detector_result"):
             dr = ctx.get("detector_result")
@@ -797,7 +797,7 @@ def community(config_file, method, levels, resolution, api_key, llm_model,
         if llm_model:
             comm_kwargs["model"] = llm_model
 
-    ctx = grapsit.detect_communities(**comm_kwargs)
+    ctx = retrico.detect_communities(**comm_kwargs)
     _echo_success("Community detection complete.")
     if ctx.has("detector_result"):
         dr = ctx.get("detector_result")
@@ -823,13 +823,13 @@ def community(config_file, method, levels, resolution, api_key, llm_model,
 def model(config_file, kg_model, embedding_dim, epochs, batch_size, lr,
           device, model_path, verbose, interactive, **store_kwargs):
     """Train KG embeddings."""
-    import grapsit
+    import retrico
 
     store_kw = _resolve_store_kwargs(**store_kwargs)
 
     if config_file and not interactive:
-        executor = grapsit.ProcessorFactory.create_pipeline(config_file)
-        ctx = executor.execute({})
+        executor = retrico.ProcessorFactory.create_pipeline(config_file)
+        ctx = executor.run()
         _echo_success("KG model training complete.")
         return
 
@@ -855,7 +855,7 @@ def model(config_file, kg_model, embedding_dim, epochs, batch_size, lr,
         if model_path:
             model_kwargs["model_path"] = model_path
 
-        ctx = grapsit.train_kg_model(**model_kwargs)
+        ctx = retrico.train_kg_model(**model_kwargs)
         _echo_success("KG model training complete.")
         if ctx.has("trainer_result"):
             tr = ctx.get("trainer_result")
@@ -889,7 +889,7 @@ def model(config_file, kg_model, embedding_dim, epochs, batch_size, lr,
     click.echo()
     _echo_info("Training KG model...")
 
-    ctx = grapsit.train_kg_model(
+    ctx = retrico.train_kg_model(
         model=_kg_model,
         embedding_dim=_embedding_dim,
         epochs=_epochs,
@@ -914,7 +914,7 @@ def model(config_file, kg_model, embedding_dim, epochs, batch_size, lr,
 @click.argument("pipeline_type", required=False, type=click.Choice(["build", "query", "community", "model"]))
 def init_config(pipeline_type):
     """Generate a pipeline config YAML interactively."""
-    import grapsit
+    import retrico
 
     if not pipeline_type:
         pipeline_type = click.prompt(
@@ -926,7 +926,7 @@ def init_config(pipeline_type):
     store_kw = _prompt_store_connection()
 
     if pipeline_type == "build":
-        builder = grapsit.BuildConfigBuilder(name="generated_build")
+        builder = retrico.RetriCoBuilder(name="generated_build")
         builder.store(_make_store_config(store_kw))
 
         chunk_method = click.prompt("Chunking method", type=click.Choice(["sentence", "paragraph", "fixed"]), default="sentence")
@@ -956,7 +956,7 @@ def init_config(pipeline_type):
         builder.save(output)
 
     elif pipeline_type == "query":
-        builder = grapsit.QueryConfigBuilder(name="generated_query")
+        builder = retrico.RetriCoSearch(name="generated_query")
         builder.store(_make_store_config(store_kw))
 
         ner_method = click.prompt("NER method", type=click.Choice(["gliner", "llm"]), default="gliner")
@@ -999,7 +999,7 @@ def init_config(pipeline_type):
         builder.save(output)
 
     elif pipeline_type == "community":
-        builder = grapsit.CommunityConfigBuilder(name="generated_community")
+        builder = retrico.RetriCoCommunity(name="generated_community")
         builder.store(_make_store_config(store_kw))
 
         method = click.prompt("Method", type=click.Choice(["louvain", "leiden"]), default="louvain")
@@ -1017,7 +1017,7 @@ def init_config(pipeline_type):
         builder.save(output)
 
     elif pipeline_type == "model":
-        builder = grapsit.KGModelingConfigBuilder(name="generated_model")
+        builder = retrico.RetriCoModeling(name="generated_model")
         builder.store(_make_store_config(store_kw))
 
         builder.triple_reader()
@@ -1303,7 +1303,7 @@ def shell(entity_labels, api_key, llm_model, **store_kwargs):
     """Interactive query REPL."""
     store_kw = _resolve_store_kwargs(**store_kwargs)
 
-    _echo_info("grapsit interactive shell")
+    _echo_info("retrico interactive shell")
     click.echo("Type a query or :help for commands. :quit to exit.")
     click.echo()
 
@@ -1319,7 +1319,7 @@ def shell(entity_labels, api_key, llm_model, **store_kwargs):
     try:
         while True:
             try:
-                line = click.prompt("grapsit", prompt_suffix="> ")
+                line = click.prompt("retrico", prompt_suffix="> ")
             except (EOFError, KeyboardInterrupt):
                 click.echo()
                 break
@@ -1408,7 +1408,7 @@ def shell(entity_labels, api_key, llm_model, **store_kwargs):
                     _echo_warning("No entity labels set. Use :labels to set them, or --entity-labels flag.")
                     continue
                 try:
-                    import grapsit
+                    import retrico
                     query_kwargs: Dict[str, Any] = {
                         "query": line,
                         "entity_labels": ent_labels,
@@ -1418,7 +1418,7 @@ def shell(entity_labels, api_key, llm_model, **store_kwargs):
                         query_kwargs["api_key"] = api_key
                     if llm_model:
                         query_kwargs["model"] = llm_model
-                    result = grapsit.query_graph(**query_kwargs)
+                    result = retrico.query_graph(**query_kwargs)
                     _print_query_result_obj(result)
                 except Exception as e:
                     _echo_error(str(e))

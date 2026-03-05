@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.query.retriever import RetrieverProcessor
-from grapsit.models.entity import EntityMention
+from retrico.query.retriever import RetrieverProcessor
+from retrico.models.entity import EntityMention
 
 
 class TestRetrieverProcessor:

@@ -25,9 +25,9 @@ class TestSentenceTransformerEmbedding:
 
         with patch.dict("sys.modules", {"sentence_transformers": MagicMock()}):
             with patch(
-                "grapsit.modeling.embeddings.SentenceTransformerEmbedding._ensure_model"
+                "retrico.modeling.embeddings.SentenceTransformerEmbedding._ensure_model"
             ) as mock_ensure:
-                from grapsit.modeling.embeddings import SentenceTransformerEmbedding
+                from retrico.modeling.embeddings import SentenceTransformerEmbedding
 
                 emb = SentenceTransformerEmbedding(model_name="test-model")
                 assert emb._model is None
@@ -41,7 +41,7 @@ class TestSentenceTransformerEmbedding:
         mock_st_module.SentenceTransformer = mock_cls
 
         with patch.dict("sys.modules", {"sentence_transformers": mock_st_module}):
-            from grapsit.modeling.embeddings import SentenceTransformerEmbedding
+            from retrico.modeling.embeddings import SentenceTransformerEmbedding
 
             emb = SentenceTransformerEmbedding(model_name="test-model")
             result = emb.encode(["hello", "world"])
@@ -59,7 +59,7 @@ class TestSentenceTransformerEmbedding:
         mock_st_module.SentenceTransformer = mock_cls
 
         with patch.dict("sys.modules", {"sentence_transformers": mock_st_module}):
-            from grapsit.modeling.embeddings import SentenceTransformerEmbedding
+            from retrico.modeling.embeddings import SentenceTransformerEmbedding
 
             emb = SentenceTransformerEmbedding(model_name="test-model")
             assert emb.dimension == 256
@@ -72,7 +72,7 @@ class TestSentenceTransformerEmbedding:
         mock_st_module.SentenceTransformer = mock_cls
 
         with patch.dict("sys.modules", {"sentence_transformers": mock_st_module}):
-            from grapsit.modeling.embeddings import SentenceTransformerEmbedding
+            from retrico.modeling.embeddings import SentenceTransformerEmbedding
 
             emb = SentenceTransformerEmbedding(model_name="test-model", device="cpu")
             emb.encode(["test"])
@@ -86,7 +86,7 @@ class TestSentenceTransformerEmbedding:
         saved = sys.modules.pop("sentence_transformers", None)
         try:
             with patch.dict("sys.modules", {"sentence_transformers": None}):
-                from grapsit.modeling.embeddings import SentenceTransformerEmbedding
+                from retrico.modeling.embeddings import SentenceTransformerEmbedding
 
                 emb = SentenceTransformerEmbedding()
                 with pytest.raises(ImportError, match="sentence-transformers"):
@@ -112,7 +112,7 @@ class TestOpenAIEmbedding:
 
     def test_lazy_loading(self):
         """Client is not created until first encode()."""
-        from grapsit.modeling.embeddings import OpenAIEmbedding
+        from retrico.modeling.embeddings import OpenAIEmbedding
 
         emb = OpenAIEmbedding(api_key="test-key")
         assert emb._client is None
@@ -128,7 +128,7 @@ class TestOpenAIEmbedding:
         mock_openai.OpenAI.return_value = mock_client
 
         with patch.dict("sys.modules", {"openai": mock_openai}):
-            from grapsit.modeling.embeddings import OpenAIEmbedding
+            from retrico.modeling.embeddings import OpenAIEmbedding
 
             emb = OpenAIEmbedding(api_key="test-key")
             result = emb.encode(texts)
@@ -139,7 +139,7 @@ class TestOpenAIEmbedding:
 
     def test_dimension_known_model(self):
         """dimension returns known value without API call."""
-        from grapsit.modeling.embeddings import OpenAIEmbedding
+        from retrico.modeling.embeddings import OpenAIEmbedding
 
         emb = OpenAIEmbedding(model="text-embedding-3-small")
         assert emb.dimension == 1536
@@ -149,14 +149,14 @@ class TestOpenAIEmbedding:
 
     def test_dimension_custom(self):
         """Explicit dimensions override defaults."""
-        from grapsit.modeling.embeddings import OpenAIEmbedding
+        from retrico.modeling.embeddings import OpenAIEmbedding
 
         emb = OpenAIEmbedding(model="text-embedding-3-small", dimensions=512)
         assert emb.dimension == 512
 
     def test_dimension_unknown_model_no_explicit(self):
         """ValueError for unknown model without explicit dimensions."""
-        from grapsit.modeling.embeddings import OpenAIEmbedding
+        from retrico.modeling.embeddings import OpenAIEmbedding
 
         emb = OpenAIEmbedding(model="some-custom-model")
         with pytest.raises(ValueError, match="Unknown dimension"):
@@ -172,7 +172,7 @@ class TestOpenAIEmbedding:
         mock_openai.OpenAI.return_value = mock_client
 
         with patch.dict("sys.modules", {"openai": mock_openai}):
-            from grapsit.modeling.embeddings import OpenAIEmbedding
+            from retrico.modeling.embeddings import OpenAIEmbedding
 
             emb = OpenAIEmbedding(api_key="key", dimensions=256)
             emb.encode(["test"])
@@ -187,7 +187,7 @@ class TestOpenAIEmbedding:
         saved = sys.modules.pop("openai", None)
         try:
             with patch.dict("sys.modules", {"openai": None}):
-                from grapsit.modeling.embeddings import OpenAIEmbedding
+                from retrico.modeling.embeddings import OpenAIEmbedding
 
                 emb = OpenAIEmbedding(api_key="key")
                 with pytest.raises(ImportError, match="openai"):
@@ -201,7 +201,7 @@ class TestCreateEmbeddingModel:
     """Tests for the create_embedding_model factory."""
 
     def test_default_sentence_transformer(self):
-        from grapsit.modeling.embeddings import (
+        from retrico.modeling.embeddings import (
             SentenceTransformerEmbedding,
             create_embedding_model,
         )
@@ -210,7 +210,7 @@ class TestCreateEmbeddingModel:
         assert isinstance(model, SentenceTransformerEmbedding)
 
     def test_sentence_transformer_explicit(self):
-        from grapsit.modeling.embeddings import (
+        from retrico.modeling.embeddings import (
             SentenceTransformerEmbedding,
             create_embedding_model,
         )
@@ -222,7 +222,7 @@ class TestCreateEmbeddingModel:
         assert model.model_name == "custom-model"
 
     def test_openai(self):
-        from grapsit.modeling.embeddings import OpenAIEmbedding, create_embedding_model
+        from retrico.modeling.embeddings import OpenAIEmbedding, create_embedding_model
 
         model = create_embedding_model(
             {"embedding_method": "openai", "api_key": "test", "model": "text-embedding-3-small"}
@@ -231,7 +231,7 @@ class TestCreateEmbeddingModel:
         assert model.api_key == "test"
 
     def test_gliner_bi_encoder(self):
-        from grapsit.modeling.embeddings import (
+        from retrico.modeling.embeddings import (
             GLiNERBiEncoderEmbedding,
             create_embedding_model,
         )
@@ -243,7 +243,7 @@ class TestCreateEmbeddingModel:
         assert model.model_name == "custom-gliner"
 
     def test_gliner_bi_encoder_filters_extra_keys(self):
-        from grapsit.modeling.embeddings import (
+        from retrico.modeling.embeddings import (
             GLiNERBiEncoderEmbedding,
             create_embedding_model,
         )
@@ -260,7 +260,7 @@ class TestCreateEmbeddingModel:
         assert model.model_name == "test"
 
     def test_unknown_method(self):
-        from grapsit.modeling.embeddings import create_embedding_model
+        from retrico.modeling.embeddings import create_embedding_model
 
         with pytest.raises(ValueError, match="Unknown embedding_method"):
             create_embedding_model({"embedding_method": "cohere"})
@@ -282,7 +282,7 @@ class TestGLiNERBiEncoderEmbedding:
 
     def test_lazy_loading(self):
         """Model is not loaded until first use."""
-        from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+        from retrico.modeling.embeddings import GLiNERBiEncoderEmbedding
 
         emb = GLiNERBiEncoderEmbedding(model_name="test-model")
         assert emb._model is None
@@ -295,7 +295,7 @@ class TestGLiNERBiEncoderEmbedding:
         mock_gliner_module.GLiNER = mock_cls
 
         with patch.dict("sys.modules", {"gliner": mock_gliner_module}):
-            from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+            from retrico.modeling.embeddings import GLiNERBiEncoderEmbedding
 
             emb = GLiNERBiEncoderEmbedding(model_name="test-model")
             result = emb.encode(["hello", "world"])
@@ -313,7 +313,7 @@ class TestGLiNERBiEncoderEmbedding:
         mock_gliner_module.GLiNER = mock_cls
 
         with patch.dict("sys.modules", {"gliner": mock_gliner_module}):
-            from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+            from retrico.modeling.embeddings import GLiNERBiEncoderEmbedding
 
             emb = GLiNERBiEncoderEmbedding(model_name="test-model")
             assert emb.dimension == 512
@@ -326,7 +326,7 @@ class TestGLiNERBiEncoderEmbedding:
         mock_gliner_module.GLiNER = mock_cls
 
         with patch.dict("sys.modules", {"gliner": mock_gliner_module}):
-            from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+            from retrico.modeling.embeddings import GLiNERBiEncoderEmbedding
 
             emb = GLiNERBiEncoderEmbedding(model_name="test-model", device="cpu")
             emb.encode(["test"])
@@ -342,7 +342,7 @@ class TestGLiNERBiEncoderEmbedding:
         mock_gliner_module.GLiNER = mock_cls
 
         with patch.dict("sys.modules", {"gliner": mock_gliner_module}):
-            from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+            from retrico.modeling.embeddings import GLiNERBiEncoderEmbedding
 
             emb = GLiNERBiEncoderEmbedding(model_name="test-model", batch_size=16)
             emb.encode(["hello", "world"])
@@ -364,7 +364,7 @@ class TestGLiNERBiEncoderEmbedding:
         saved = sys.modules.pop("gliner", None)
         try:
             with patch.dict("sys.modules", {"gliner": None}):
-                from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+                from retrico.modeling.embeddings import GLiNERBiEncoderEmbedding
 
                 emb = GLiNERBiEncoderEmbedding()
                 with pytest.raises(ImportError, match="gliner"):
@@ -375,7 +375,7 @@ class TestGLiNERBiEncoderEmbedding:
 
     def test_default_model_name(self):
         """Default model name is the bi-encoder v2."""
-        from grapsit.modeling.embeddings import GLiNERBiEncoderEmbedding
+        from retrico.modeling.embeddings import GLiNERBiEncoderEmbedding
 
         emb = GLiNERBiEncoderEmbedding()
         assert emb.model_name == "knowledgator/gliner-bi-base-v2.0"

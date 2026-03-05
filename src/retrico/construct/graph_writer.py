@@ -26,7 +26,7 @@ class GraphWriterProcessor(BaseProcessor):
         neo4j_database: str (default: "neo4j")
         falkordb_host: str (default: "localhost")
         falkordb_port: int (default: 6379)
-        falkordb_graph: str (default: "grapsit")
+        falkordb_graph: str (default: "retrico")
         setup_indexes: bool (default: True)
         json_output: str (default: None) — path to save extracted data as JSON
             in the ingest-ready format (compatible with ``ingest_data()``).

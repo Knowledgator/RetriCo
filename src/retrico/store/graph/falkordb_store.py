@@ -33,7 +33,7 @@ class FalkorDBGraphStore(BaseGraphStore):
         self,
         host: str = "localhost",
         port: int = 6379,
-        graph: str = "grapsit",
+        graph: str = "retrico",
         query_timeout: int = 0,
     ):
         self.host = host

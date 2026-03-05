@@ -4,11 +4,11 @@ import json
 import pytest
 from unittest.mock import MagicMock
 
-from grapsit.query.reasoner import ReasonerProcessor, LLMReasoner
-from grapsit.models.entity import Entity
-from grapsit.models.relation import Relation
-from grapsit.models.document import Chunk
-from grapsit.models.graph import Subgraph, QueryResult
+from retrico.query.reasoner import ReasonerProcessor, LLMReasoner
+from retrico.models.entity import Entity
+from retrico.models.relation import Relation
+from retrico.models.document import Chunk
+from retrico.models.graph import Subgraph, QueryResult
 
 
 def _make_subgraph():

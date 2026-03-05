@@ -3,10 +3,10 @@
 import pytest
 from unittest.mock import MagicMock, patch, call
 
-from grapsit.construct.relex_gliner import RelexGLiNERProcessor
-from grapsit.extraction.utils import mentions_to_gliner_spans as _mentions_to_gliner_spans
-from grapsit.models.document import Chunk
-from grapsit.models.entity import EntityMention
+from retrico.construct.relex_gliner import RelexGLiNERProcessor
+from retrico.extraction.utils import mentions_to_gliner_spans as _mentions_to_gliner_spans
+from retrico.models.document import Chunk
+from retrico.models.entity import EntityMention
 
 
 class TestMentionsToGlinerSpans:

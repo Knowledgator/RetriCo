@@ -382,7 +382,7 @@ class _EmbedderMixin:
         }
         return self
 
-class BuildConfigBuilder(_BuilderBase, 
+class RetriCoBuilder(_BuilderBase, 
                          _LinkerMixin, 
                          _GraphWriterMixin, 
                          _EmbedderMixin):
@@ -390,7 +390,7 @@ class BuildConfigBuilder(_BuilderBase,
 
     Usage::
 
-        builder = BuildConfigBuilder(name="my_graph")
+        builder = RetriCoBuilder(name="my_graph")
         builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687"))
         builder.chunker(method="sentence")
         builder.ner_gliner(labels=["person", "org"])
@@ -403,6 +403,7 @@ class BuildConfigBuilder(_BuilderBase,
     def __init__(self, name: str = "build_pipeline", description: str = None):
         super().__init__(name, description)
         self._store_reader_config: Optional[Dict[str, Any]] = None
+        self._pdf_reader_config: Optional[Dict[str, Any]] = None
         self._chunker_config: Optional[Dict[str, Any]] = None
         self._ner_config: Optional[Dict[str, Any]] = None
         self._ner_type: str = "ner_gliner"
@@ -424,7 +425,7 @@ class BuildConfigBuilder(_BuilderBase,
         offset: int = 0,
         filter_empty: bool = True,
         **kwargs,
-    ) -> "BuildConfigBuilder":
+    ) -> "RetriCoBuilder":
         """Configure a store_reader node that pulls texts from a relational store.
 
         When set, the chunker reads from the store_reader output instead of ``$input``.
@@ -452,12 +453,38 @@ class BuildConfigBuilder(_BuilderBase,
         }
         return self
 
+    def pdf_reader(
+        self,
+        extract_text: bool = True,
+        extract_tables: bool = True,
+        page_ids: List[int] = None,
+    ) -> "RetriCoBuilder":
+        """Configure a PDF reader that replaces the chunker.
+
+        Each PDF page becomes one Chunk with metadata including
+        ``page_number`` and ``source_pdf``.  Tables are converted to
+        Markdown format.
+
+        Args:
+            extract_text: Extract regular text from pages.
+            extract_tables: Extract tables and convert to Markdown.
+            page_ids: Specific page numbers to extract (0-indexed).
+                None means all pages.
+        """
+        self._pdf_reader_config = {
+            "extract_text": extract_text,
+            "extract_tables": extract_tables,
+        }
+        if page_ids is not None:
+            self._pdf_reader_config["page_ids"] = page_ids
+        return self
+
     def chunker(
         self,
         method: str = "sentence",
         chunk_size: int = 512,
         overlap: int = 50,
-    ) -> "BuildConfigBuilder":
+    ) -> "RetriCoBuilder":
         self._chunker_config = {
             "method": method,
             "chunk_size": chunk_size,
@@ -473,7 +500,7 @@ class BuildConfigBuilder(_BuilderBase,
         batch_size: int = 8,
         device: str = "cpu",
         flat_ner: bool = True,
-    ) -> "BuildConfigBuilder":
+    ) -> "RetriCoBuilder":
         self._ner_type = "ner_gliner"
         self._ner_config = {
             "model": model,
@@ -494,7 +521,7 @@ class BuildConfigBuilder(_BuilderBase,
         temperature: float = 0.1,
         max_completion_tokens: int = 4096,
         timeout: float = 60.0,
-    ) -> "BuildConfigBuilder":
+    ) -> "RetriCoBuilder":
         self._ner_type = "ner_llm"
         self._ner_config = {
             "model": model,
@@ -519,7 +546,7 @@ class BuildConfigBuilder(_BuilderBase,
         adjacency_threshold: float = 0.55,
         batch_size: int = 8,
         device: str = "cpu",
-    ) -> "BuildConfigBuilder":
+    ) -> "RetriCoBuilder":
         self._relex_type = "relex_gliner"
         self._relex_config = {
             "model": model,
@@ -543,7 +570,7 @@ class BuildConfigBuilder(_BuilderBase,
         temperature: float = 0.1,
         max_completion_tokens: int = 4096,
         timeout: float = 60.0,
-    ) -> "BuildConfigBuilder":
+    ) -> "RetriCoBuilder":
         self._relex_type = "relex_llm"
         self._relex_config = {
             "model": model,
@@ -561,7 +588,7 @@ class BuildConfigBuilder(_BuilderBase,
 
     def get_config(self) -> Dict[str, Any]:
         """Build configuration dict."""
-        if not self._chunker_config:
+        if not self._chunker_config and not self._pdf_reader_config:
             self._chunker_config = {"method": "sentence"}
         # NER/linker/relex are optional — a chunks-only pipeline
         # (chunker → graph_writer) is valid for relational-store-only use cases.
@@ -569,6 +596,7 @@ class BuildConfigBuilder(_BuilderBase,
             self._writer_config = {}
 
         has_store_reader = self._store_reader_config is not None
+        has_pdf_reader = self._pdf_reader_config is not None
         nodes: List[Dict[str, Any]] = []
 
         if has_store_reader:
@@ -580,29 +608,44 @@ class BuildConfigBuilder(_BuilderBase,
                 "config": self._store_reader_config,
             })
 
-        # Chunker reads from store_reader when present, else from $input
-        if has_store_reader:
-            chunker_inputs = {
-                "texts": {"source": "store_reader_result", "fields": "texts"},
-                "documents": {"source": "store_reader_result", "fields": "documents"},
-            }
-            chunker_requires = ["store_reader"]
+        # PDF reader replaces chunker — it produces page-level chunks directly.
+        # The output key is "chunker_result" so downstream nodes work unchanged.
+        if has_pdf_reader:
+            chunk_source_id = "pdf_reader"
+            nodes.append({
+                "id": "pdf_reader",
+                "processor": "pdf_reader",
+                "inputs": {
+                    "pdf_paths": {"source": "$input", "fields": "pdf_paths"},
+                },
+                "output": {"key": "chunker_result"},
+                "config": self._pdf_reader_config,
+            })
         else:
-            chunker_inputs = {
-                "texts": {"source": "$input", "fields": "texts"},
-            }
-            chunker_requires = []
+            chunk_source_id = "chunker"
+            # Chunker reads from store_reader when present, else from $input
+            if has_store_reader:
+                chunker_inputs = {
+                    "texts": {"source": "store_reader_result", "fields": "texts"},
+                    "documents": {"source": "store_reader_result", "fields": "documents"},
+                }
+                chunker_requires = ["store_reader"]
+            else:
+                chunker_inputs = {
+                    "texts": {"source": "$input", "fields": "texts"},
+                }
+                chunker_requires = []
 
-        chunker_node: Dict[str, Any] = {
-            "id": "chunker",
-            "processor": "chunker",
-            "inputs": chunker_inputs,
-            "output": {"key": "chunker_result"},
-            "config": self._chunker_config,
-        }
-        if chunker_requires:
-            chunker_node["requires"] = chunker_requires
-        nodes.append(chunker_node)
+            chunker_node: Dict[str, Any] = {
+                "id": "chunker",
+                "processor": "chunker",
+                "inputs": chunker_inputs,
+                "output": {"key": "chunker_result"},
+                "config": self._chunker_config,
+            }
+            if chunker_requires:
+                chunker_node["requires"] = chunker_requires
+            nodes.append(chunker_node)
 
         has_ner = self._ner_config is not None
         has_linker = self._has_linker
@@ -612,7 +655,7 @@ class BuildConfigBuilder(_BuilderBase,
             nodes.append({
                 "id": "ner",
                 "processor": self._ner_type,
-                "requires": ["chunker"],
+                "requires": [chunk_source_id],
                 "inputs": {
                     "chunks": {"source": "chunker_result", "fields": "chunks"},
                 },
@@ -624,7 +667,7 @@ class BuildConfigBuilder(_BuilderBase,
             linker_inputs = {
                 "chunks": {"source": "chunker_result", "fields": "chunks"},
             }
-            linker_requires = ["chunker"]
+            linker_requires = [chunk_source_id]
             if has_ner:
                 linker_inputs["entities"] = {"source": "ner_result", "fields": "entities"}
                 linker_requires.append("ner")
@@ -649,7 +692,7 @@ class BuildConfigBuilder(_BuilderBase,
             relex_inputs = {
                 "chunks": {"source": "chunker_result", "fields": "chunks"},
             }
-            relex_requires = ["chunker"]
+            relex_requires = [chunk_source_id]
             if entity_source_before_relex:
                 relex_inputs["entities"] = {"source": entity_source_before_relex, "fields": "entities"}
                 relex_requires.append("linker" if has_linker else "ner")
@@ -665,16 +708,16 @@ class BuildConfigBuilder(_BuilderBase,
         # Determine entity/relation sources for the graph writer
         if has_relex:
             entity_source = "relex_result"
-            writer_requires = ["chunker", "relex"]
+            writer_requires = [chunk_source_id, "relex"]
         elif has_linker:
             entity_source = "linker_result"
-            writer_requires = ["chunker", "linker"]
+            writer_requires = [chunk_source_id, "linker"]
         elif has_ner:
             entity_source = "ner_result"
-            writer_requires = ["chunker", "ner"]
+            writer_requires = [chunk_source_id, "ner"]
         else:
             entity_source = None
-            writer_requires = ["chunker"]
+            writer_requires = [chunk_source_id]
 
         writer_inputs = {
             "chunks": {"source": "chunker_result", "fields": "chunks"},
@@ -728,7 +771,7 @@ class BuildConfigBuilder(_BuilderBase,
         return self._build_result(nodes)
 
 
-class IngestConfigBuilder(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
+class RetriCoIngest(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
     """Declarative builder for raw data ingest pipelines.
 
     Writes pre-structured entities and relations directly to the graph database,
@@ -736,19 +779,17 @@ class IngestConfigBuilder(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
 
     Usage::
 
-        builder = IngestConfigBuilder(name="my_ingest")
+        builder = RetriCoIngest(name="my_ingest")
         builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687"))
         builder.graph_writer()
         executor = builder.build()
-        result = executor.execute({
-            "data": [
+        result = executor.run(data=[
                 {
                     "entities": [{"text": "Einstein", "label": "person"}],
                     "relations": [{"head": "Einstein", "tail": "Ulm", "type": "born_in"}],
                     "text": "Einstein was born in Ulm.",  # optional
                 },
-            ]
-        })
+            ])
     """
 
     def __init__(self, name: str = "ingest_pipeline", description: str = None):
@@ -763,7 +804,7 @@ class IngestConfigBuilder(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
         method: str = "sentence",
         chunk_size: int = 512,
         overlap: int = 50,
-    ) -> "IngestConfigBuilder":
+    ) -> "RetriCoIngest":
         """Configure chunking for optional texts input."""
         self._ingest_config["chunk_method"] = method
         self._ingest_config["chunk_size"] = chunk_size
@@ -833,12 +874,12 @@ class IngestConfigBuilder(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
         return self._build_result(nodes)
 
 
-class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
+class RetriCoSearch(_BuilderBase, _LinkerMixin):
     """Declarative builder for query pipeline configs.
 
     Usage::
 
-        builder = QueryConfigBuilder(name="my_query")
+        builder = RetriCoSearch(name="my_query")
         builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687"))
         builder.query_parser(method="gliner", labels=["person", "location"])
         builder.retriever(max_hops=2)
@@ -846,7 +887,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         builder.reasoner(api_key="...", model="gpt-4o-mini")
 
         executor = builder.build()
-        result = executor.execute({"query": "Where was Einstein born?"})
+        result = executor.run(query="Where was Einstein born?")
     """
 
     def __init__(self, name: str = "query_pipeline", description: str = None):
@@ -899,7 +940,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         api_key: str = None,
         base_url: str = None,
         temperature: float = 0.1,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         self._parser_config = {
             "method": method,
             "labels": labels or [],
@@ -917,7 +958,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
             self._parser_config["base_url"] = base_url
         return self
 
-    def retriever(self, max_hops: int = 2, store_config: BaseStoreConfig = None, **kwargs) -> "QueryConfigBuilder":
+    def retriever(self, max_hops: int = 2, store_config: BaseStoreConfig = None, **kwargs) -> "RetriCoSearch":
         config = self._effective_store_flat(store_config, **kwargs)
         config["max_hops"] = max_hops
         config.update(kwargs)
@@ -934,7 +975,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         vector_store_type: str = None,
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         vs = self._effective_vector_store()
         config = self._effective_store_flat(store_config, **kwargs)
         config.update({
@@ -959,7 +1000,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         vector_store_type: str = None,
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         vs = self._effective_vector_store()
         config = self._effective_store_flat(store_config, **kwargs)
         config.update({
@@ -984,7 +1025,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         vector_store_type: str = None,
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         vs = self._effective_vector_store()
         config = self._effective_store_flat(store_config, **kwargs)
         config.update({
@@ -1013,7 +1054,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         chunk_source: str = "entity",
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         config = self._effective_store_flat(store_config, **kwargs)
         config.update({
             "model": model,
@@ -1040,7 +1081,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         chunk_source: str = "entity",
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         config = self._effective_store_flat(store_config, **kwargs)
         config.update({
             "max_path_length": max_path_length,
@@ -1062,7 +1103,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         fulltext_index: str = "chunk_text_idx",
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         """Configure keyword (full-text search) retrieval strategy.
 
         Supports two search backends via ``search_source``:
@@ -1121,7 +1162,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         weights: List[float] = None,
         min_sources: int = 2,
         rrf_k: int = 60,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         """Configure fusion of multiple retriever results.
 
         Automatically inserted when multiple retrievers are configured.
@@ -1151,7 +1192,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         chunk_entity_source: str = "all",
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         self._chunk_config = {"max_chunks": max_chunks, "chunk_entity_source": chunk_entity_source}
         if store_config is not None:
             self._chunk_config.update(store_config.to_flat_dict())
@@ -1170,7 +1211,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         temperature: float = 0.1,
         max_completion_tokens: int = 4096,
         timeout: float = 60.0,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         self._reasoner_config = {
             "method": method,
             "model": model,
@@ -1196,7 +1237,7 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         device: str = "cpu",
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "QueryConfigBuilder":
+    ) -> "RetriCoSearch":
         self._kg_scorer_config = {
             "model_name": model_name,
             "embedding_dim": embedding_dim,
@@ -1479,32 +1520,32 @@ class QueryConfigBuilder(_BuilderBase, _LinkerMixin):
         return self._build_result(nodes)
 
 
-class FusedQueryBuilder(_BuilderBase, _LinkerMixin):
-    """Wrapper that combines multiple ``QueryConfigBuilder`` instances into a fused pipeline.
+class RetriCoFusedSearch(_BuilderBase, _LinkerMixin):
+    """Wrapper that combines multiple ``RetriCoSearch`` instances into a fused pipeline.
 
-    Each sub-builder defines one retrieval strategy.  ``FusedQueryBuilder``
+    Each sub-builder defines one retrieval strategy.  ``RetriCoFusedSearch``
     collects their retriever nodes, merges store configs, and emits a single
     DAG with a fusion node.
 
     Usage::
 
-        b1 = QueryConfigBuilder(name="entity")
+        b1 = RetriCoSearch(name="entity")
         b1.query_parser(labels=["person", "location"])
         b1.retriever(neo4j_uri="bolt://localhost:7687", max_hops=2)
 
-        b2 = QueryConfigBuilder(name="community")
+        b2 = RetriCoSearch(name="community")
         b2.community_retriever(neo4j_uri="bolt://localhost:7687")
 
-        fused = FusedQueryBuilder(b1, b2, strategy="rrf", top_k=20)
+        fused = RetriCoFusedSearch(b1, b2, strategy="rrf", top_k=20)
         fused.chunk_retriever()
         fused.reasoner(api_key="sk-...", model="gpt-4o-mini")
         executor = fused.build()
-        ctx = executor.execute({"query": "Where was Einstein born?"})
+        ctx = executor.run(query="Where was Einstein born?")
     """
 
     def __init__(
         self,
-        *builders: QueryConfigBuilder,
+        *builders: RetriCoSearch,
         strategy: str = "union",
         top_k: int = 0,
         weights: List[float] = None,
@@ -1513,7 +1554,7 @@ class FusedQueryBuilder(_BuilderBase, _LinkerMixin):
         name: str = "fused_query",
     ):
         super().__init__(name)
-        self._sub_builders: List[QueryConfigBuilder] = list(builders)
+        self._sub_builders: List[RetriCoSearch] = list(builders)
 
         # Fusion config
         self._fusion_config: Dict[str, Any] = {
@@ -1563,7 +1604,7 @@ class FusedQueryBuilder(_BuilderBase, _LinkerMixin):
         api_key: str = None,
         base_url: str = None,
         temperature: float = 0.1,
-    ) -> "FusedQueryBuilder":
+    ) -> "RetriCoFusedSearch":
         """Override the auto-inherited parser from sub-builders."""
         self._parser_config = {
             "method": method,
@@ -1588,7 +1629,7 @@ class FusedQueryBuilder(_BuilderBase, _LinkerMixin):
         chunk_entity_source: str = "all",
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "FusedQueryBuilder":
+    ) -> "RetriCoFusedSearch":
         self._chunk_config = {"max_chunks": max_chunks, "chunk_entity_source": chunk_entity_source}
         if store_config is not None:
             self._chunk_config.update(store_config.to_flat_dict())
@@ -1607,7 +1648,7 @@ class FusedQueryBuilder(_BuilderBase, _LinkerMixin):
         temperature: float = 0.1,
         max_completion_tokens: int = 4096,
         timeout: float = 60.0,
-    ) -> "FusedQueryBuilder":
+    ) -> "RetriCoFusedSearch":
         self._reasoner_config = {
             "method": method,
             "model": model,
@@ -1628,7 +1669,7 @@ class FusedQueryBuilder(_BuilderBase, _LinkerMixin):
         weights: List[float] = None,
         min_sources: int = 2,
         rrf_k: int = 60,
-    ) -> "FusedQueryBuilder":
+    ) -> "RetriCoFusedSearch":
         """Override fusion config after init."""
         self._fusion_config = {
             "strategy": strategy,
@@ -1683,7 +1724,7 @@ class FusedQueryBuilder(_BuilderBase, _LinkerMixin):
         if needs_parser and not has_parser and not has_linker:
             raise ValueError(
                 "Parser or linker config required for entity-based retrieval strategies. "
-                "Call .query_parser() on the FusedQueryBuilder or on a sub-builder."
+                "Call .query_parser() on the RetriCoFusedSearch or on a sub-builder."
             )
 
         # Default chunk retriever
@@ -1765,7 +1806,7 @@ class FusedQueryBuilder(_BuilderBase, _LinkerMixin):
                 })
             retriever_ids.append(node_id)
 
-        # Fusion node (always emitted — user explicitly chose FusedQueryBuilder)
+        # Fusion node (always emitted — user explicitly chose RetriCoFusedSearch)
         fusion_inputs = {}
         for idx in range(len(all_retriever_nodes)):
             fusion_inputs[f"subgraph_{idx}"] = {
@@ -1810,18 +1851,18 @@ class FusedQueryBuilder(_BuilderBase, _LinkerMixin):
         return self._build_result(nodes)
 
 
-class CommunityConfigBuilder(_BuilderBase):
+class RetriCoCommunity(_BuilderBase):
     """Declarative builder for community detection pipeline configs.
 
     Usage::
 
-        builder = CommunityConfigBuilder(name="my_communities")
+        builder = RetriCoCommunity(name="my_communities")
         builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687"))
         builder.detector(method="louvain", levels=2)
         builder.summarizer(api_key="sk-...", model="gpt-4o-mini")
         builder.embedder(embedding_method="sentence_transformer")
         executor = builder.build()
-        result = executor.execute({})
+        result = executor.run()
     """
 
     def __init__(self, name: str = "community_pipeline", description: str = None):
@@ -1837,7 +1878,7 @@ class CommunityConfigBuilder(_BuilderBase):
         resolution: float = 1.0,
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "CommunityConfigBuilder":
+    ) -> "RetriCoCommunity":
         store = self._effective_store(store_config, **kwargs) or FalkorDBLiteConfig()
         self._detector_config = {
             "method": method,
@@ -1857,7 +1898,7 @@ class CommunityConfigBuilder(_BuilderBase):
         temperature: float = 0.3,
         max_completion_tokens: int = 4096,
         **store_overrides,
-    ) -> "CommunityConfigBuilder":
+    ) -> "RetriCoCommunity":
         self._summarizer_config = {
             "top_k": top_k,
             "model": model,
@@ -1877,7 +1918,7 @@ class CommunityConfigBuilder(_BuilderBase):
         model_name: str = "all-MiniLM-L6-v2",
         vector_store_type: str = None,
         **extra,
-    ) -> "CommunityConfigBuilder":
+    ) -> "RetriCoCommunity":
         vs = self._effective_vector_store()
         self._embedder_config = {
             "embedding_method": embedding_method,
@@ -1935,18 +1976,18 @@ class CommunityConfigBuilder(_BuilderBase):
         return self._build_result(nodes)
 
 
-class KGModelingConfigBuilder(_BuilderBase):
+class RetriCoModeling(_BuilderBase):
     """Declarative builder for KG embedding training pipelines.
 
     Usage::
 
-        builder = KGModelingConfigBuilder(name="my_kg")
+        builder = RetriCoModeling(name="my_kg")
         builder.graph_store(Neo4jConfig(uri="bolt://localhost:7687"))
         builder.triple_reader()
         builder.trainer(model="RotatE", epochs=100)
         builder.storer(model_path="kg_model")
         executor = builder.build()
-        result = executor.execute({})
+        result = executor.run()
     """
 
     def __init__(self, name: str = "kg_modeling_pipeline", description: str = None):
@@ -1965,7 +2006,7 @@ class KGModelingConfigBuilder(_BuilderBase):
         random_seed: int = 42,
         store_config: BaseStoreConfig = None,
         **kwargs,
-    ) -> "KGModelingConfigBuilder":
+    ) -> "RetriCoModeling":
         store = self._effective_store(store_config, **kwargs) or FalkorDBLiteConfig()
         self._reader_config = {
             "source": source,
@@ -1991,7 +2032,7 @@ class KGModelingConfigBuilder(_BuilderBase):
         num_negatives: int = 1,
         device: str = "cpu",
         use_tqdm: bool = True,
-    ) -> "KGModelingConfigBuilder":
+    ) -> "RetriCoModeling":
         self._trainer_config = {
             "model": model,
             "embedding_dim": embedding_dim,
@@ -2013,7 +2054,7 @@ class KGModelingConfigBuilder(_BuilderBase):
         vector_store_type: str = None,
         store_to_graph: bool = False,
         **extra,
-    ) -> "KGModelingConfigBuilder":
+    ) -> "RetriCoModeling":
         vs = self._effective_vector_store()
         self._storer_config = {
             "model_path": model_path,
@@ -2072,3 +2113,12 @@ class KGModelingConfigBuilder(_BuilderBase):
             })
 
         return self._build_result(nodes)
+
+
+# Backward-compatible aliases
+BuildConfigBuilder = RetriCoBuilder
+QueryConfigBuilder = RetriCoSearch
+IngestConfigBuilder = RetriCoIngest
+CommunityConfigBuilder = RetriCoCommunity
+KGModelingConfigBuilder = RetriCoModeling
+FusedQueryBuilder = RetriCoFusedSearch
