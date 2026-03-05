@@ -11,7 +11,10 @@ from .base import BaseVectorStore
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_STORE_TYPES = {"neo4j", "falkordb", "memgraph"}
+_SUPPORTED_STORE_TYPES = {"neo4j", "falkordb", "falkordb_lite", "memgraph"}
+
+# FalkorDBLite uses the same Cypher dialect as FalkorDB
+_FALKORDB_TYPES = {"falkordb", "falkordb_lite"}
 
 # Map well-known index names to (node_label, property_name)
 _INDEX_MAP: Dict[str, Tuple[str, str]] = {
@@ -60,7 +63,7 @@ class GraphDBVectorStore(BaseVectorStore):
         extra_index_map: Optional[Dict[str, Tuple[str, str]]] = None,
     ):
         self._store_config = dict(store_config)
-        self._store_type = self._store_config.get("store_type", "neo4j")
+        self._store_type = self._store_config.get("store_type", "falkordb_lite")
         if self._store_type not in _SUPPORTED_STORE_TYPES:
             raise ValueError(
                 f"GraphDBVectorStore does not support store_type={self._store_type!r}. "
@@ -111,7 +114,7 @@ class GraphDBVectorStore(BaseVectorStore):
         node_label, prop = self._resolve_index(name)
 
         try:
-            if self._store_type == "falkordb":
+            if self._store_type in _FALKORDB_TYPES:
                 cypher = (
                     f"CREATE VECTOR INDEX FOR (n:{node_label}) ON (n.{prop}) "
                     f"OPTIONS {{dimension: {dimension}, similarityFunction: 'cosine'}}"
@@ -166,7 +169,7 @@ class GraphDBVectorStore(BaseVectorStore):
                     logger.debug(f"Could not store embedding for {item_id}: {e}")
         else:
             # Fallback: raw Cypher SET
-            use_vecf32 = self._store_type == "falkordb"
+            use_vecf32 = self._store_type in _FALKORDB_TYPES
             for item_id, embedding in items:
                 emb = list(embedding) if not isinstance(embedding, list) else embedding
                 try:
@@ -190,7 +193,7 @@ class GraphDBVectorStore(BaseVectorStore):
         node_label, prop = self._resolve_index(index_name)
         vec = list(query_vector) if not isinstance(query_vector, list) else query_vector
 
-        if self._store_type == "falkordb":
+        if self._store_type in _FALKORDB_TYPES:
             cypher = (
                 f"CALL db.idx.vector.queryNodes('{node_label}', '{prop}', "
                 f"{int(top_k)}, vecf32($vec)) YIELD node, score "
@@ -271,7 +274,7 @@ class GraphDBVectorStore(BaseVectorStore):
         self._ensure_store()
 
         try:
-            if self._store_type == "falkordb":
+            if self._store_type in _FALKORDB_TYPES:
                 node_label, prop = self._resolve_index(name)
                 self._graph_store.run_cypher(
                     f"DROP INDEX ON :{node_label}({prop})"

@@ -8,7 +8,7 @@ from pathlib import Path
 from .factory import ProcessorFactory
 from .dag import DAGExecutor
 from ..store.config import (
-    BaseStoreConfig, Neo4jConfig,
+    BaseStoreConfig, FalkorDBLiteConfig, Neo4jConfig,
     BaseVectorStoreConfig,
     BaseRelationalStoreConfig,
     resolve_store_config, extract_store_kwargs, _STORE_FLAT_KEYS,
@@ -152,7 +152,7 @@ class _BuilderBase:
         store = self._effective_store(store_config, **kwargs)
         if store is not None:
             return store.to_flat_dict()
-        return Neo4jConfig().to_flat_dict()
+        return FalkorDBLiteConfig().to_flat_dict()
 
     def _effective_vector_store(self, **overrides) -> dict:
         """Resolve vector store config: explicit overrides > builder-level > empty."""
@@ -319,7 +319,7 @@ class _GraphWriterMixin:
         write_reversed_relations: bool = False,
         **kwargs,
     ):
-        store = self._effective_store(store_config, **kwargs) or Neo4jConfig()
+        store = self._effective_store(store_config, **kwargs) or FalkorDBLiteConfig()
         self._writer_config = store.to_flat_dict()
         self._writer_config["setup_indexes"] = setup_indexes
         if json_output is not None:
@@ -1838,7 +1838,7 @@ class CommunityConfigBuilder(_BuilderBase):
         store_config: BaseStoreConfig = None,
         **kwargs,
     ) -> "CommunityConfigBuilder":
-        store = self._effective_store(store_config, **kwargs) or Neo4jConfig()
+        store = self._effective_store(store_config, **kwargs) or FalkorDBLiteConfig()
         self._detector_config = {
             "method": method,
             "levels": levels,
@@ -1966,7 +1966,7 @@ class KGModelingConfigBuilder(_BuilderBase):
         store_config: BaseStoreConfig = None,
         **kwargs,
     ) -> "KGModelingConfigBuilder":
-        store = self._effective_store(store_config, **kwargs) or Neo4jConfig()
+        store = self._effective_store(store_config, **kwargs) or FalkorDBLiteConfig()
         self._reader_config = {
             "source": source,
             "train_ratio": train_ratio,

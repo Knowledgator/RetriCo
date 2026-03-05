@@ -35,9 +35,11 @@ class BaseStoreConfig(BaseModel):
     @classmethod
     def from_flat_dict(cls, d: dict) -> "BaseStoreConfig":
         """Create from a legacy flat dict (auto-detect store_type)."""
-        store_type = d.get("store_type", "neo4j")
+        store_type = d.get("store_type", "falkordb_lite")
         name = d.get("store_name", "default")
-        if store_type == "neo4j":
+        if store_type == "falkordb_lite":
+            cfg = FalkorDBLiteConfig.from_flat_dict(d)
+        elif store_type == "neo4j":
             cfg = Neo4jConfig.from_flat_dict(d)
         elif store_type == "falkordb":
             cfg = FalkorDBConfig.from_flat_dict(d)
@@ -77,6 +79,32 @@ class Neo4jConfig(BaseStoreConfig):
             user=d.get("neo4j_user", "neo4j"),
             password=d.get("neo4j_password", "password"),
             database=d.get("neo4j_database", "neo4j"),
+            name=d.get("store_name", "default"),
+        )
+
+
+class FalkorDBLiteConfig(BaseStoreConfig):
+    """Configuration for FalkorDBLite embedded graph store (default, zero-config)."""
+
+    store_type: str = "falkordb_lite"
+    db_path: str = "grapsit.db"
+    graph: str = "grapsit"
+
+    def to_flat_dict(self) -> dict:
+        d = {
+            "store_type": self.store_type,
+            "falkordb_lite_db_path": self.db_path,
+            "falkordb_lite_graph": self.graph,
+        }
+        if self.name != "default":
+            d["store_name"] = self.name
+        return d
+
+    @classmethod
+    def from_flat_dict(cls, d: dict) -> "FalkorDBLiteConfig":
+        return cls(
+            db_path=d.get("falkordb_lite_db_path", "grapsit.db"),
+            graph=d.get("falkordb_lite_graph", "grapsit"),
             name=d.get("store_name", "default"),
         )
 
@@ -145,6 +173,7 @@ class MemgraphConfig(BaseStoreConfig):
 # All known flat-dict keys for store params
 _STORE_FLAT_KEYS = frozenset({
     "store_type", "store_name",
+    "falkordb_lite_db_path", "falkordb_lite_graph",
     "neo4j_uri", "neo4j_user", "neo4j_password", "neo4j_database",
     "falkordb_host", "falkordb_port", "falkordb_graph",
     "memgraph_uri", "memgraph_user", "memgraph_password", "memgraph_database",

@@ -6,6 +6,15 @@ from .base import BaseGraphStore
 graph_store_registry = StoreRegistry("graph_store", BaseGraphStore)
 
 
+def _create_falkordb_lite(config: dict):
+    from .falkordb_lite_store import FalkorDBLiteGraphStore
+    return FalkorDBLiteGraphStore(
+        db_path=config.get("falkordb_lite_db_path", "grapsit.db"),
+        graph=config.get("falkordb_lite_graph", "grapsit"),
+        query_timeout=config.get("falkordb_lite_query_timeout", 0),
+    )
+
+
 def _create_neo4j(config: dict):
     from .neo4j_store import Neo4jGraphStore
     return Neo4jGraphStore(
@@ -36,6 +45,7 @@ def _create_memgraph(config: dict):
     )
 
 
+graph_store_registry.register("falkordb_lite", _create_falkordb_lite)
 graph_store_registry.register("neo4j", _create_neo4j)
 graph_store_registry.register("falkordb", _create_falkordb)
 graph_store_registry.register("memgraph", _create_memgraph)
@@ -44,8 +54,9 @@ graph_store_registry.register("memgraph", _create_memgraph)
 def create_graph_store(config) -> BaseGraphStore:
     """Create a graph store from a config dict or BaseStoreConfig.
 
-    The ``store_type`` key selects the backend (default: ``"neo4j"``).
+    The ``store_type`` key selects the backend (default: ``"falkordb_lite"``).
 
+    FalkorDBLite keys: ``falkordb_lite_db_path``, ``falkordb_lite_graph``
     Neo4j keys: ``neo4j_uri``, ``neo4j_user``, ``neo4j_password``, ``neo4j_database``
     FalkorDB keys: ``falkordb_host``, ``falkordb_port``, ``falkordb_graph``
     Memgraph keys: ``memgraph_uri``, ``memgraph_user``, ``memgraph_password``, ``memgraph_database``
@@ -53,7 +64,7 @@ def create_graph_store(config) -> BaseGraphStore:
     from ..config import BaseStoreConfig
     if isinstance(config, BaseStoreConfig):
         config = config.to_flat_dict()
-    store_type = config.get("store_type", "neo4j")
+    store_type = config.get("store_type", "falkordb_lite")
     factory = graph_store_registry.get(store_type)
     return factory(config)
 

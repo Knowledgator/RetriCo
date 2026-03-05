@@ -40,7 +40,9 @@ def _save_config(store_cfg: Dict[str, Any]) -> None:
 def _store_options(fn):
     """Attach common store connection flags to a click command."""
     opts = [
-        click.option("--store-type", type=click.Choice(["neo4j", "falkordb", "memgraph"]), default=None, help="Graph store backend."),
+        click.option("--store-type", type=click.Choice(["falkordb_lite", "neo4j", "falkordb", "memgraph"]), default=None, help="Graph store backend."),
+        click.option("--falkordb-lite-db-path", default=None, help="FalkorDBLite database file path."),
+        click.option("--falkordb-lite-graph", default=None, help="FalkorDBLite graph name."),
         click.option("--neo4j-uri", default=None, help="Neo4j bolt URI."),
         click.option("--neo4j-user", default=None, help="Neo4j user."),
         click.option("--neo4j-password", default=None, help="Neo4j password."),
@@ -66,7 +68,7 @@ def _resolve_store_kwargs(**cli_kwargs) -> Dict[str, Any]:
         if val is not None:
             result[cli_key] = val
     # Ensure store_type has a default
-    result.setdefault("store_type", "neo4j")
+    result.setdefault("store_type", "falkordb_lite")
     return result
 
 
@@ -135,11 +137,14 @@ def _echo_table(rows: List[Dict[str, Any]], columns: List[str] = None):
 def _prompt_store_connection() -> Dict[str, Any]:
     """Interactively prompt for store connection details."""
     store_type = click.prompt(
-        "Store type", type=click.Choice(["neo4j", "falkordb", "memgraph"]),
-        default="neo4j",
+        "Store type", type=click.Choice(["falkordb_lite", "neo4j", "falkordb", "memgraph"]),
+        default="falkordb_lite",
     )
     cfg: Dict[str, Any] = {"store_type": store_type}
-    if store_type == "neo4j":
+    if store_type == "falkordb_lite":
+        cfg["falkordb_lite_db_path"] = click.prompt("Database file path", default="grapsit.db")
+        cfg["falkordb_lite_graph"] = click.prompt("Graph name", default="grapsit")
+    elif store_type == "neo4j":
         cfg["neo4j_uri"] = click.prompt("Neo4j URI", default="bolt://localhost:7687")
         cfg["neo4j_user"] = click.prompt("Neo4j user", default="neo4j")
         cfg["neo4j_password"] = click.prompt("Neo4j password", default="password", hide_input=True)

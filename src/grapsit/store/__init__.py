@@ -10,6 +10,7 @@ from .graph import create_graph_store, graph_store_registry
 from .graph.base import BaseGraphStore
 from .graph.neo4j_store import Neo4jGraphStore
 from .graph.falkordb_store import FalkorDBGraphStore
+from .graph.falkordb_lite_store import FalkorDBLiteGraphStore
 from .graph.memgraph_store import MemgraphGraphStore
 
 # -- Vector stores (moved to store/vector/) ----------------------------------
@@ -28,7 +29,7 @@ from .registry import StoreRegistry
 
 # -- Config ------------------------------------------------------------------
 from .config import (
-    BaseStoreConfig, Neo4jConfig, FalkorDBConfig, MemgraphConfig,
+    BaseStoreConfig, FalkorDBLiteConfig, Neo4jConfig, FalkorDBConfig, MemgraphConfig,
     resolve_store_config, extract_store_kwargs, _STORE_FLAT_KEYS,
     BaseVectorStoreConfig, InMemoryVectorConfig, FaissVectorConfig,
     QdrantVectorConfig, GraphDBVectorConfig,
@@ -49,6 +50,7 @@ __all__ = [
     "BaseGraphStore",
     "Neo4jGraphStore",
     "FalkorDBGraphStore",
+    "FalkorDBLiteGraphStore",
     "MemgraphGraphStore",
     "create_store",
     "create_graph_store",
@@ -68,6 +70,7 @@ __all__ = [
     "StoreRegistry",
     # Config
     "BaseStoreConfig",
+    "FalkorDBLiteConfig",
     "Neo4jConfig",
     "FalkorDBConfig",
     "MemgraphConfig",
