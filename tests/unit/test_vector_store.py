@@ -3,8 +3,8 @@
 import pytest
 import numpy as np
 
-from grapsit.store.vector.memory import InMemoryVectorStore
-from grapsit.store.vector import create_vector_store
+from retrico.store.vector.memory import InMemoryVectorStore
+from retrico.store.vector import create_vector_store
 
 
 class TestInMemoryVectorStore:

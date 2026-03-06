@@ -5,7 +5,7 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.llm.base import (
+from retrico.llm.base import (
     BaseLLMClient,
     GRAPH_TOOLS,
     PROPERTY_FILTER_SCHEMA,
@@ -13,7 +13,7 @@ from grapsit.llm.base import (
     register_tool_translator,
     build_graph_schema_prompt,
 )
-from grapsit.llm.openai_client import OpenAIClient
+from retrico.llm.openai_client import OpenAIClient
 
 
 class TestGraphTools:
@@ -115,7 +115,7 @@ class TestOpenAIClient:
         client = OpenAIClient(api_key="test-key", model="gpt-4o-mini")
         assert client._client is None
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_complete(self, mock_ensure):
         """complete() calls the underlying OpenAI API."""
         client = OpenAIClient(api_key="test-key", model="gpt-4o-mini")
@@ -138,7 +138,7 @@ class TestOpenAIClient:
         assert call_kwargs["model"] == "gpt-4o-mini"
         assert call_kwargs["response_format"] == {"type": "json_object"}
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_temperature_override(self, mock_ensure):
         """Temperature can be overridden per call."""
         client = OpenAIClient(api_key="test-key", temperature=0.1)
@@ -200,7 +200,7 @@ class TestCompleteWithTools:
         resp.choices[0].message.tool_calls = tool_calls
         return resp
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_tool_call_returned(self, mock_ensure):
         """Tool calls are parsed from the response."""
         client, mock_openai = self._make_client()
@@ -219,7 +219,7 @@ class TestCompleteWithTools:
         assert result["tool_calls"][0]["name"] == "search_entity"
         assert result["tool_calls"][0]["arguments"] == {"label": "Einstein"}
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_text_response_no_tools(self, mock_ensure):
         """When no tool calls, returns content with empty tool_calls list."""
         client, mock_openai = self._make_client()
@@ -234,7 +234,7 @@ class TestCompleteWithTools:
         assert result["content"] == "Einstein was born in Ulm."
         assert result["tool_calls"] == []
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_multiple_tool_calls(self, mock_ensure):
         """Multiple tool calls in a single response are all returned."""
         client, mock_openai = self._make_client()
@@ -252,7 +252,7 @@ class TestCompleteWithTools:
         assert result["tool_calls"][0]["name"] == "search_entity"
         assert result["tool_calls"][1]["arguments"] == {"label": "Ulm"}
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_default_tools_are_graph_tools(self, mock_ensure):
         """When tools=None, GRAPH_TOOLS are passed to the API."""
         client, mock_openai = self._make_client()
@@ -267,7 +267,7 @@ class TestCompleteWithTools:
         call_kwargs = mock_openai.chat.completions.create.call_args[1]
         assert call_kwargs["tools"] is GRAPH_TOOLS
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_custom_tools(self, mock_ensure):
         """Custom tools are passed through to the API."""
         client, mock_openai = self._make_client()
@@ -292,7 +292,7 @@ class TestCompleteWithTools:
         call_kwargs = mock_openai.chat.completions.create.call_args[1]
         assert call_kwargs["tools"] is custom_tools
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_combined_builtin_and_custom_tools(self, mock_ensure):
         """Users can combine GRAPH_TOOLS with custom tools."""
         client, mock_openai = self._make_client()
@@ -318,7 +318,7 @@ class TestCompleteWithTools:
         call_kwargs = mock_openai.chat.completions.create.call_args[1]
         assert len(call_kwargs["tools"]) == len(GRAPH_TOOLS) + 1
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_temperature_override(self, mock_ensure):
         """Temperature can be overridden in complete_with_tools."""
         client, mock_openai = self._make_client()
@@ -334,7 +334,7 @@ class TestCompleteWithTools:
         call_kwargs = mock_openai.chat.completions.create.call_args[1]
         assert call_kwargs["temperature"] == 0.9
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_malformed_arguments_returned_as_string(self, mock_ensure):
         """If arguments JSON is malformed, the raw string is returned."""
         client, mock_openai = self._make_client()
@@ -349,7 +349,7 @@ class TestCompleteWithTools:
 
         assert result["tool_calls"][0]["arguments"] == "not valid json{{{"
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_tool_call_with_property_filters(self, mock_ensure):
         """Tool calls can include property filters (e.g. list_entities with filters)."""
         client, mock_openai = self._make_client()
@@ -381,7 +381,7 @@ class TestCompleteWithTools:
         assert parsed["arguments"]["filters"][0]["operator"] == "eq"
         assert parsed["arguments"]["filters"][1]["value"] == 2020
 
-    @patch("grapsit.llm.openai_client.OpenAIClient._ensure_client")
+    @patch("retrico.llm.openai_client.OpenAIClient._ensure_client")
     def test_tool_call_relations_with_filters(self, mock_ensure):
         """get_entity_relations can include relation_type and min_score filters."""
         client, mock_openai = self._make_client()

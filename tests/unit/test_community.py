@@ -78,7 +78,7 @@ class TestCommunityDetector:
 
     def test_single_level_detection(self, mock_store):
         """Test basic single-level community detection."""
-        from grapsit.modeling.community import CommunityDetectorProcessor
+        from retrico.modeling.community import CommunityDetectorProcessor
 
         config = {"store_type": "neo4j", "method": "louvain", "levels": 1}
         processor = CommunityDetectorProcessor(config)
@@ -98,7 +98,7 @@ class TestCommunityDetector:
 
     def test_leiden_method(self, mock_store):
         """Test detection with leiden method."""
-        from grapsit.modeling.community import CommunityDetectorProcessor
+        from retrico.modeling.community import CommunityDetectorProcessor
 
         config = {"store_type": "neo4j", "method": "leiden", "levels": 1}
         processor = CommunityDetectorProcessor(config)
@@ -108,10 +108,10 @@ class TestCommunityDetector:
 
         mock_store.detect_communities.assert_called_once_with(method="leiden")
 
-    @patch("grapsit.modeling.community.uuid")
+    @patch("retrico.modeling.community.uuid")
     def test_multi_level_detection(self, mock_uuid, mock_store):
         """Test hierarchical multi-level detection."""
-        from grapsit.modeling.community import CommunityDetectorProcessor
+        from retrico.modeling.community import CommunityDetectorProcessor
 
         # Mock uuid to produce predictable IDs
         parent_ids = [f"parent_{i}" for i in range(10)]
@@ -122,8 +122,8 @@ class TestCommunityDetector:
         processor._store = mock_store
 
         # Mock networkx
-        with patch("grapsit.modeling.community.nx") as mock_nx, \
-             patch("grapsit.modeling.community.louvain_communities") as mock_louvain:
+        with patch("retrico.modeling.community.nx") as mock_nx, \
+             patch("retrico.modeling.community.louvain_communities") as mock_louvain:
             mock_G = MagicMock()
             mock_nx.Graph.return_value = mock_G
             # Return 2 higher-level communities from 3 level-0 communities
@@ -140,7 +140,7 @@ class TestCommunityDetector:
 
     def test_multi_level_stops_if_single_community(self, mock_store):
         """Multi-level stops early if only one community at a level."""
-        from grapsit.modeling.community import CommunityDetectorProcessor
+        from retrico.modeling.community import CommunityDetectorProcessor
 
         # Override to return single community
         mock_store.detect_communities.return_value = {"e1": "c1", "e2": "c1"}
@@ -155,7 +155,7 @@ class TestCommunityDetector:
 
     def test_multi_level_stops_if_no_inter_edges(self, mock_store):
         """Multi-level stops if no inter-community edges."""
-        from grapsit.modeling.community import CommunityDetectorProcessor
+        from retrico.modeling.community import CommunityDetectorProcessor
 
         mock_store.get_inter_community_edges.return_value = []
 
@@ -169,14 +169,14 @@ class TestCommunityDetector:
 
     def test_lazy_store_creation(self):
         """Store is created lazily on first call."""
-        from grapsit.modeling.community import CommunityDetectorProcessor
+        from retrico.modeling.community import CommunityDetectorProcessor
 
         config = {"store_type": "neo4j", "method": "louvain", "levels": 1}
         processor = CommunityDetectorProcessor(config)
 
         assert processor._store is None
 
-        with patch("grapsit.modeling.community.resolve_from_pool_or_create") as mock_create:
+        with patch("retrico.modeling.community.resolve_from_pool_or_create") as mock_create:
             mock_store = MagicMock()
             mock_store.detect_communities.return_value = {}
             mock_create.return_value = mock_store
@@ -193,7 +193,7 @@ class TestCommunitySummarizer:
 
     def test_summarize_communities(self, mock_store, mock_llm):
         """Test summarization of communities."""
-        from grapsit.modeling.community import CommunitySummarizerProcessor
+        from retrico.modeling.community import CommunitySummarizerProcessor
 
         # Add summaries so we can test the full flow
         mock_store.get_all_communities.return_value = [
@@ -218,7 +218,7 @@ class TestCommunitySummarizer:
 
     def test_skip_communities_without_members(self, mock_store, mock_llm):
         """Communities with no members are skipped."""
-        from grapsit.modeling.community import CommunitySummarizerProcessor
+        from retrico.modeling.community import CommunitySummarizerProcessor
 
         mock_store.get_all_communities.return_value = [
             {"id": "c_empty", "level": 0},
@@ -237,7 +237,7 @@ class TestCommunitySummarizer:
 
     def test_top_k_entity_selection(self, mock_store, mock_llm):
         """Top-k parameter limits entities per community."""
-        from grapsit.modeling.community import CommunitySummarizerProcessor
+        from retrico.modeling.community import CommunitySummarizerProcessor
 
         config = {"store_type": "neo4j", "top_k": 3}
         processor = CommunitySummarizerProcessor(config)
@@ -253,7 +253,7 @@ class TestCommunitySummarizer:
 
     def test_llm_response_parsing(self, mock_store):
         """Test various LLM response formats."""
-        from grapsit.modeling.community import CommunitySummarizerProcessor
+        from retrico.modeling.community import CommunitySummarizerProcessor
 
         mock_llm = MagicMock()
         mock_llm.complete.return_value = "TITLE: Test Title\nSUMMARY: Test summary here."
@@ -274,7 +274,7 @@ class TestCommunitySummarizer:
 
     def test_llm_response_fallback(self, mock_store):
         """Fallback when LLM doesn't follow expected format."""
-        from grapsit.modeling.community import CommunitySummarizerProcessor
+        from retrico.modeling.community import CommunitySummarizerProcessor
 
         mock_llm = MagicMock()
         mock_llm.complete.return_value = "This is a free-form response about the community."
@@ -296,14 +296,14 @@ class TestCommunitySummarizer:
 
     def test_lazy_llm_creation(self):
         """LLM client is created lazily."""
-        from grapsit.modeling.community import CommunitySummarizerProcessor
+        from retrico.modeling.community import CommunitySummarizerProcessor
 
         config = {"store_type": "neo4j", "api_key": "test-key", "model": "gpt-4o-mini"}
         processor = CommunitySummarizerProcessor(config)
 
         assert processor._llm is None
 
-        with patch("grapsit.modeling.community.OpenAIClient") as mock_cls:
+        with patch("retrico.modeling.community.OpenAIClient") as mock_cls:
             processor._ensure_llm()
             mock_cls.assert_called_once_with(
                 api_key="test-key",
@@ -323,7 +323,7 @@ class TestCommunityEmbedder:
 
     def test_embed_communities(self, mock_store, mock_embedding_model, mock_vector_store):
         """Test embedding of community summaries."""
-        from grapsit.modeling.community import CommunityEmbedderProcessor
+        from retrico.modeling.community import CommunityEmbedderProcessor
 
         # Communities with summaries
         mock_store.get_all_communities.return_value = [
@@ -356,7 +356,7 @@ class TestCommunityEmbedder:
 
     def test_no_summaries_to_embed(self, mock_store, mock_embedding_model, mock_vector_store):
         """Skip embedding if no communities have summaries."""
-        from grapsit.modeling.community import CommunityEmbedderProcessor
+        from retrico.modeling.community import CommunityEmbedderProcessor
 
         mock_store.get_all_communities.return_value = [
             {"id": "c1", "level": 0, "title": "", "summary": ""},
@@ -375,7 +375,7 @@ class TestCommunityEmbedder:
 
     def test_embedding_text_includes_title_and_summary(self, mock_store, mock_embedding_model, mock_vector_store):
         """Embedding input should combine title and summary."""
-        from grapsit.modeling.community import CommunityEmbedderProcessor
+        from retrico.modeling.community import CommunityEmbedderProcessor
 
         mock_store.get_all_communities.return_value = [
             {"id": "c1", "level": 0, "title": "Physics", "summary": "About physics."},
@@ -395,14 +395,14 @@ class TestCommunityEmbedder:
 
     def test_lazy_embedding_model_creation(self):
         """Embedding model is created lazily."""
-        from grapsit.modeling.community import CommunityEmbedderProcessor
+        from retrico.modeling.community import CommunityEmbedderProcessor
 
         config = {"store_type": "neo4j", "embedding_method": "sentence_transformer", "model_name": "test-model"}
         processor = CommunityEmbedderProcessor(config)
 
         assert processor._embedding_model is None
 
-        with patch("grapsit.modeling.community.create_embedding_model") as mock_create:
+        with patch("retrico.modeling.community.create_embedding_model") as mock_create:
             processor._ensure_embedding_model()
             mock_create.assert_called_once()
             call_config = mock_create.call_args[0][0]
@@ -411,30 +411,30 @@ class TestCommunityEmbedder:
 
     def test_lazy_vector_store_creation(self):
         """Vector store is created lazily."""
-        from grapsit.modeling.community import CommunityEmbedderProcessor
+        from retrico.modeling.community import CommunityEmbedderProcessor
 
         config = {"store_type": "neo4j", "vector_store_type": "faiss"}
         processor = CommunityEmbedderProcessor(config)
 
         assert processor._vector_store is None
 
-        with patch("grapsit.modeling.community.resolve_from_pool_or_create") as mock_create:
+        with patch("retrico.modeling.community.resolve_from_pool_or_create") as mock_create:
             processor._ensure_vector_store()
             mock_create.assert_called_once_with(config, "vector")
 
 
 # ---------------------------------------------------------------------------
-# CommunityConfigBuilder
+# RetriCoCommunity
 # ---------------------------------------------------------------------------
 
-class TestCommunityConfigBuilder:
-    """Tests for CommunityConfigBuilder."""
+class TestRetriCoCommunity:
+    """Tests for RetriCoCommunity."""
 
     def test_detector_only(self):
         """Config with only detector."""
-        from grapsit.core.builders import CommunityConfigBuilder
+        from retrico.core.builders import RetriCoCommunity
 
-        builder = CommunityConfigBuilder(name="test")
+        builder = RetriCoCommunity(name="test")
         builder.detector(method="louvain", levels=2)
         config = builder.get_config()
 
@@ -446,9 +446,9 @@ class TestCommunityConfigBuilder:
 
     def test_detector_plus_summarizer(self):
         """Config with detector and summarizer."""
-        from grapsit.core.builders import CommunityConfigBuilder
+        from retrico.core.builders import RetriCoCommunity
 
-        builder = CommunityConfigBuilder()
+        builder = RetriCoCommunity()
         builder.detector(method="louvain", neo4j_uri="bolt://myhost:7687")
         builder.summarizer(api_key="sk-test", top_k=5)
         config = builder.get_config()
@@ -464,9 +464,9 @@ class TestCommunityConfigBuilder:
 
     def test_full_pipeline(self):
         """Config with all three processors."""
-        from grapsit.core.builders import CommunityConfigBuilder
+        from retrico.core.builders import RetriCoCommunity
 
-        builder = CommunityConfigBuilder()
+        builder = RetriCoCommunity()
         builder.detector(method="louvain")
         builder.summarizer(api_key="sk-test")
         builder.embedder(embedding_method="sentence_transformer", model_name="test-model")
@@ -481,9 +481,9 @@ class TestCommunityConfigBuilder:
 
     def test_embedder_without_summarizer(self):
         """Embedder can run without summarizer."""
-        from grapsit.core.builders import CommunityConfigBuilder
+        from retrico.core.builders import RetriCoCommunity
 
-        builder = CommunityConfigBuilder()
+        builder = RetriCoCommunity()
         builder.detector()
         builder.embedder()
         config = builder.get_config()
@@ -494,17 +494,17 @@ class TestCommunityConfigBuilder:
 
     def test_missing_detector_raises(self):
         """Error if detector not configured."""
-        from grapsit.core.builders import CommunityConfigBuilder
+        from retrico.core.builders import RetriCoCommunity
 
-        builder = CommunityConfigBuilder()
+        builder = RetriCoCommunity()
         with pytest.raises(ValueError, match="Detector config required"):
             builder.get_config()
 
     def test_store_params_inherited(self):
         """Store params flow from detector to summarizer and embedder."""
-        from grapsit.core.builders import CommunityConfigBuilder
+        from retrico.core.builders import RetriCoCommunity
 
-        builder = CommunityConfigBuilder()
+        builder = RetriCoCommunity()
         builder.detector(
             store_type="memgraph",
             memgraph_uri="bolt://mg:7687",
@@ -520,9 +520,9 @@ class TestCommunityConfigBuilder:
 
     def test_save_yaml(self, tmp_path):
         """Save config to YAML file."""
-        from grapsit.core.builders import CommunityConfigBuilder
+        from retrico.core.builders import RetriCoCommunity
 
-        builder = CommunityConfigBuilder(name="test_yaml")
+        builder = RetriCoCommunity(name="test_yaml")
         builder.detector(method="louvain")
         builder.summarizer(api_key="sk-test")
 
@@ -538,14 +538,14 @@ class TestCommunityConfigBuilder:
 
     def test_build_creates_executor(self):
         """build() creates a DAGExecutor."""
-        from grapsit.core.builders import CommunityConfigBuilder
+        from retrico.core.builders import RetriCoCommunity
 
-        builder = CommunityConfigBuilder()
+        builder = RetriCoCommunity()
         builder.detector(method="louvain")
 
         executor = builder.build()
         # Should be a DAGExecutor
-        from grapsit.core.dag import DAGExecutor
+        from retrico.core.dag import DAGExecutor
         assert isinstance(executor, DAGExecutor)
 
 
@@ -557,15 +557,15 @@ class TestProcessorRegistration:
     """Test that community processors are registered."""
 
     def test_detector_registered(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "community_detector" in processor_registry._factories
 
     def test_summarizer_registered(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "community_summarizer" in processor_registry._factories
 
     def test_embedder_registered(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "community_embedder" in processor_registry._factories
 
 
@@ -578,19 +578,20 @@ class TestDetectCommunitiesConvenience:
 
     def test_detect_communities_basic(self):
         """Basic detect_communities() call builds correct pipeline."""
-        import grapsit
+        import retrico
 
-        with patch("grapsit.CommunityConfigBuilder") as MockBuilder:
+        with patch("retrico.RetriCoCommunity") as MockBuilder:
             mock_builder = MagicMock()
             MockBuilder.return_value = mock_builder
             mock_executor = MagicMock()
             mock_builder.build.return_value = mock_executor
             mock_ctx = MagicMock()
-            mock_executor.execute.return_value = mock_ctx
+            mock_executor.run.return_value = mock_ctx
 
-            result = grapsit.detect_communities(
+            result = retrico.detect_communities(
                 method="louvain",
                 levels=2,
+                store_type="neo4j",
                 neo4j_uri="bolt://test:7687",
             )
 
@@ -610,16 +611,16 @@ class TestDetectCommunitiesConvenience:
 
     def test_detect_communities_with_summarizer(self):
         """detect_communities() with api_key enables summarizer + embedder."""
-        import grapsit
+        import retrico
 
-        with patch("grapsit.CommunityConfigBuilder") as MockBuilder:
+        with patch("retrico.RetriCoCommunity") as MockBuilder:
             mock_builder = MagicMock()
             MockBuilder.return_value = mock_builder
             mock_executor = MagicMock()
             mock_builder.build.return_value = mock_executor
-            mock_executor.execute.return_value = MagicMock()
+            mock_executor.run.return_value = MagicMock()
 
-            grapsit.detect_communities(
+            retrico.detect_communities(
                 api_key="sk-test",
                 model="gpt-4o",
                 top_k=5,
@@ -644,20 +645,20 @@ class TestStoreNewMethods:
     """Test new store methods on BaseGraphStore (default NotImplementedError)."""
 
     def test_base_store_write_community_hierarchy(self):
-        from grapsit.store.graph.base import BaseGraphStore
+        from retrico.store.graph.base import BaseGraphStore
         # Can't instantiate ABC, but can test the method exists
         assert hasattr(BaseGraphStore, "write_community_hierarchy")
 
     def test_base_store_get_top_entities_by_degree(self):
-        from grapsit.store.graph.base import BaseGraphStore
+        from retrico.store.graph.base import BaseGraphStore
         assert hasattr(BaseGraphStore, "get_top_entities_by_degree")
 
     def test_base_store_update_community_embedding(self):
-        from grapsit.store.graph.base import BaseGraphStore
+        from retrico.store.graph.base import BaseGraphStore
         assert hasattr(BaseGraphStore, "update_community_embedding")
 
     def test_base_store_get_inter_community_edges(self):
-        from grapsit.store.graph.base import BaseGraphStore
+        from retrico.store.graph.base import BaseGraphStore
         assert hasattr(BaseGraphStore, "get_inter_community_edges")
 
 
@@ -666,7 +667,7 @@ class TestNeo4jStoreNewMethods:
 
     @pytest.fixture
     def neo4j_store(self):
-        from grapsit.store.graph.neo4j_store import Neo4jGraphStore
+        from retrico.store.graph.neo4j_store import Neo4jGraphStore
         store = Neo4jGraphStore.__new__(Neo4jGraphStore)
         store.uri = "bolt://test:7687"
         store.user = "neo4j"
@@ -731,11 +732,11 @@ class TestPublicAPI:
     """Test that new items are properly exported."""
 
     def test_community_config_builder_exported(self):
-        import grapsit
-        assert hasattr(grapsit, "CommunityConfigBuilder")
+        import retrico
+        assert hasattr(retrico, "RetriCoCommunity")
 
     def test_detect_communities_exported(self):
-        import grapsit
-        assert hasattr(grapsit, "detect_communities")
-        assert "detect_communities" in grapsit.__all__
-        assert "CommunityConfigBuilder" in grapsit.__all__
+        import retrico
+        assert hasattr(retrico, "detect_communities")
+        assert "detect_communities" in retrico.__all__
+        assert "RetriCoCommunity" in retrico.__all__

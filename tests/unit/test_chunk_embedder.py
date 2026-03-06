@@ -45,7 +45,7 @@ def sample_chunks():
 class TestChunkEmbedder:
 
     def _make_processor(self, config=None):
-        from grapsit.construct.chunk_embedder import ChunkEmbedderProcessor
+        from retrico.construct.chunk_embedder import ChunkEmbedderProcessor
         return ChunkEmbedderProcessor(config or {})
 
     def test_basic_embedding(self, mock_store, mock_embedding_model, mock_vector_store, sample_chunks):
@@ -106,8 +106,8 @@ class TestChunkEmbedder:
         result = proc(chunks=sample_chunks)
         assert result["embedded_count"] == 2
 
-    @patch("grapsit.construct.chunk_embedder.resolve_from_pool_or_create")
-    @patch("grapsit.construct.chunk_embedder.create_embedding_model")
+    @patch("retrico.construct.chunk_embedder.resolve_from_pool_or_create")
+    @patch("retrico.construct.chunk_embedder.create_embedding_model")
     def test_lazy_initialization(self, mock_cem, mock_resolve, sample_chunks):
         mock_em = MagicMock()
         type(mock_em).dimension = PropertyMock(return_value=128)
@@ -130,17 +130,17 @@ class TestChunkEmbedder:
         mock_cem.assert_called_once()
 
     def test_processor_registration(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "chunk_embedder" in processor_registry._factories
 
 
 class TestChunkEmbedderBuilder:
-    """Test BuildConfigBuilder integration with chunk_embedder."""
+    """Test RetriCoBuilder integration with chunk_embedder."""
 
     def test_builder_adds_chunk_embedder_node(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer()
         builder.chunk_embedder()
@@ -155,9 +155,9 @@ class TestChunkEmbedderBuilder:
         assert embedder_node["inputs"]["chunks"]["source"] == "chunker_result"
 
     def test_builder_without_embedder_has_no_node(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer()
 
@@ -166,9 +166,9 @@ class TestChunkEmbedderBuilder:
         assert "chunk_embedder" not in node_ids
 
     def test_embedder_inherits_store_params(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer(neo4j_uri="bolt://custom:7687", store_type="neo4j")
         builder.chunk_embedder(embedding_method="openai")

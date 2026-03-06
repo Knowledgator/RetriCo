@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.query.retriever import RetrieverProcessor
-from grapsit.models.entity import EntityMention
+from retrico.query.retriever import RetrieverProcessor
+from retrico.models.entity import EntityMention
 
 
 class TestRetrieverProcessor:
@@ -104,7 +104,7 @@ class TestRetrieverProcessor:
 
         sg = result["subgraph"]
         assert len(sg.entities) == 1
-        proc._store.get_subgraph.assert_called_once_with(["e1"], max_hops=2)
+        proc._store.get_subgraph.assert_called_once_with(["e1"], max_hops=2, active_after=None, active_before=None)
 
     def test_null_relation_type_filtered(self):
         proc = self._make_proc()

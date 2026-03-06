@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 class TestStoreReaderProcessor:
     def _make_processor(self, config=None):
-        from grapsit.construct.store_reader import StoreReaderProcessor
+        from retrico.construct.store_reader import StoreReaderProcessor
         base = {
             "relational_store_type": "sqlite",
             "table": "documents",
@@ -136,7 +136,7 @@ class TestStoreReaderProcessor:
         assert proc._store is None
 
         with patch(
-            "grapsit.construct.store_reader.resolve_from_pool_or_create"
+            "retrico.construct.store_reader.resolve_from_pool_or_create"
         ) as mock_resolve:
             mock_store = self._mock_store([{"id": "d1", "text": "hi"}])
             mock_resolve.return_value = mock_store
@@ -144,7 +144,7 @@ class TestStoreReaderProcessor:
             mock_resolve.assert_called_once()
 
     def test_registered_in_registry(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "store_reader" in processor_registry._factories
 
 
@@ -153,12 +153,12 @@ class TestStoreReaderProcessor:
 # ---------------------------------------------------------------------------
 
 
-class TestBuildConfigBuilderStoreReader:
+class TestRetriCoBuilderStoreReader:
     def test_store_reader_dag_wiring(self):
         """store_reader node is prepended, chunker reads from it."""
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.chunk_store(type="sqlite", sqlite_path=":memory:")
         builder.store_reader(table="articles", text_field="body")
         builder.chunker(method="sentence")
@@ -187,9 +187,9 @@ class TestBuildConfigBuilderStoreReader:
 
     def test_no_store_reader_backward_compat(self):
         """Without store_reader, chunker reads from $input as before."""
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.chunker(method="sentence")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer()
@@ -205,9 +205,9 @@ class TestBuildConfigBuilderStoreReader:
 
     def test_store_reader_inherits_chunk_store(self):
         """store_reader() picks up builder-level chunk_store config."""
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.chunk_store(type="sqlite", sqlite_path="/data/docs.db")
         builder.store_reader(table="my_table")
         builder.ner_gliner(labels=["org"])
@@ -227,7 +227,7 @@ class TestBuildConfigBuilderStoreReader:
 
 class TestSqliteGetAllRecords:
     def _make_store(self):
-        from grapsit.store.relational.sqlite_store import SqliteRelationalStore
+        from retrico.store.relational.sqlite_store import SqliteRelationalStore
         return SqliteRelationalStore(path=":memory:")
 
     def test_get_all(self):

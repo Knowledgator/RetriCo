@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import MagicMock, patch, call
 
-from grapsit.models.document import Chunk, Document
-from grapsit.models.entity import EntityMention
-from grapsit.models.relation import Relation
+from retrico.models.document import Chunk, Document
+from retrico.models.entity import EntityMention
+from retrico.models.relation import Relation
 
 
 @pytest.fixture
@@ -25,7 +25,7 @@ def mock_relational_store():
 class TestGraphWriterWithRelationalStore:
     """Graph writer writes chunks/documents to relational store when configured."""
 
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
     def test_writes_chunks_and_documents(self, mock_resolve, mock_graph_store, mock_relational_store):
         """When relational store is configured, chunks and documents are written to it."""
         def _resolve(config, category):
@@ -37,7 +37,7 @@ class TestGraphWriterWithRelationalStore:
 
         mock_resolve.side_effect = _resolve
 
-        from grapsit.construct.graph_writer import GraphWriterProcessor
+        from retrico.construct.graph_writer import GraphWriterProcessor
 
         config = {
             "store_type": "neo4j",
@@ -75,7 +75,7 @@ class TestGraphWriterWithRelationalStore:
         assert chunk_call[0][1][0]["id"] == "c1"
         assert chunk_call[0][1][0]["text"] == "Hello world"
 
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
     def test_custom_table_names(self, mock_resolve, mock_graph_store, mock_relational_store):
         """Custom chunk_table and document_table names are used."""
         def _resolve(config, category):
@@ -87,7 +87,7 @@ class TestGraphWriterWithRelationalStore:
 
         mock_resolve.side_effect = _resolve
 
-        from grapsit.construct.graph_writer import GraphWriterProcessor
+        from retrico.construct.graph_writer import GraphWriterProcessor
 
         config = {
             "store_type": "neo4j",
@@ -111,14 +111,14 @@ class TestGraphWriterWithRelationalStore:
         chunk_call = mock_relational_store.write_records.call_args_list[1]
         assert chunk_call[0][0] == "my_chunks"
 
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
     def test_no_relational_store_backward_compat(self, mock_resolve, mock_graph_store):
         """Without relational store config, writer works unchanged."""
         mock_resolve.side_effect = lambda config, category: (
             mock_graph_store if category == "graph" else (_ for _ in ()).throw(ValueError("no config"))
         )
 
-        from grapsit.construct.graph_writer import GraphWriterProcessor
+        from retrico.construct.graph_writer import GraphWriterProcessor
 
         config = {"store_type": "neo4j", "setup_indexes": False}
         writer = GraphWriterProcessor(config)
@@ -133,7 +133,7 @@ class TestGraphWriterWithRelationalStore:
         assert result["entity_count"] == 1
         assert result["chunk_count"] == 1
 
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
     def test_empty_chunks_and_docs_skip_writes(self, mock_resolve, mock_graph_store, mock_relational_store):
         """Empty chunks/documents lists skip relational store writes."""
         def _resolve(config, category):
@@ -145,7 +145,7 @@ class TestGraphWriterWithRelationalStore:
 
         mock_resolve.side_effect = _resolve
 
-        from grapsit.construct.graph_writer import GraphWriterProcessor
+        from retrico.construct.graph_writer import GraphWriterProcessor
 
         config = {
             "store_type": "neo4j",
@@ -159,10 +159,10 @@ class TestGraphWriterWithRelationalStore:
         # write_records should not be called with empty lists
         mock_relational_store.write_records.assert_not_called()
 
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
     def test_relational_store_via_pool(self, mock_resolve, mock_graph_store, mock_relational_store):
         """Relational store resolved from pool when __store_pool__ is set."""
-        from grapsit.store.pool import StorePool
+        from retrico.store.pool import StorePool
 
         pool = MagicMock(spec=StorePool)
         pool.has_relational.return_value = True
@@ -176,7 +176,7 @@ class TestGraphWriterWithRelationalStore:
 
         mock_resolve.side_effect = _resolve
 
-        from grapsit.construct.graph_writer import GraphWriterProcessor
+        from retrico.construct.graph_writer import GraphWriterProcessor
 
         config = {
             "store_type": "neo4j",
@@ -191,9 +191,9 @@ class TestBuilderRelationalStoreWiring:
     """Builder correctly wires relational stores into pool and writer config."""
 
     def test_chunk_store_registers_in_pool(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.chunk_store(type="sqlite", sqlite_path="/tmp/test.db")
 
         assert "default" in builder._relational_stores
@@ -201,26 +201,26 @@ class TestBuilderRelationalStoreWiring:
         assert builder._relational_stores["default"]["sqlite_path"] == "/tmp/test.db"
 
     def test_chunk_store_named(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.chunk_store(type="sqlite", name="chunks_db", sqlite_path=":memory:")
 
         assert "chunks_db" in builder._relational_stores
 
     def test_chunk_store_config_object(self):
-        from grapsit.core.builders import BuildConfigBuilder
-        from grapsit.store.config import SqliteRelationalConfig
+        from retrico.core.builders import RetriCoBuilder
+        from retrico.store.config import SqliteRelationalConfig
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.chunk_store(config=SqliteRelationalConfig(path="/tmp/test.db", name="my_store"))
 
         assert "my_store" in builder._relational_stores
 
     def test_stores_section_includes_relational(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.graph_store()
         builder.chunk_store(type="sqlite")
         builder.ner_gliner(labels=["person"])
@@ -232,9 +232,9 @@ class TestBuilderRelationalStoreWiring:
         assert "default" in config["stores"]["relational"]
 
     def test_writer_config_includes_relational_keys(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.chunk_store(type="sqlite", sqlite_path="/tmp/chunks.db")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer()
@@ -245,9 +245,9 @@ class TestBuilderRelationalStoreWiring:
         assert writer_node["config"]["sqlite_path"] == "/tmp/chunks.db"
 
     def test_writer_config_custom_table_names(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.chunk_store(type="sqlite")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer(chunk_table="text_chunks", document_table="text_docs")
@@ -258,9 +258,9 @@ class TestBuilderRelationalStoreWiring:
         assert writer_node["config"]["document_table"] == "text_docs"
 
     def test_no_chunk_store_no_relational_keys(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer()
 
@@ -269,9 +269,9 @@ class TestBuilderRelationalStoreWiring:
         assert "relational_store_type" not in writer_node["config"]
 
     def test_build_pool_includes_relational(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.graph_store()
         builder.chunk_store(type="sqlite", sqlite_path=":memory:")
         builder.ner_gliner(labels=["person"])
@@ -282,9 +282,9 @@ class TestBuilderRelationalStoreWiring:
         assert pool.has_relational("default")
 
     def test_ingest_builder_with_chunk_store(self):
-        from grapsit.core.builders import IngestConfigBuilder
+        from retrico.core.builders import RetriCoIngest
 
-        builder = IngestConfigBuilder(name="test")
+        builder = RetriCoIngest(name="test")
         builder.chunk_store(type="sqlite", sqlite_path=":memory:")
         builder.graph_writer()
 

@@ -4,7 +4,7 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.query.parser import QueryParserProcessor
+from retrico.query.parser import QueryParserProcessor
 
 
 class TestQueryParserTool:
@@ -16,8 +16,8 @@ class TestQueryParserTool:
             "labels": ["person", "location"],
             "relation_labels": ["born_in", "works_at"],
         })
-        proc._client = MagicMock()
-        proc._client.complete_with_tools.return_value = {
+        proc._llm_client = MagicMock()
+        proc._llm_client.complete_with_tools.return_value = {
             "content": None,
             "tool_calls": [
                 {
@@ -50,8 +50,8 @@ class TestQueryParserTool:
             "api_key": "test",
             "labels": ["person", "organization"],
         })
-        proc._client = MagicMock()
-        proc._client.complete_with_tools.return_value = {
+        proc._llm_client = MagicMock()
+        proc._llm_client.complete_with_tools.return_value = {
             "content": None,
             "tool_calls": [
                 {
@@ -81,8 +81,8 @@ class TestQueryParserTool:
             "api_key": "test",
             "labels": ["person"],
         })
-        proc._client = MagicMock()
-        proc._client.complete_with_tools.return_value = {
+        proc._llm_client = MagicMock()
+        proc._llm_client.complete_with_tools.return_value = {
             "content": "I don't understand the query.",
             "tool_calls": [],
         }
@@ -98,8 +98,8 @@ class TestQueryParserTool:
             "api_key": "test",
             "labels": ["person"],
         })
-        proc._client = MagicMock()
-        proc._client.complete_with_tools.side_effect = Exception("API error")
+        proc._llm_client = MagicMock()
+        proc._llm_client.complete_with_tools.side_effect = Exception("API error")
 
         result = proc(query="test query")
 
@@ -112,8 +112,8 @@ class TestQueryParserTool:
             "api_key": "test",
             "labels": ["person"],
         })
-        proc._client = MagicMock()
-        proc._client.complete_with_tools.return_value = {
+        proc._llm_client = MagicMock()
+        proc._llm_client.complete_with_tools.return_value = {
             "content": None,
             "tool_calls": [
                 {
@@ -140,8 +140,8 @@ class TestQueryParserTool:
             "api_key": "test",
             "labels": ["person"],
         })
-        proc._client = MagicMock()
-        proc._client.complete_with_tools.return_value = {
+        proc._llm_client = MagicMock()
+        proc._llm_client.complete_with_tools.return_value = {
             "content": None,
             "tool_calls": [
                 {
@@ -166,8 +166,8 @@ class TestQueryParserTool:
             "labels": ["person", "location"],
             "relation_labels": ["born_in"],
         })
-        proc._client = MagicMock()
-        proc._client.complete_with_tools.return_value = {
+        proc._llm_client = MagicMock()
+        proc._llm_client.complete_with_tools.return_value = {
             "content": None,
             "tool_calls": [
                 {
@@ -181,7 +181,7 @@ class TestQueryParserTool:
         result = proc(query="Where was Einstein born?")
 
         # Verify the tools passed to complete_with_tools
-        call_args = proc._client.complete_with_tools.call_args
+        call_args = proc._llm_client.complete_with_tools.call_args
         tools = call_args[1].get("tools") or call_args[0][1]
         assert len(tools) == 1
         assert tools[0]["function"]["name"] == "search_triples"
@@ -193,15 +193,15 @@ class TestQueryParserTool:
             "labels": ["person", "location"],
             "relation_labels": ["born_in", "works_at"],
         })
-        proc._client = MagicMock()
-        proc._client.complete_with_tools.return_value = {
+        proc._llm_client = MagicMock()
+        proc._llm_client.complete_with_tools.return_value = {
             "content": None,
             "tool_calls": [],
         }
 
         proc(query="test")
 
-        call_args = proc._client.complete_with_tools.call_args
+        call_args = proc._llm_client.complete_with_tools.call_args
         messages = call_args[0][0]
         system_msg = messages[0]["content"]
         assert "person" in system_msg
@@ -214,8 +214,8 @@ class TestQueryParserTool:
             "method": "tool",
             "api_key": "test",
         })
-        proc._client = MagicMock()
-        proc._client.complete_with_tools.return_value = {
+        proc._llm_client = MagicMock()
+        proc._llm_client.complete_with_tools.return_value = {
             "content": None,
             "tool_calls": [
                 {

@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from grapsit.query.chunk_embedding_retriever import ChunkEmbeddingRetrieverProcessor
+from retrico.query.chunk_embedding_retriever import ChunkEmbeddingRetrieverProcessor
 
 
 class TestChunkEmbeddingRetrieverProcessor:

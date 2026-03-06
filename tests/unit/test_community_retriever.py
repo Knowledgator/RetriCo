@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from grapsit.query.community_retriever import CommunityRetrieverProcessor
+from retrico.query.community_retriever import CommunityRetrieverProcessor
 
 
 class TestCommunityRetrieverProcessor:

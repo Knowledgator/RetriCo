@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.store.pool import StorePool, resolve_from_pool_or_create
-from grapsit.store.config import (
+from retrico.store.pool import StorePool, resolve_from_pool_or_create
+from retrico.store.config import (
     BaseVectorStoreConfig, InMemoryVectorConfig, FaissVectorConfig,
     QdrantVectorConfig, GraphDBVectorConfig,
     BaseStoreConfig, Neo4jConfig, FalkorDBConfig, MemgraphConfig,
@@ -197,7 +197,7 @@ class TestStorePool:
         with pytest.raises(KeyError, match="No relational store"):
             pool.get_relational("nonexistent")
 
-    @patch("grapsit.store.graph.create_graph_store")
+    @patch("retrico.store.graph.create_graph_store")
     def test_lazy_creation(self, mock_create):
         mock_store = MagicMock()
         mock_create.return_value = mock_store
@@ -213,7 +213,7 @@ class TestStorePool:
         assert result is mock_store
         mock_create.assert_called_once()
 
-    @patch("grapsit.store.graph.create_graph_store")
+    @patch("retrico.store.graph.create_graph_store")
     def test_shared_instance(self, mock_create):
         """get_graph() returns the same instance on repeated calls."""
         mock_store = MagicMock()
@@ -227,7 +227,7 @@ class TestStorePool:
         assert first is second
         assert mock_create.call_count == 1
 
-    @patch("grapsit.store.graph.create_graph_store")
+    @patch("retrico.store.graph.create_graph_store")
     def test_multiple_named_stores(self, mock_create):
         """Different names create different instances."""
         stores = {}
@@ -246,7 +246,7 @@ class TestStorePool:
         assert s1 is not s2
         assert mock_create.call_count == 2
 
-    @patch("grapsit.store.graph.create_graph_store")
+    @patch("retrico.store.graph.create_graph_store")
     def test_close_all(self, mock_create):
         """close() closes all instantiated stores."""
         mock_store = MagicMock()
@@ -259,7 +259,7 @@ class TestStorePool:
         pool.close()
         mock_store.close.assert_called_once()
 
-    @patch("grapsit.store.graph.create_graph_store")
+    @patch("retrico.store.graph.create_graph_store")
     def test_close_only_instantiated(self, mock_create):
         """close() only closes stores that were actually created."""
         pool = StorePool()
@@ -288,8 +288,8 @@ class TestStorePool:
         pool = StorePool()
         assert pool.to_dict() == {}
 
-    @patch("grapsit.store.graph.create_graph_store")
-    @patch("grapsit.store.vector.create_vector_store")
+    @patch("retrico.store.graph.create_graph_store")
+    @patch("retrico.store.vector.create_vector_store")
     def test_graph_db_vector_injects_graph_store(self, mock_cvs, mock_cgs):
         """graph_db vector stores get the shared graph store instance."""
         mock_graph = MagicMock()
@@ -315,7 +315,7 @@ class TestStorePool:
 
 class TestResolveFromPoolOrCreate:
 
-    @patch("grapsit.store.graph.create_graph_store")
+    @patch("retrico.store.graph.create_graph_store")
     def test_no_pool_falls_back_to_create(self, mock_create):
         """Without __store_pool__, falls back to create_graph_store."""
         mock_store = MagicMock()
@@ -325,7 +325,7 @@ class TestResolveFromPoolOrCreate:
         assert result is mock_store
         mock_create.assert_called_once()
 
-    @patch("grapsit.store.graph.create_graph_store")
+    @patch("retrico.store.graph.create_graph_store")
     def test_with_pool_uses_pool(self, mock_create):
         """With pool, uses the shared instance instead of creating new."""
         pool = StorePool()
@@ -339,7 +339,7 @@ class TestResolveFromPoolOrCreate:
         assert result is mock_shared
         mock_create.assert_not_called()
 
-    @patch("grapsit.store.graph.create_graph_store")
+    @patch("retrico.store.graph.create_graph_store")
     def test_with_pool_named_store(self, mock_create):
         """Pool resolves named stores."""
         pool = StorePool()
@@ -352,7 +352,7 @@ class TestResolveFromPoolOrCreate:
         )
         assert result is mock_main
 
-    @patch("grapsit.store.vector.create_vector_store")
+    @patch("retrico.store.vector.create_vector_store")
     def test_vector_category(self, mock_create):
         """Vector stores work with resolve_from_pool_or_create."""
         mock_vs = MagicMock()
@@ -367,7 +367,7 @@ class TestResolveFromPoolOrCreate:
         with pytest.raises(ValueError, match="Unknown store category"):
             resolve_from_pool_or_create({}, "invalid")
 
-    @patch("grapsit.store.graph.create_graph_store")
+    @patch("retrico.store.graph.create_graph_store")
     def test_pool_without_matching_name_falls_back(self, mock_create):
         """If pool doesn't have the requested name, falls back to direct creation."""
         pool = StorePool()
@@ -392,9 +392,9 @@ class TestResolveFromPoolOrCreate:
 class TestBuilderPoolIntegration:
     def test_builder_emits_stores_section(self):
         """get_config() includes stores section when graph_store() is called."""
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.graph_store(Neo4jConfig(uri="bolt://custom:7687"))
         builder.ner_gliner(labels=["person"])
         builder.graph_writer()
@@ -406,9 +406,9 @@ class TestBuilderPoolIntegration:
         assert config["stores"]["graph"]["default"]["neo4j_uri"] == "bolt://custom:7687"
 
     def test_builder_multiple_named_stores(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.graph_store(Neo4jConfig(uri="bolt://main:7687"), name="main")
         builder.graph_store(Neo4jConfig(uri="bolt://analytics:7687"), name="analytics")
         builder.ner_gliner(labels=["person"])
@@ -419,9 +419,9 @@ class TestBuilderPoolIntegration:
         assert "analytics" in config["stores"]["graph"]
 
     def test_builder_vector_store_in_stores_section(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.graph_store(Neo4jConfig())
         builder.vector_store(type="faiss", use_gpu=True)
         builder.ner_gliner(labels=["person"])
@@ -432,9 +432,9 @@ class TestBuilderPoolIntegration:
         assert config["stores"]["vector"]["default"]["vector_store_type"] == "faiss"
 
     def test_builder_vector_store_config_object(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.graph_store(Neo4jConfig())
         builder.vector_store(config=FaissVectorConfig(use_gpu=True, name="gpu_vec"))
         builder.ner_gliner(labels=["person"])
@@ -445,9 +445,9 @@ class TestBuilderPoolIntegration:
 
     def test_builder_no_stores_section_when_empty(self):
         """Without calling graph_store(), no stores section emitted."""
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.ner_gliner(labels=["person"])
         # graph_writer uses defaults internally
         builder._writer_config = {"store_type": "neo4j"}
@@ -456,9 +456,9 @@ class TestBuilderPoolIntegration:
         assert "stores" not in config
 
     def test_query_builder_emits_stores(self):
-        from grapsit.core.builders import QueryConfigBuilder
+        from retrico.core.builders import RetriCoSearch
 
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.graph_store(Neo4jConfig(uri="bolt://custom:7687"))
         builder.query_parser(labels=["person"])
         builder.retriever()
@@ -476,7 +476,7 @@ class TestBuilderPoolIntegration:
 class TestDAGExecutorPool:
     def test_context_manager(self):
         """DAGExecutor supports with-statement and calls pool.close()."""
-        from grapsit.core.dag import DAGExecutor, DAGPipeline
+        from retrico.core.dag import DAGExecutor, DAGPipeline
 
         pool = MagicMock()
         pipeline = DAGPipeline(name="test", nodes=[])
@@ -489,7 +489,7 @@ class TestDAGExecutorPool:
 
     def test_close_without_pool(self):
         """close() is safe to call when no pool is set."""
-        from grapsit.core.dag import DAGExecutor, DAGPipeline
+        from retrico.core.dag import DAGExecutor, DAGPipeline
 
         pipeline = DAGPipeline(name="test", nodes=[])
         executor = DAGExecutor(pipeline)
@@ -497,7 +497,7 @@ class TestDAGExecutorPool:
 
     def test_pool_injected_into_processor_config(self):
         """Store pool is injected into each processor's config via __store_pool__."""
-        from grapsit.core.dag import DAGExecutor, DAGPipeline, PipeNode, OutputConfig
+        from retrico.core.dag import DAGExecutor, DAGPipeline, PipeNode, OutputConfig
 
         pool = StorePool()
 
@@ -520,7 +520,7 @@ class TestDAGExecutorPool:
 class TestProcessorFactoryPool:
     def test_auto_detect_stores_section(self):
         """ProcessorFactory auto-creates pool from 'stores' key in config."""
-        from grapsit.core.factory import ProcessorFactory
+        from retrico.core.factory import ProcessorFactory
 
         config = {
             "name": "test",

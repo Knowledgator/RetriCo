@@ -4,9 +4,9 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.core.builders import BuildConfigBuilder, QueryConfigBuilder
-from grapsit.models.entity import EntityMention
-from grapsit.models.graph import QueryResult
+from retrico.core.builders import RetriCoBuilder, RetriCoSearch
+from retrico.models.entity import EntityMention
+from retrico.models.graph import QueryResult
 
 
 def _make_mock_glinker_executor(linked_entities=None):
@@ -42,9 +42,8 @@ def _make_mock_glinker_executor(linked_entities=None):
 
 
 class TestBuildPipelineWithLinker:
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
-    @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_ner_plus_linker_pipeline(self, mock_ner_load, mock_create_store):
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
+    def test_ner_plus_linker_pipeline(self, mock_create_store):
         """Test chunker -> NER -> linker -> graph_writer."""
         mock_store = MagicMock()
         mock_create_store.return_value = mock_store
@@ -54,7 +53,7 @@ class TestBuildPipelineWithLinker:
             {"mention_text": "Ulm", "entity_id": "Q3012"},
         ])
 
-        builder = BuildConfigBuilder(name="linked_pipeline")
+        builder = RetriCoBuilder(name="linked_pipeline")
         builder.chunker(method="sentence")
         builder.ner_gliner(model="test-ner", labels=["person", "location"])
         builder.linker(executor=glinker_executor)
@@ -62,17 +61,17 @@ class TestBuildPipelineWithLinker:
 
         executor = builder.build()
 
-        # Mock NER
+        # Mock NER via engine
         ner_proc = executor.processors["ner"]
-        ner_proc._model = MagicMock()
-        ner_proc._model.inference.return_value = [
+        ner_proc._engine._model = MagicMock()
+        ner_proc._engine._model.inference.return_value = [
             [
                 {"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.95},
                 {"text": "Ulm", "label": "location", "start": 21, "end": 24, "score": 0.85},
             ],
         ]
 
-        result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+        result = executor.run(texts=["Einstein was born in Ulm."])
 
         assert result.has("ner_result")
         assert result.has("linker_result")
@@ -91,7 +90,7 @@ class TestBuildPipelineWithLinker:
         assert "Q937" in entity_map
         assert "Q3012" in entity_map
 
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
     def test_linker_only_pipeline(self, mock_create_store):
         """Test chunker -> linker -> graph_writer (no NER, end-to-end)."""
         mock_store = MagicMock()
@@ -104,13 +103,13 @@ class TestBuildPipelineWithLinker:
              "start": 21, "end": 24, "text_idx": 0},
         ])
 
-        builder = BuildConfigBuilder(name="linker_only")
+        builder = RetriCoBuilder(name="linker_only")
         builder.chunker(method="sentence")
         builder.linker(executor=glinker_executor)
         builder.graph_writer()
 
         executor = builder.build()
-        result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+        result = executor.run(texts=["Einstein was born in Ulm."])
 
         assert result.has("linker_result")
         assert result.has("writer_result")
@@ -122,9 +121,8 @@ class TestBuildPipelineWithLinker:
         writer_result = result.get("writer_result")
         assert writer_result["entity_count"] == 2
 
-    @patch("grapsit.construct.graph_writer.resolve_from_pool_or_create")
-    @patch("grapsit.construct.ner_gliner.NERGLiNERProcessor._load_model")
-    def test_ner_linker_relex_pipeline(self, mock_ner_load, mock_create_store):
+    @patch("retrico.construct.graph_writer.resolve_from_pool_or_create")
+    def test_ner_linker_relex_pipeline(self, mock_create_store):
         """Test chunker -> NER -> linker -> relex -> graph_writer."""
         mock_store = MagicMock()
         mock_create_store.return_value = mock_store
@@ -134,7 +132,7 @@ class TestBuildPipelineWithLinker:
             {"mention_text": "Ulm", "entity_id": "Q3012"},
         ])
 
-        builder = BuildConfigBuilder(name="full_linked")
+        builder = RetriCoBuilder(name="full_linked")
         builder.chunker(method="sentence")
         builder.ner_gliner(model="test-ner", labels=["person", "location"])
         builder.linker(executor=glinker_executor)
@@ -147,24 +145,24 @@ class TestBuildPipelineWithLinker:
 
         executor = builder.build()
 
-        # Mock NER
+        # Mock NER via engine
         ner_proc = executor.processors["ner"]
-        ner_proc._model = MagicMock()
-        ner_proc._model.inference.return_value = [
+        ner_proc._engine._model = MagicMock()
+        ner_proc._engine._model.inference.return_value = [
             [
                 {"text": "Einstein", "label": "person", "start": 0, "end": 8, "score": 0.95},
                 {"text": "Ulm", "label": "location", "start": 21, "end": 24, "score": 0.85},
             ],
         ]
 
-        # Mock relex LLM
+        # Mock relex LLM via engine
         relex_proc = executor.processors["relex"]
-        relex_proc._client = MagicMock()
-        relex_proc._client.complete.return_value = json.dumps({"relations": [
+        relex_proc._engine._client = MagicMock()
+        relex_proc._engine._client.complete.return_value = json.dumps({"relations": [
             {"head": "Einstein", "tail": "Ulm", "relation": "born in"},
         ]})
 
-        result = executor.execute({"texts": ["Einstein was born in Ulm."]})
+        result = executor.run(texts=["Einstein was born in Ulm."])
 
         assert result.has("linker_result")
         assert result.has("relex_result")
@@ -202,16 +200,15 @@ class TestQueryPipelineWithLinker:
         ]
         return store
 
-    @patch("grapsit.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
-    @patch("grapsit.query.retriever.RetrieverProcessor._ensure_store")
-    @patch("grapsit.query.parser.QueryParserProcessor._load_gliner")
-    def test_parser_plus_linker_pipeline(self, mock_load, mock_ret_store, mock_chunk_store):
+    @patch("retrico.query.chunk_retriever.ChunkRetrieverProcessor._ensure_store")
+    @patch("retrico.query.retriever.RetrieverProcessor._ensure_store")
+    def test_parser_plus_linker_pipeline(self, mock_ret_store, mock_chunk_store):
         """Test query_parser -> linker -> retriever -> chunk_retriever."""
         glinker_executor = _make_mock_glinker_executor([
             {"mention_text": "Einstein", "entity_id": "Q937"},
         ])
 
-        builder = QueryConfigBuilder(name="query_linked")
+        builder = RetriCoSearch(name="query_linked")
         builder.query_parser(method="gliner", labels=["person", "location"])
         builder.linker(executor=glinker_executor)
         builder.retriever(neo4j_uri="bolt://localhost:7687")
@@ -219,10 +216,11 @@ class TestQueryPipelineWithLinker:
 
         executor = builder.build()
 
-        # Mock parser
+        # Mock parser via engine
         parser_proc = executor.processors["query_parser"]
-        parser_proc._model = MagicMock()
-        parser_proc._model.inference.return_value = [[
+        engine = parser_proc._get_gliner_engine()
+        engine._model = MagicMock()
+        engine._model.inference.return_value = [[
             {"text": "Einstein", "label": "person", "start": 10, "end": 18, "score": 0.95},
         ]]
 
@@ -231,7 +229,7 @@ class TestQueryPipelineWithLinker:
         executor.processors["retriever"]._store = mock_store
         executor.processors["chunk_retriever"]._store = mock_store
 
-        ctx = executor.execute({"query": "Where was Einstein born?"})
+        ctx = executor.run(query="Where was Einstein born?")
 
         assert ctx.has("parser_result")
         assert ctx.has("linker_result")

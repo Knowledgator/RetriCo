@@ -88,7 +88,7 @@ def mock_vector_store():
 
 class TestKGEmbeddingStorer:
     def test_basic_storage(self, storer_config, fake_model, entity_to_id, relation_to_id, mock_vector_store):
-        from grapsit.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
+        from retrico.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
 
         proc = KGEmbeddingStorerProcessor(storer_config)
         proc._vector_store = mock_vector_store
@@ -108,7 +108,7 @@ class TestKGEmbeddingStorer:
         assert mock_vector_store.store_embeddings.call_count == 2
 
     def test_disk_persistence(self, storer_config, fake_model, entity_to_id, relation_to_id, mock_vector_store):
-        from grapsit.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
+        from retrico.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
 
         proc = KGEmbeddingStorerProcessor(storer_config)
         proc._vector_store = mock_vector_store
@@ -137,7 +137,7 @@ class TestKGEmbeddingStorer:
         assert metadata["num_entities"] == 3
 
     def test_store_to_graph(self, storer_config, fake_model, entity_to_id, relation_to_id, mock_vector_store):
-        from grapsit.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
+        from retrico.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
 
         storer_config["store_to_graph"] = True
         proc = KGEmbeddingStorerProcessor(storer_config)
@@ -157,14 +157,14 @@ class TestKGEmbeddingStorer:
         assert mock_store.update_entity_embedding.call_count == 3
 
     def test_missing_model_raises(self, storer_config):
-        from grapsit.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
+        from retrico.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
 
         proc = KGEmbeddingStorerProcessor(storer_config)
         with pytest.raises(ValueError, match="model"):
             proc()
 
     def test_default_config(self):
-        from grapsit.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
+        from retrico.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
 
         proc = KGEmbeddingStorerProcessor({})
         assert proc.model_path == "kg_model"
@@ -173,7 +173,7 @@ class TestKGEmbeddingStorer:
         assert proc.store_to_graph is False
 
     def test_vector_index_names(self, storer_config, fake_model, entity_to_id, relation_to_id, mock_vector_store):
-        from grapsit.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
+        from retrico.modeling.kg_embedding_storer import KGEmbeddingStorerProcessor
 
         proc = KGEmbeddingStorerProcessor(storer_config)
         proc._vector_store = mock_vector_store
@@ -190,5 +190,5 @@ class TestKGEmbeddingStorer:
         assert create_calls[1][0][0] == "test_relation_emb"
 
     def test_processor_registration(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "kg_embedding_storer" in processor_registry._factories

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch, call
 
 class TestSqliteRelationalStore:
     def _make_store(self):
-        from grapsit.store.relational.sqlite_store import SqliteRelationalStore
+        from retrico.store.relational.sqlite_store import SqliteRelationalStore
         return SqliteRelationalStore(path=":memory:")
 
     def test_write_and_get(self):
@@ -155,24 +155,24 @@ class TestSqliteRelationalStore:
 
 class TestSqliteFactory:
     def test_create_via_factory(self):
-        from grapsit.store.relational import create_relational_store
+        from retrico.store.relational import create_relational_store
         store = create_relational_store({"relational_store_type": "sqlite"})
-        from grapsit.store.relational.sqlite_store import SqliteRelationalStore
+        from retrico.store.relational.sqlite_store import SqliteRelationalStore
         assert isinstance(store, SqliteRelationalStore)
         assert store.path == ":memory:"
         store.close()
 
     def test_create_with_path(self):
-        from grapsit.store.relational import create_relational_store
+        from retrico.store.relational import create_relational_store
         store = create_relational_store({
             "relational_store_type": "sqlite",
-            "sqlite_path": "/tmp/test_grapsit.db",
+            "sqlite_path": "/tmp/test_retrico.db",
         })
-        assert store.path == "/tmp/test_grapsit.db"
+        assert store.path == "/tmp/test_retrico.db"
         store.close()
 
     def test_missing_type_raises(self):
-        from grapsit.store.relational import create_relational_store
+        from retrico.store.relational import create_relational_store
         with pytest.raises(ValueError, match="relational_store_type"):
             create_relational_store({})
 
@@ -184,7 +184,7 @@ class TestSqliteFactory:
 
 class TestPostgresRelationalStore:
     def _make_store(self):
-        from grapsit.store.relational.postgres_store import PostgresRelationalStore
+        from retrico.store.relational.postgres_store import PostgresRelationalStore
         return PostgresRelationalStore(
             host="pghost", port=5433, user="pguser",
             password="pgpass", database="pgdb",
@@ -202,7 +202,7 @@ class TestPostgresRelationalStore:
         store = self._make_store()
         assert store._conn is None
 
-    @patch("grapsit.store.relational.postgres_store.psycopg", create=True)
+    @patch("retrico.store.relational.postgres_store.psycopg", create=True)
     def test_write_records(self, mock_psycopg_module):
         # We need to patch at import level
         mock_conn = MagicMock()
@@ -220,7 +220,7 @@ class TestPostgresRelationalStore:
         finally:
             del sys.modules["psycopg"]
 
-    @patch("grapsit.store.relational.postgres_store.psycopg", create=True)
+    @patch("retrico.store.relational.postgres_store.psycopg", create=True)
     def test_get_record(self, mock_psycopg_module):
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -243,13 +243,13 @@ class TestPostgresRelationalStore:
             del sys.modules["psycopg"]
 
     def test_factory_creates_postgres(self):
-        from grapsit.store.relational import create_relational_store
+        from retrico.store.relational import create_relational_store
         store = create_relational_store({
             "relational_store_type": "postgres",
             "postgres_host": "myhost",
             "postgres_port": 5433,
         })
-        from grapsit.store.relational.postgres_store import PostgresRelationalStore
+        from retrico.store.relational.postgres_store import PostgresRelationalStore
         assert isinstance(store, PostgresRelationalStore)
         assert store.host == "myhost"
         assert store.port == 5433
@@ -278,7 +278,7 @@ class TestPostgresRelationalStore:
 
 class TestElasticsearchRelationalStore:
     def _make_store(self):
-        from grapsit.store.relational.elasticsearch_store import ElasticsearchRelationalStore
+        from retrico.store.relational.elasticsearch_store import ElasticsearchRelationalStore
         return ElasticsearchRelationalStore(
             url="http://eshost:9200",
             api_key="test-key",
@@ -393,14 +393,14 @@ class TestElasticsearchRelationalStore:
             del sys.modules["elasticsearch"]
 
     def test_factory_creates_elasticsearch(self):
-        from grapsit.store.relational import create_relational_store
+        from retrico.store.relational import create_relational_store
         store = create_relational_store({
             "relational_store_type": "elasticsearch",
             "elasticsearch_url": "http://myhost:9200",
             "elasticsearch_api_key": "mykey",
             "elasticsearch_index_prefix": "myapp_",
         })
-        from grapsit.store.relational.elasticsearch_store import ElasticsearchRelationalStore
+        from retrico.store.relational.elasticsearch_store import ElasticsearchRelationalStore
         assert isinstance(store, ElasticsearchRelationalStore)
         assert store.url == "http://myhost:9200"
         assert store.api_key == "mykey"
@@ -444,13 +444,13 @@ class TestElasticsearchRelationalStore:
 
 class TestRelationalStoreRegistry:
     def test_all_types_registered(self):
-        from grapsit.store.relational import relational_store_registry
+        from retrico.store.relational import relational_store_registry
         types = relational_store_registry.list()
         assert "sqlite" in types
         assert "postgres" in types
         assert "elasticsearch" in types
 
     def test_base_is_abstract(self):
-        from grapsit.store.relational.base import BaseRelationalStore
+        from retrico.store.relational.base import BaseRelationalStore
         with pytest.raises(TypeError):
             BaseRelationalStore()

@@ -44,7 +44,7 @@ mock_pykeen.triples = mock_triples_module
 sys.modules.setdefault("pykeen", mock_pykeen)
 sys.modules.setdefault("pykeen.triples", mock_triples_module)
 
-from grapsit.modeling.kg_triple_reader import KGTripleReaderProcessor
+from retrico.modeling.kg_triple_reader import KGTripleReaderProcessor
 
 
 # ---------------------------------------------------------------------------
@@ -150,5 +150,5 @@ class TestKGTripleReader:
         assert proc.random_seed == 42
 
     def test_processor_registration(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "kg_triple_reader" in processor_registry._factories

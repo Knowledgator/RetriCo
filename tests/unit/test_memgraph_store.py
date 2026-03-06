@@ -3,13 +3,13 @@
 import pytest
 from unittest.mock import MagicMock
 
-from grapsit.models.entity import Entity
+from retrico.models.entity import Entity
 
 
 @pytest.fixture
 def mock_memgraph_store():
     """A mocked MemgraphGraphStore."""
-    from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+    from retrico.store.graph.memgraph_store import MemgraphGraphStore
     store = MemgraphGraphStore(uri="bolt://localhost:7687")
 
     mock_session = MagicMock()
@@ -29,19 +29,19 @@ def mock_memgraph_store():
 
 class TestMemgraphInheritance:
     def test_is_subclass_of_neo4j(self):
-        from grapsit.store.graph.neo4j_store import Neo4jGraphStore
-        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        from retrico.store.graph.neo4j_store import Neo4jGraphStore
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
         assert issubclass(MemgraphGraphStore, Neo4jGraphStore)
 
     def test_is_subclass_of_base(self):
-        from grapsit.store.graph.base import BaseGraphStore
-        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        from retrico.store.graph.base import BaseGraphStore
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
         assert issubclass(MemgraphGraphStore, BaseGraphStore)
 
 
 class TestMemgraphDefaults:
     def test_default_params(self):
-        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
         store = MemgraphGraphStore()
         assert store.uri == "bolt://localhost:7687"
         assert store.user == ""
@@ -49,7 +49,7 @@ class TestMemgraphDefaults:
         assert store.database == "memgraph"
 
     def test_lazy_connection(self):
-        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
         store = MemgraphGraphStore()
         assert store._driver is None
 
@@ -60,7 +60,7 @@ class TestMemgraphOverrides:
     def test_setup_indexes_uses_memgraph_syntax(self, mock_memgraph_store):
         store, mock_session = mock_memgraph_store
         store.setup_indexes()
-        assert mock_session.run.call_count == 6
+        assert mock_session.run.call_count == 7
         # Verify Memgraph CREATE INDEX ON syntax (not Neo4j named constraints)
         first_query = mock_session.run.call_args_list[0][0][0]
         assert "CREATE INDEX ON" in first_query
@@ -123,7 +123,7 @@ class TestMemgraphCommunityDetection:
         mock_result.__iter__ = MagicMock(return_value=iter([]))
         mock_session.run.return_value = mock_result
 
-        with caplog.at_level(logging.WARNING, logger="grapsit.store.memgraph_store"):
+        with caplog.at_level(logging.WARNING, logger="retrico.store.memgraph_store"):
             result = store.detect_communities(method="leiden")
         assert isinstance(result, dict)
         assert "Leiden" in caplog.text
@@ -135,7 +135,7 @@ class TestMemgraphInheritedBehavior:
     """Spot-check that inherited Neo4j methods work through Memgraph."""
 
     def test_write_document(self, mock_memgraph_store):
-        from grapsit.models.document import Document
+        from retrico.models.document import Document
         store, mock_session = mock_memgraph_store
         doc = Document(id="d1", source="test.txt")
         store.write_document(doc)
@@ -143,7 +143,7 @@ class TestMemgraphInheritedBehavior:
         assert "MERGE" in mock_session.run.call_args[0][0]
 
     def test_write_relation(self, mock_memgraph_store):
-        from grapsit.models.relation import Relation
+        from retrico.models.relation import Relation
         store, mock_session = mock_memgraph_store
         rel = Relation(
             id="r1", head_text="Einstein", tail_text="Ulm",
@@ -178,10 +178,49 @@ class TestMemgraphInheritedBehavior:
         assert store._driver is None
 
 
+class TestMemgraphMutationsInherited:
+    """Verify Memgraph instances have mutation methods (inherited from Neo4j)."""
+
+    def test_has_delete_entity(self):
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "delete_entity")
+
+    def test_has_delete_relation(self):
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "delete_relation")
+
+    def test_has_delete_chunk(self):
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "delete_chunk")
+
+    def test_has_update_entity(self):
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "update_entity")
+
+    def test_has_add_entity(self):
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "add_entity")
+
+    def test_has_add_relation(self):
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "add_relation")
+
+    def test_has_merge_entities(self):
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
+        assert hasattr(MemgraphGraphStore, "merge_entities")
+
+    def test_delete_entity_calls_run(self, mock_memgraph_store):
+        """Spot-check that inherited delete_entity works through Memgraph."""
+        store, mock_session = mock_memgraph_store
+        # get_entity_by_id returns nothing → False
+        result = store.delete_entity("e999")
+        assert result is False
+
+
 class TestCreateStoreMemgraph:
     def test_create_store_memgraph(self):
-        from grapsit.store import create_store
-        from grapsit.store.graph.memgraph_store import MemgraphGraphStore
+        from retrico.store import create_store
+        from retrico.store.graph.memgraph_store import MemgraphGraphStore
         store = create_store({
             "store_type": "memgraph",
             "memgraph_uri": "bolt://myhost:7687",
@@ -196,7 +235,7 @@ class TestCreateStoreMemgraph:
         assert store.database == "testdb"
 
     def test_create_store_memgraph_defaults(self):
-        from grapsit.store import create_store
+        from retrico.store import create_store
         store = create_store({"store_type": "memgraph"})
         assert store.uri == "bolt://localhost:7687"
         assert store.user == ""
@@ -204,6 +243,6 @@ class TestCreateStoreMemgraph:
         assert store.database == "memgraph"
 
     def test_create_store_error_message_includes_memgraph(self):
-        from grapsit.store import create_store
+        from retrico.store import create_store
         with pytest.raises(KeyError, match="memgraph"):
             create_store({"store_type": "sqlite"})

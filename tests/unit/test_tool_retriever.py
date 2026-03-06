@@ -4,7 +4,7 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from grapsit.query.tool_retriever import ToolRetrieverProcessor
+from retrico.query.tool_retriever import ToolRetrieverProcessor
 
 
 class TestToolRetrieverProcessor:

@@ -1,16 +1,16 @@
 """Tests for store config classes and builder store integration."""
 
 import pytest
-from grapsit.store.config import (
-    BaseStoreConfig, Neo4jConfig, FalkorDBConfig, MemgraphConfig,
+from retrico.store.config import (
+    BaseStoreConfig, Neo4jConfig, FalkorDBConfig, FalkorDBLiteConfig, MemgraphConfig,
     resolve_store_config, extract_store_kwargs, _STORE_FLAT_KEYS,
     BaseRelationalStoreConfig, SqliteRelationalConfig,
     PostgresRelationalConfig, ElasticsearchRelationalConfig,
     resolve_relational_store_config, extract_relational_store_kwargs,
 )
-from grapsit.core.builders import (
-    BuildConfigBuilder, IngestConfigBuilder, QueryConfigBuilder,
-    CommunityConfigBuilder, KGModelingConfigBuilder,
+from retrico.core.builders import (
+    RetriCoBuilder, RetriCoIngest, RetriCoSearch,
+    RetriCoCommunity, RetriCoModeling,
 )
 
 
@@ -62,7 +62,7 @@ class TestFalkorDBConfig:
         assert cfg.store_type == "falkordb"
         assert cfg.host == "localhost"
         assert cfg.port == 6379
-        assert cfg.graph == "grapsit"
+        assert cfg.graph == "retrico"
 
     def test_to_flat_dict(self):
         cfg = FalkorDBConfig(host="myhost", port=6380, graph="mygraph")
@@ -115,9 +115,9 @@ class TestBaseStoreConfigDispatch:
         cfg = BaseStoreConfig.from_flat_dict({"store_type": "memgraph"})
         assert isinstance(cfg, MemgraphConfig)
 
-    def test_from_flat_dict_default_neo4j(self):
+    def test_from_flat_dict_default_falkordb_lite(self):
         cfg = BaseStoreConfig.from_flat_dict({})
-        assert isinstance(cfg, Neo4jConfig)
+        assert isinstance(cfg, FalkorDBLiteConfig)
 
     def test_from_flat_dict_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown store_type"):
@@ -146,9 +146,9 @@ class TestResolveStoreConfig:
         assert result.uri == "bolt://original:7687"
         assert result.password == "new_pass"
 
-    def test_no_args_defaults_to_neo4j(self):
+    def test_no_args_defaults_to_falkordb_lite(self):
         result = resolve_store_config()
-        assert isinstance(result, Neo4jConfig)
+        assert isinstance(result, FalkorDBLiteConfig)
 
 
 class TestExtractStoreKwargs:
@@ -176,7 +176,7 @@ class TestExtractStoreKwargs:
 class TestBuilderStoreConfig:
     def test_build_builder_store_propagates(self):
         """builder.store(config) should propagate to graph_writer."""
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.store(Neo4jConfig(uri="bolt://custom:7687", password="secret"))
         builder.ner_gliner(labels=["person"])
         builder.graph_writer()  # no store params — should inherit
@@ -188,7 +188,7 @@ class TestBuilderStoreConfig:
 
     def test_build_builder_legacy_store_config_works(self):
         """graph_writer(store_config=Neo4jConfig(...)) works."""
-        builder = BuildConfigBuilder()
+        builder = RetriCoBuilder()
         builder.ner_gliner(labels=["person"])
         builder.graph_writer(store_config=Neo4jConfig(uri="bolt://old:7687", password="oldpass"))
 
@@ -199,7 +199,7 @@ class TestBuilderStoreConfig:
 
     def test_graph_writer_override_store(self):
         """graph_writer(store_config=...) overrides builder.store()."""
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.store(Neo4jConfig(uri="bolt://builder:7687"))
         builder.ner_gliner(labels=["person"])
         builder.graph_writer(store_config=FalkorDBConfig(host="override"))
@@ -210,7 +210,7 @@ class TestBuilderStoreConfig:
         assert writer["config"]["falkordb_host"] == "override"
 
     def test_ingest_builder_store_propagates(self):
-        builder = IngestConfigBuilder(name="test")
+        builder = RetriCoIngest(name="test")
         builder.store(Neo4jConfig(uri="bolt://custom:7687"))
         builder.graph_writer()
 
@@ -220,7 +220,7 @@ class TestBuilderStoreConfig:
 
     def test_query_builder_store_propagates(self):
         """builder.store() should propagate to retriever."""
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.store(Neo4jConfig(uri="bolt://custom:7687"))
         builder.query_parser(labels=["person"])
         builder.retriever()  # no store params — should inherit
@@ -231,7 +231,7 @@ class TestBuilderStoreConfig:
 
     def test_query_retriever_override(self):
         """Retriever-level store_config overrides builder-level."""
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.store(Neo4jConfig(uri="bolt://builder:7687"))
         builder.query_parser(labels=["person"])
         builder.retriever(store_config=FalkorDBConfig(host="override"))
@@ -243,7 +243,7 @@ class TestBuilderStoreConfig:
 
     def test_chunk_retriever_inherits_from_retriever(self):
         """chunk_retriever should inherit store config from retriever."""
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.query_parser(labels=["person"])
         builder.retriever(neo4j_uri="bolt://test:7687", neo4j_password="testpass")
 
@@ -253,7 +253,7 @@ class TestBuilderStoreConfig:
         assert chunk["config"]["neo4j_password"] == "testpass"
 
     def test_community_builder_store_propagates(self):
-        builder = CommunityConfigBuilder(name="test")
+        builder = RetriCoCommunity(name="test")
         builder.store(Neo4jConfig(uri="bolt://custom:7687"))
         builder.detector(method="louvain")
 
@@ -262,7 +262,7 @@ class TestBuilderStoreConfig:
         assert detector["config"]["neo4j_uri"] == "bolt://custom:7687"
 
     def test_kg_modeling_builder_store_propagates(self):
-        builder = KGModelingConfigBuilder(name="test")
+        builder = RetriCoModeling(name="test")
         builder.store(Neo4jConfig(uri="bolt://custom:7687"))
         builder.triple_reader()
 
@@ -276,29 +276,29 @@ class TestBuilderStoreTypes:
 
     def test_graph_store_alias(self):
         """store() and graph_store() are equivalent."""
-        b1 = BuildConfigBuilder(name="t1")
+        b1 = RetriCoBuilder(name="t1")
         b1.store(Neo4jConfig(uri="bolt://a:7687"))
 
-        b2 = BuildConfigBuilder(name="t2")
+        b2 = RetriCoBuilder(name="t2")
         b2.graph_store(Neo4jConfig(uri="bolt://a:7687"))
 
         # Both set the same internal config
         assert b1._store_config == b2._store_config
 
     def test_graph_store_with_kwargs(self):
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.graph_store(store_type="falkordb", falkordb_host="myhost")
         assert isinstance(builder._store_config, FalkorDBConfig)
         assert builder._store_config.host == "myhost"
 
     def test_vector_store_sets_config(self):
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.vector_store(type="faiss", use_gpu=True)
         assert builder._vector_store_config == {"vector_store_type": "faiss", "use_gpu": True}
 
     def test_vector_store_propagates_to_embedder(self):
         """vector_store() config is inherited by chunk_embedder()."""
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.graph_store(Neo4jConfig())
         builder.vector_store(type="faiss")
         builder.ner_gliner(labels=["person"])
@@ -311,7 +311,7 @@ class TestBuilderStoreTypes:
 
     def test_vector_store_overridden_by_explicit(self):
         """Explicit vector_store_type in chunk_embedder() wins over builder-level."""
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.vector_store(type="faiss")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer()
@@ -322,13 +322,13 @@ class TestBuilderStoreTypes:
         assert embedder["config"]["vector_store_type"] == "qdrant"
 
     def test_chunk_store_sets_config(self):
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.chunk_store(type="sqlite", sqlite_path="/tmp/test.db")
         assert builder._chunk_store_config == {"relational_store_type": "sqlite", "sqlite_path": "/tmp/test.db"}
 
     def test_vector_store_propagates_to_query_retriever(self):
         """vector_store() config is inherited by embedding retrievers."""
-        builder = QueryConfigBuilder(name="test")
+        builder = RetriCoSearch(name="test")
         builder.graph_store(Neo4jConfig())
         builder.vector_store(type="faiss")
         builder.query_parser(labels=["person"])
@@ -343,9 +343,9 @@ class TestCreateStoreWithConfig:
     def test_create_store_with_config_object(self):
         """create_store() accepts BaseStoreConfig objects."""
         from unittest.mock import patch, MagicMock
-        from grapsit.store import create_store
+        from retrico.store import create_store
 
-        with patch("grapsit.store.graph.neo4j_store.Neo4jGraphStore") as MockStore:
+        with patch("retrico.store.graph.neo4j_store.Neo4jGraphStore") as MockStore:
             MockStore.return_value = MagicMock()
             cfg = Neo4jConfig(uri="bolt://test:7687", password="p")
             store = create_store(cfg)
@@ -354,13 +354,13 @@ class TestCreateStoreWithConfig:
             )
 
     def test_create_store_with_dict_still_works(self):
-        """create_store(dict) backward compat."""
+        """create_store(dict) backward compat — default is now falkordb_lite."""
         from unittest.mock import patch, MagicMock
-        from grapsit.store import create_store
+        from retrico.store import create_store
 
-        with patch("grapsit.store.graph.neo4j_store.Neo4jGraphStore") as MockStore:
+        with patch("retrico.store.graph.falkordb_lite_store.FalkorDBLiteGraphStore") as MockStore:
             MockStore.return_value = MagicMock()
-            store = create_store({"neo4j_uri": "bolt://test:7687"})
+            store = create_store({})
             MockStore.assert_called_once()
 
 
@@ -411,7 +411,7 @@ class TestPostgresRelationalConfig:
         assert cfg.port == 5432
         assert cfg.user == "postgres"
         assert cfg.password == ""
-        assert cfg.database == "grapsit"
+        assert cfg.database == "retrico"
 
     def test_to_flat_dict(self):
         cfg = PostgresRelationalConfig(host="pghost", port=5433, password="secret")
@@ -422,7 +422,7 @@ class TestPostgresRelationalConfig:
             "postgres_port": 5433,
             "postgres_user": "postgres",
             "postgres_password": "secret",
-            "postgres_database": "grapsit",
+            "postgres_database": "retrico",
         }
 
     def test_roundtrip(self):
@@ -439,7 +439,7 @@ class TestElasticsearchRelationalConfig:
         assert cfg.relational_store_type == "elasticsearch"
         assert cfg.url == "http://localhost:9200"
         assert cfg.api_key is None
-        assert cfg.index_prefix == "grapsit_"
+        assert cfg.index_prefix == "retrico_"
 
     def test_to_flat_dict(self):
         cfg = ElasticsearchRelationalConfig(

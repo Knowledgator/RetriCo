@@ -48,7 +48,7 @@ def sample_entity_map():
 class TestEntityEmbedder:
 
     def _make_processor(self, config=None):
-        from grapsit.construct.entity_embedder import EntityEmbedderProcessor
+        from retrico.construct.entity_embedder import EntityEmbedderProcessor
         return EntityEmbedderProcessor(config or {})
 
     def test_basic_embedding(self, mock_store, mock_embedding_model, mock_vector_store, sample_entity_map):
@@ -107,8 +107,8 @@ class TestEntityEmbedder:
         result = proc(entity_map=sample_entity_map)
         assert result["embedded_count"] == 3
 
-    @patch("grapsit.construct.entity_embedder.resolve_from_pool_or_create")
-    @patch("grapsit.construct.entity_embedder.create_embedding_model")
+    @patch("retrico.construct.entity_embedder.resolve_from_pool_or_create")
+    @patch("retrico.construct.entity_embedder.create_embedding_model")
     def test_lazy_initialization(self, mock_cem, mock_resolve, sample_entity_map):
         mock_em = MagicMock()
         type(mock_em).dimension = PropertyMock(return_value=128)
@@ -131,17 +131,17 @@ class TestEntityEmbedder:
         mock_cem.assert_called_once()
 
     def test_processor_registration(self):
-        from grapsit.core.registry import processor_registry
+        from retrico.core.registry import processor_registry
         assert "entity_embedder" in processor_registry._factories
 
 
 class TestEntityEmbedderBuilder:
-    """Test BuildConfigBuilder integration with entity_embedder."""
+    """Test RetriCoBuilder integration with entity_embedder."""
 
     def test_builder_adds_entity_embedder_node(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer()
         builder.entity_embedder()
@@ -156,9 +156,9 @@ class TestEntityEmbedderBuilder:
         assert embedder_node["inputs"]["entity_map"]["source"] == "writer_result"
 
     def test_builder_both_embedders(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer()
         builder.chunk_embedder()
@@ -175,9 +175,9 @@ class TestEntityEmbedderBuilder:
             assert "graph_writer" in node["requires"]
 
     def test_embedder_inherits_store_params(self):
-        from grapsit.core.builders import BuildConfigBuilder
+        from retrico.core.builders import RetriCoBuilder
 
-        builder = BuildConfigBuilder(name="test")
+        builder = RetriCoBuilder(name="test")
         builder.ner_gliner(labels=["person"])
         builder.graph_writer(neo4j_uri="bolt://custom:7687", store_type="neo4j")
         builder.entity_embedder(embedding_method="openai")
