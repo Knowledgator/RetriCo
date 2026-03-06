@@ -23,7 +23,7 @@ class NERLLMProcessor(BaseProcessor):
     """Extract entities from chunks using an LLM.
 
     Config keys:
-        api_key: str — OpenAI API key
+        api_key: str — LLM API key
         base_url: str — API base URL (for vLLM/local servers)
         model: str — model name (default: "gpt-4o-mini")
         labels: List[str] — entity type labels to detect

@@ -36,7 +36,7 @@ class RelexLLMProcessor(BaseProcessor):
        are listed in the prompt, and the LLM only extracts relations.
 
     Config keys:
-        api_key: str — OpenAI API key
+        api_key: str — LLM API key
         base_url: str — API base URL (for vLLM/local servers)
         model: str — model name (default: "gpt-4o-mini")
         entity_labels: List[str] — entity type labels

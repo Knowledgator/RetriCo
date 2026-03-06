@@ -30,7 +30,7 @@ class QueryParserProcessor(BaseProcessor):
         device: str — "cpu" or "cuda" (default: "cpu")
 
     LLM-specific:
-        api_key: str — OpenAI API key
+        api_key: str — LLM API key
         base_url: str — API base URL
         model: str — model name (default: "gpt-4o-mini")
         temperature: float — sampling temperature (default: 0.1)

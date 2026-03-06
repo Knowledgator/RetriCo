@@ -273,7 +273,7 @@ def connect(show, clear, **kwargs):
 @click.option("--chunk-method", default=None, help="Chunking method (sentence/paragraph/fixed).")
 @click.option("--ner-model", default=None, help="NER model name.")
 @click.option("--relex-model", default=None, help="Relex model name.")
-@click.option("--api-key", default=None, envvar="OPENAI_API_KEY", help="OpenAI API key (or set OPENAI_API_KEY env var).")
+@click.option("--api-key", default=None, envvar="LLM_API_KEY", help="LLM API key (or set LLM_API_KEY env var).")
 @click.option("--llm-model", default=None, help="LLM model name.")
 @click.option("--json-output", default=None, help="Save extracted data as JSON.")
 @click.option("--embed-chunks", is_flag=True, help="Embed chunks.")
@@ -546,7 +546,7 @@ def ingest(file, json_output, verbose, **store_kwargs):
 @click.option("--entity-labels", default=None, help="Comma-separated entity labels.")
 @click.option("--strategy", default=None, help="Retrieval strategy (entity/community/path/chunk_embedding/entity_embedding/tool/keyword). Comma-separated for multi.")
 @click.option("--method", type=click.Choice(["gliner", "llm"]), default=None, help="NER method for query parsing.")
-@click.option("--api-key", default=None, envvar="OPENAI_API_KEY", help="OpenAI API key (or set OPENAI_API_KEY env var).")
+@click.option("--api-key", default=None, envvar="LLM_API_KEY", help="LLM API key (or set LLM_API_KEY env var).")
 @click.option("--llm-model", default=None, help="LLM model name.")
 @click.option("--max-hops", default=None, type=int, help="Subgraph expansion depth.")
 @click.option("--verbose", is_flag=True, help="Verbose output.")
@@ -714,7 +714,7 @@ def _print_query_result_obj(result):
 @click.option("--method", type=click.Choice(["louvain", "leiden"]), default=None, help="Community detection method.")
 @click.option("--levels", default=None, type=int, help="Hierarchical levels.")
 @click.option("--resolution", default=None, type=float, help="Resolution parameter.")
-@click.option("--api-key", default=None, envvar="OPENAI_API_KEY", help="OpenAI API key (or set OPENAI_API_KEY env var).")
+@click.option("--api-key", default=None, envvar="LLM_API_KEY", help="LLM API key (or set LLM_API_KEY env var).")
 @click.option("--llm-model", default=None, help="LLM model for summarization.")
 @click.option("--verbose", is_flag=True, help="Verbose output.")
 @click.option("--interactive", is_flag=True, help="Force interactive wizard.")
@@ -939,7 +939,7 @@ def init_config(pipeline_type):
             ner_model = click.prompt("GLiNER NER model", default="gliner-community/gliner_small-v2.5")
             builder.ner_gliner(model=ner_model, labels=ent_labels)
         else:
-            api_key = os.environ.get("OPENAI_API_KEY") or click.prompt("API key (or set OPENAI_API_KEY)", hide_input=True)
+            api_key = os.environ.get("LLM_API_KEY") or click.prompt("API key (or set LLM_API_KEY)", hide_input=True)
             llm_model = click.prompt("LLM model", default="gpt-4o-mini")
             builder.ner_llm(api_key=api_key, model=llm_model, labels=ent_labels)
 
@@ -964,7 +964,7 @@ def init_config(pipeline_type):
 
         parser_kw: Dict[str, Any] = {"method": ner_method, "labels": ent_labels}
         if ner_method == "llm":
-            api_key = os.environ.get("OPENAI_API_KEY") or click.prompt("API key (or set OPENAI_API_KEY)", hide_input=True)
+            api_key = os.environ.get("LLM_API_KEY") or click.prompt("API key (or set LLM_API_KEY)", hide_input=True)
             llm_model = click.prompt("LLM model", default="gpt-4o-mini")
             parser_kw["api_key"] = api_key
             parser_kw["model"] = llm_model
@@ -991,7 +991,7 @@ def init_config(pipeline_type):
 
         if click.confirm("Add LLM reasoner?", default=False):
             if ner_method != "llm":
-                api_key = os.environ.get("OPENAI_API_KEY") or click.prompt("API key (or set OPENAI_API_KEY)", hide_input=True)
+                api_key = os.environ.get("LLM_API_KEY") or click.prompt("API key (or set LLM_API_KEY)", hide_input=True)
                 llm_model = click.prompt("LLM model", default="gpt-4o-mini")
             builder.reasoner(api_key=api_key, model=llm_model)
 
@@ -1008,7 +1008,7 @@ def init_config(pipeline_type):
         builder.detector(method=method, levels=levels, resolution=resolution)
 
         if click.confirm("Add LLM summarization?", default=False):
-            api_key = os.environ.get("OPENAI_API_KEY") or click.prompt("API key (or set OPENAI_API_KEY)", hide_input=True)
+            api_key = os.environ.get("LLM_API_KEY") or click.prompt("API key (or set LLM_API_KEY)", hide_input=True)
             llm_model = click.prompt("LLM model", default="gpt-4o-mini")
             builder.summarizer(api_key=api_key, model=llm_model)
             builder.embedder()
@@ -1296,7 +1296,7 @@ def graph_clear(yes, **store_kwargs):
 
 @cli.command()
 @click.option("--entity-labels", default=None, help="Default entity labels for queries.")
-@click.option("--api-key", default=None, envvar="OPENAI_API_KEY", help="OpenAI API key (or set OPENAI_API_KEY env var).")
+@click.option("--api-key", default=None, envvar="LLM_API_KEY", help="LLM API key (or set LLM_API_KEY env var).")
 @click.option("--llm-model", default=None, help="LLM model name.")
 @_store_options
 def shell(entity_labels, api_key, llm_model, **store_kwargs):

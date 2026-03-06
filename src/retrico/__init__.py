@@ -557,7 +557,7 @@ def query_graph(
         max_hops: Subgraph expansion depth.
         ner_method: "gliner" or "llm" for query parsing.
         ner_model: Model name for the query parser.
-        api_key: OpenAI API key. If provided, enables LLM reasoner.
+        api_key: LLM API key. If provided, enables LLM reasoner.
         model: LLM model name for reasoner (and LLM parser if ner_method="llm").
         verbose: Enable verbose logging.
         retrieval_strategy: Strategy name or list of names. Single string:
@@ -867,7 +867,7 @@ def detect_communities(
         neo4j_password: Neo4j password.
         neo4j_database: Neo4j database name.
         store_type: Graph store backend ("neo4j", "falkordb", "memgraph").
-        api_key: OpenAI API key. If provided, enables summarization + embedding.
+        api_key: LLM API key. If provided, enables summarization + embedding.
         model: LLM model name for summarizer.
         top_k: Max entities per community for summarization context.
         embedding_method: "sentence_transformer" or "openai".
@@ -1033,7 +1033,7 @@ def extract(
         relex_model: Model name for relex (GLiNER-relex model). Only used
             when method="gliner" and relation_labels are provided.
         device: "cpu" or "cuda" (GLiNER only).
-        api_key: OpenAI API key (required for method="llm").
+        api_key: LLM API key (required for method="llm").
         model: LLM model name (for method="llm").
         threshold: NER confidence threshold.
         relation_threshold: Relation extraction threshold (GLiNER only).

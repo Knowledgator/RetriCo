@@ -82,7 +82,7 @@ class ToolRetrieverProcessor(BaseRetriever):
     rounds of tool calls are supported.
 
     Config keys:
-        api_key: str — OpenAI API key
+        api_key: str — LLM API key
         base_url: str — optional API base URL
         model: str — LLM model name (default: "gpt-4o-mini")
         temperature: float — (default: 0.1)

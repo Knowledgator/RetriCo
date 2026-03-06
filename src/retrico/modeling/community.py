@@ -146,7 +146,7 @@ class CommunitySummarizerProcessor(BaseProcessor):
 
     Config keys:
         top_k: int — max entities per community for context (default: 10).
-        api_key: str — OpenAI API key.
+        api_key: str — LLM API key.
         model: str — LLM model name (default: "gpt-4o-mini").
         base_url: str — optional custom API base URL.
         temperature: float — LLM temperature (default: 0.3).
