@@ -9,6 +9,8 @@
     <br>
 </div>
 
+![RetriCo: Text > Knowledge Graph > Answers](assets/header.svg)
+
 > A modular, declarative framework that turns unstructured text into a queryable knowledge graph.
 > Built on [Knowledgator](https://github.com/Knowledgator) technologies ([GLiNER](https://github.com/urchade/GLiNER), [GLinker](https://github.com/Knowledgator/GLinker)).
 
