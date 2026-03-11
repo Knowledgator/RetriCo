@@ -116,7 +116,7 @@ executor = retrico.ProcessorFactory.create_pipeline("pipeline.yaml")
 ```
 
 ### Key Advantages
-![Building Efficiency](assets/building_time.svg)
+![Building Efficiency](assets/building_time.png)
 
 - **Local and fast extraction** — [GLiNER](https://github.com/urchade/GLiNER) runs efficiently on CPU/GPU with zero API costs. Switch to any OpenAI-compatible LLM when you need higher accuracy, or mix both (GLiNER NER + LLM relation extraction).
 - **Modular pipelines** — Every component is a registered processor. NER backends (`ner_gliner`, `ner_llm`) produce identical output shapes, so they are fully interchangeable. Same for relation extraction, graph stores, and retrieval strategies.
