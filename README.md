@@ -95,6 +95,7 @@ for text_entities in result.entities:
 
 Most Graph RAG frameworks use a monolithic class where every component — LLM client, embedder, graph driver — is wired together in a single constructor. Customizing anything means importing provider-specific classes and rewriting setup code.
 
+![Building Pipeline](assets/building_pipeline.svg)
 RetriCo takes a different approach: **declarative, modular pipelines** where each component is an independent processor in a DAG. Swap any part — NER backend, graph database, retrieval strategy — without changing the rest.
 
 ```python
@@ -115,8 +116,9 @@ executor = retrico.ProcessorFactory.create_pipeline("pipeline.yaml")
 ```
 
 ### Key Advantages
+![Building Efficiency](assets/building_time.svg)
 
-- **Local-first extraction** — [GLiNER](https://github.com/urchade/GLiNER) runs on CPU/GPU with zero API costs. Switch to any OpenAI-compatible LLM when you need higher accuracy, or mix both (GLiNER NER + LLM relation extraction).
+- **Local and fast extraction** — [GLiNER](https://github.com/urchade/GLiNER) runs efficiently on CPU/GPU with zero API costs. Switch to any OpenAI-compatible LLM when you need higher accuracy, or mix both (GLiNER NER + LLM relation extraction).
 - **Modular pipelines** — Every component is a registered processor. NER backends (`ner_gliner`, `ner_llm`) produce identical output shapes, so they are fully interchangeable. Same for relation extraction, graph stores, and retrieval strategies.
 - **Multiple graph backends** — Neo4j, FalkorDB, FalkorDB Lite (embedded), and Memgraph. Configure once at the pipeline level; all components share connections through a store pool.
 - **9 retrieval strategies** — Entity lookup, shortest paths, community search, chunk embeddings, entity embeddings, tool-calling agent, keyword search, KG-scored retrieval, and multi-retriever fusion.
