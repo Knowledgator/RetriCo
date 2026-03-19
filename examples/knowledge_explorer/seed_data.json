@@ -1,0 +1,370 @@
+[
+  {
+    "entities": [
+      {"text": "Knowledgator", "label": "organization", "properties": {"domain": "NLP/AI", "hq": "Ukraine"}},
+      {"text": "Ihor Stepanov", "label": "person", "properties": {"role": "Co-founder"}},
+      {"text": "Ukraine", "label": "country"},
+      {"text": "Open Source", "label": "concept"},
+      {"text": "Information Extraction", "label": "concept"},
+      {"text": "Knowledge Graphs", "label": "concept"}
+    ],
+    "relations": [
+      {"head": "Ihor Stepanov", "tail": "Knowledgator", "type": "co_founded"},
+      {"head": "Knowledgator", "tail": "Ukraine", "type": "located_in"},
+      {"head": "Knowledgator", "tail": "Open Source", "type": "committed_to"},
+      {"head": "Knowledgator", "tail": "Information Extraction", "type": "specializes_in"},
+      {"head": "Knowledgator", "tail": "Knowledge Graphs", "type": "specializes_in"}
+    ],
+    "text": "Knowledgator is an AI company based in Ukraine, specializing in natural language processing, information extraction, and knowledge graph technologies. Ihor Stepanov is a co-founder of Knowledgator. The company develops open-source tools for NLP and entity recognition.",
+    "metadata": {"source": "seed_data", "topic": "company_overview"}
+  },
+  {
+    "entities": [
+      {"text": "GLiNER", "label": "technology", "properties": {"type": "NER model", "architecture": "encoder-based"}},
+      {"text": "Urchade Zaratiana", "label": "person", "properties": {"role": "Creator of GLiNER"}},
+      {"text": "Knowledgator", "label": "organization"},
+      {"text": "Zero-Shot NER", "label": "concept"},
+      {"text": "Named Entity Recognition", "label": "concept"},
+      {"text": "Span-Based NER", "label": "concept"},
+      {"text": "Label Embeddings", "label": "concept"},
+      {"text": "Hugging Face", "label": "organization"}
+    ],
+    "relations": [
+      {"head": "Urchade Zaratiana", "tail": "GLiNER", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLiNER", "type": "contributed_to"},
+      {"head": "GLiNER", "tail": "Named Entity Recognition", "type": "performs"},
+      {"head": "GLiNER", "tail": "Zero-Shot NER", "type": "supports"},
+      {"head": "GLiNER", "tail": "Span-Based NER", "type": "uses"},
+      {"head": "GLiNER", "tail": "Label Embeddings", "type": "uses"},
+      {"head": "GLiNER", "tail": "Hugging Face", "type": "available_on"}
+    ],
+    "text": "GLiNER is a generalist model for named entity recognition created by Urchade Zaratiana. Knowledgator is a key contributor to GLiNER. It supports zero-shot NER, meaning it can recognize any entity type specified at inference time without retraining. GLiNER uses an encoder architecture with span-based NER and label embeddings. It is available on Hugging Face.",
+    "metadata": {"source": "seed_data", "topic": "gliner_overview"}
+  },
+  {
+    "entities": [
+      {"text": "GLiNER", "label": "technology"},
+      {"text": "GLiNER Bi-Encoder", "label": "technology", "properties": {"model": "knowledgator/gliner-bi-large-v1.0", "architecture": "bi-encoder"}},
+      {"text": "GLiNER Multi-Task", "label": "technology", "properties": {"model": "knowledgator/gliner-multitask-large-v0.5"}},
+      {"text": "Knowledgator", "label": "organization"},
+      {"text": "Bi-Encoder Architecture", "label": "concept"},
+      {"text": "Cross-Encoder Architecture", "label": "concept"},
+      {"text": "Multi-Task Learning", "label": "concept"}
+    ],
+    "relations": [
+      {"head": "Knowledgator", "tail": "GLiNER Bi-Encoder", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLiNER Multi-Task", "type": "created"},
+      {"head": "GLiNER Bi-Encoder", "tail": "GLiNER", "type": "variant_of"},
+      {"head": "GLiNER Bi-Encoder", "tail": "Bi-Encoder Architecture", "type": "uses"},
+      {"head": "GLiNER Multi-Task", "tail": "GLiNER", "type": "variant_of"},
+      {"head": "GLiNER Multi-Task", "tail": "Multi-Task Learning", "type": "uses"},
+      {"head": "GLiNER", "tail": "Cross-Encoder Architecture", "type": "uses"}
+    ],
+    "text": "GLiNER has multiple architectural variants. The original GLiNER uses a cross-encoder architecture where text and labels are encoded together. Knowledgator created GLiNER Bi-Encoder, which uses a bi-encoder architecture for faster inference by encoding entity labels and text independently. Knowledgator also created GLiNER Multi-Task which combines NER, relation extraction, and classification in a single model using multi-task learning.",
+    "metadata": {"source": "seed_data", "topic": "gliner_encoder_variants"}
+  },
+  {
+    "entities": [
+      {"text": "GLiNER Decoder", "label": "technology", "properties": {"architecture": "decoder-based", "description": "Autoregressive GLiNER variant"}},
+      {"text": "GLiNER", "label": "technology"},
+      {"text": "Knowledgator", "label": "organization"},
+      {"text": "Decoder Architecture", "label": "concept"},
+      {"text": "Autoregressive Generation", "label": "concept"},
+      {"text": "Large Language Models", "label": "concept"}
+    ],
+    "relations": [
+      {"head": "Knowledgator", "tail": "GLiNER Decoder", "type": "created"},
+      {"head": "GLiNER Decoder", "tail": "GLiNER", "type": "variant_of"},
+      {"head": "GLiNER Decoder", "tail": "Decoder Architecture", "type": "uses"},
+      {"head": "GLiNER Decoder", "tail": "Autoregressive Generation", "type": "uses"},
+      {"head": "GLiNER Decoder", "tail": "Large Language Models", "type": "built_on"}
+    ],
+    "text": "GLiNER Decoder is a variant of GLiNER created by Knowledgator that uses a decoder architecture instead of an encoder. It leverages autoregressive generation, allowing it to be built on top of large language models. This enables GLiNER Decoder to handle more complex extraction tasks while maintaining the zero-shot capability of the GLiNER family.",
+    "metadata": {"source": "seed_data", "topic": "gliner_decoder"}
+  },
+  {
+    "entities": [
+      {"text": "GLiNER-relex", "label": "technology", "properties": {"model": "knowledgator/gliner-relex-large-v0.5"}},
+      {"text": "GLiNER", "label": "technology"},
+      {"text": "Knowledgator", "label": "organization"},
+      {"text": "Relation Extraction", "label": "concept"},
+      {"text": "Joint NER and RE", "label": "concept"},
+      {"text": "Knowledge Graph Construction", "label": "concept"}
+    ],
+    "relations": [
+      {"head": "Knowledgator", "tail": "GLiNER-relex", "type": "created"},
+      {"head": "GLiNER-relex", "tail": "GLiNER", "type": "variant_of"},
+      {"head": "GLiNER-relex", "tail": "Relation Extraction", "type": "specializes_in"},
+      {"head": "GLiNER-relex", "tail": "Joint NER and RE", "type": "supports"},
+      {"head": "GLiNER-relex", "tail": "Knowledge Graph Construction", "type": "used_for"}
+    ],
+    "text": "GLiNER-relex is a variant of GLiNER created by Knowledgator that specializes in relation extraction between entities. It supports joint NER and relation extraction in a single pass, extracting both entities and their relationships simultaneously. GLiNER-relex is widely used for knowledge graph construction from unstructured text.",
+    "metadata": {"source": "seed_data", "topic": "gliner_relex"}
+  },
+  {
+    "entities": [
+      {"text": "GLiNER SpanNER", "label": "technology", "properties": {"description": "Span-based NER optimized variant"}},
+      {"text": "GLiNER", "label": "technology"},
+      {"text": "Knowledgator", "label": "organization"},
+      {"text": "Span Classification", "label": "concept"},
+      {"text": "Efficient Inference", "label": "concept"}
+    ],
+    "relations": [
+      {"head": "Knowledgator", "tail": "GLiNER SpanNER", "type": "created"},
+      {"head": "GLiNER SpanNER", "tail": "GLiNER", "type": "variant_of"},
+      {"head": "GLiNER SpanNER", "tail": "Span Classification", "type": "uses"},
+      {"head": "GLiNER SpanNER", "tail": "Efficient Inference", "type": "optimized_for"}
+    ],
+    "text": "GLiNER SpanNER is a variant of GLiNER created by Knowledgator that optimizes the span-based NER approach for efficient inference. It uses span classification to identify entity boundaries and types, offering a balance between accuracy and speed for production deployment scenarios.",
+    "metadata": {"source": "seed_data", "topic": "gliner_spanner"}
+  },
+  {
+    "entities": [
+      {"text": "GLiNER", "label": "technology"},
+      {"text": "Flat NER", "label": "concept"},
+      {"text": "Nested NER", "label": "concept"},
+      {"text": "Multilingual Support", "label": "concept"},
+      {"text": "gliner_multi-v2.1", "label": "technology", "properties": {"model_id": "urchade/gliner_multi-v2.1"}},
+      {"text": "English", "label": "concept"},
+      {"text": "German", "label": "concept"},
+      {"text": "French", "label": "concept"},
+      {"text": "Spanish", "label": "concept"},
+      {"text": "Chinese", "label": "concept"}
+    ],
+    "relations": [
+      {"head": "GLiNER", "tail": "Flat NER", "type": "supports"},
+      {"head": "GLiNER", "tail": "Nested NER", "type": "supports"},
+      {"head": "GLiNER", "tail": "Multilingual Support", "type": "supports"},
+      {"head": "gliner_multi-v2.1", "tail": "GLiNER", "type": "variant_of"},
+      {"head": "gliner_multi-v2.1", "tail": "English", "type": "supports"},
+      {"head": "gliner_multi-v2.1", "tail": "German", "type": "supports"},
+      {"head": "gliner_multi-v2.1", "tail": "French", "type": "supports"},
+      {"head": "gliner_multi-v2.1", "tail": "Spanish", "type": "supports"},
+      {"head": "gliner_multi-v2.1", "tail": "Chinese", "type": "supports"}
+    ],
+    "text": "GLiNER supports both flat NER and nested NER. The model is available on Hugging Face. GLiNER provides multilingual support through models like gliner_multi-v2.1, supporting English, German, French, Spanish, Chinese, and many other languages.",
+    "metadata": {"source": "seed_data", "topic": "gliner_features"}
+  },
+  {
+    "entities": [
+      {"text": "GLiNER", "label": "technology"},
+      {"text": "Document Processing", "label": "concept"},
+      {"text": "Resume Parsing", "label": "concept"},
+      {"text": "Legal Document Analysis", "label": "concept"},
+      {"text": "Medical NER", "label": "concept"},
+      {"text": "Financial Compliance", "label": "concept"},
+      {"text": "Scientific Literature Mining", "label": "concept"}
+    ],
+    "relations": [
+      {"head": "GLiNER", "tail": "Document Processing", "type": "used_for"},
+      {"head": "GLiNER", "tail": "Resume Parsing", "type": "used_for"},
+      {"head": "GLiNER", "tail": "Legal Document Analysis", "type": "used_for"},
+      {"head": "GLiNER", "tail": "Medical NER", "type": "used_for"},
+      {"head": "GLiNER", "tail": "Financial Compliance", "type": "used_for"},
+      {"head": "GLiNER", "tail": "Scientific Literature Mining", "type": "used_for"}
+    ],
+    "text": "GLiNER is used across many domains. Common use cases include document processing, resume parsing to extract skills and experience, legal document analysis for clause and entity extraction, medical NER for drug and disease identification, financial compliance for detecting regulated entities, and scientific literature mining for extracting research concepts.",
+    "metadata": {"source": "seed_data", "topic": "gliner_use_cases"}
+  },
+  {
+    "entities": [
+      {"text": "GLinker", "label": "technology", "properties": {"type": "entity linking framework"}},
+      {"text": "Knowledgator", "label": "organization"},
+      {"text": "DAG Pipeline", "label": "concept", "properties": {"description": "Directed Acyclic Graph execution engine"}},
+      {"text": "Entity Disambiguation", "label": "concept"},
+      {"text": "Entity Linking", "label": "concept"},
+      {"text": "Wikidata", "label": "technology"},
+      {"text": "SpaCy", "label": "technology"},
+      {"text": "GLiNER Linker", "label": "technology", "properties": {"model": "knowledgator/gliner-linker-large-v1.0"}}
+    ],
+    "relations": [
+      {"head": "Knowledgator", "tail": "GLinker", "type": "created"},
+      {"head": "GLinker", "tail": "DAG Pipeline", "type": "uses"},
+      {"head": "GLinker", "tail": "Entity Disambiguation", "type": "performs"},
+      {"head": "GLinker", "tail": "Entity Linking", "type": "performs"},
+      {"head": "GLinker", "tail": "Wikidata", "type": "links_to"},
+      {"head": "GLinker", "tail": "SpaCy", "type": "integrates_with"},
+      {"head": "GLiNER Linker", "tail": "GLinker", "type": "part_of"},
+      {"head": "GLiNER Linker", "tail": "Entity Disambiguation", "type": "performs"},
+      {"head": "Knowledgator", "tail": "GLiNER Linker", "type": "created"}
+    ],
+    "text": "GLinker is a framework for entity linking and disambiguation created by Knowledgator. It uses a DAG pipeline architecture to process text through multiple stages. GLinker can link extracted entities to knowledge bases like Wikidata and integrates with SpaCy for preprocessing. The GLiNER Linker model, also created by Knowledgator, is the core component for entity disambiguation.",
+    "metadata": {"source": "seed_data", "topic": "glinker"}
+  },
+  {
+    "entities": [
+      {"text": "GLiClass", "label": "technology", "properties": {"type": "text classification model"}},
+      {"text": "GLiClass Decoder", "label": "technology", "properties": {"architecture": "decoder-based"}},
+      {"text": "Knowledgator", "label": "organization"},
+      {"text": "Zero-Shot Classification", "label": "concept"},
+      {"text": "Sentiment Analysis", "label": "concept"},
+      {"text": "Topic Classification", "label": "concept"},
+      {"text": "Intent Detection", "label": "concept"},
+      {"text": "GLiNER", "label": "technology"}
+    ],
+    "relations": [
+      {"head": "Knowledgator", "tail": "GLiClass", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLiClass Decoder", "type": "created"},
+      {"head": "GLiClass", "tail": "Zero-Shot Classification", "type": "supports"},
+      {"head": "GLiClass", "tail": "Sentiment Analysis", "type": "used_for"},
+      {"head": "GLiClass", "tail": "Topic Classification", "type": "used_for"},
+      {"head": "GLiClass", "tail": "Intent Detection", "type": "used_for"},
+      {"head": "GLiClass", "tail": "GLiNER", "type": "inspired_by"},
+      {"head": "GLiClass Decoder", "tail": "GLiClass", "type": "variant_of"},
+      {"head": "GLiClass Decoder", "tail": "Large Language Models", "type": "built_on"}
+    ],
+    "text": "GLiClass is a model for zero-shot text classification created by Knowledgator. Inspired by the GLiNER architecture, it enables classifying text into arbitrary categories without task-specific training. GLiClass is used for sentiment analysis, topic classification, and intent detection. Knowledgator also created GLiClass Decoder, a variant built on large language models using a decoder architecture.",
+    "metadata": {"source": "seed_data", "topic": "gliclass"}
+  },
+  {
+    "entities": [
+      {"text": "retrico", "label": "technology", "properties": {"type": "Python package", "description": "End-to-end Graph RAG"}},
+      {"text": "Knowledgator", "label": "organization"},
+      {"text": "Graph RAG", "label": "concept"},
+      {"text": "Retrieval Augmented Generation", "label": "concept"},
+      {"text": "GLiNER", "label": "technology"},
+      {"text": "GLinker", "label": "technology"},
+      {"text": "Neo4j", "label": "technology"},
+      {"text": "FalkorDB", "label": "technology"},
+      {"text": "Memgraph", "label": "technology"}
+    ],
+    "relations": [
+      {"head": "Knowledgator", "tail": "retrico", "type": "created"},
+      {"head": "retrico", "tail": "Graph RAG", "type": "implements"},
+      {"head": "Graph RAG", "tail": "Retrieval Augmented Generation", "type": "type_of"},
+      {"head": "retrico", "tail": "GLiNER", "type": "built_on"},
+      {"head": "retrico", "tail": "GLinker", "type": "built_on"},
+      {"head": "retrico", "tail": "Neo4j", "type": "supports"},
+      {"head": "retrico", "tail": "FalkorDB", "type": "supports"},
+      {"head": "retrico", "tail": "Memgraph", "type": "supports"}
+    ],
+    "text": "retrico is an end-to-end Graph RAG package created by Knowledgator. It is built on GLiNER for entity extraction and GLinker for entity linking to construct knowledge graphs from unstructured text. Graph RAG is a type of Retrieval Augmented Generation. retrico supports multiple graph databases including Neo4j, FalkorDB, and Memgraph.",
+    "metadata": {"source": "seed_data", "topic": "retrico_overview"}
+  },
+  {
+    "entities": [
+      {"text": "retrico", "label": "technology"},
+      {"text": "Query Pipeline", "label": "concept"},
+      {"text": "Semantic Search", "label": "concept"},
+      {"text": "Path Reasoning", "label": "concept"},
+      {"text": "Fusion", "label": "concept", "properties": {"strategies": "union, RRF, weighted, intersection"}},
+      {"text": "YAML Configuration", "label": "concept"},
+      {"text": "Builder API", "label": "concept"},
+      {"text": "DAG Pipeline", "label": "concept"},
+      {"text": "Lazy Loading", "label": "concept"}
+    ],
+    "relations": [
+      {"head": "retrico", "tail": "Query Pipeline", "type": "provides"},
+      {"head": "Query Pipeline", "tail": "Semantic Search", "type": "includes"},
+      {"head": "Query Pipeline", "tail": "Path Reasoning", "type": "includes"},
+      {"head": "Query Pipeline", "tail": "Fusion", "type": "includes"},
+      {"head": "retrico", "tail": "YAML Configuration", "type": "supports"},
+      {"head": "retrico", "tail": "Builder API", "type": "provides"},
+      {"head": "retrico", "tail": "DAG Pipeline", "type": "uses"},
+      {"head": "retrico", "tail": "Lazy Loading", "type": "uses"}
+    ],
+    "text": "retrico provides a multi-strategy query pipeline including entity retrieval, semantic search over embeddings, path reasoning between entities, and a fusion processor that merges results. It supports declarative YAML configuration and a programmatic Builder API for defining pipelines. The DAG pipeline engine executes processors in topological order, and models use lazy loading for efficient memory usage.",
+    "metadata": {"source": "seed_data", "topic": "retrico_architecture"}
+  },
+  {
+    "entities": [
+      {"text": "retrico", "label": "technology"},
+      {"text": "Question Answering", "label": "concept"},
+      {"text": "Due Diligence", "label": "concept"},
+      {"text": "Compliance Automation", "label": "concept"},
+      {"text": "Research Assistants", "label": "concept"},
+      {"text": "Customer Support", "label": "concept"},
+      {"text": "Drug Discovery", "label": "concept"}
+    ],
+    "relations": [
+      {"head": "retrico", "tail": "Question Answering", "type": "used_for"},
+      {"head": "retrico", "tail": "Due Diligence", "type": "used_for"},
+      {"head": "retrico", "tail": "Compliance Automation", "type": "used_for"},
+      {"head": "retrico", "tail": "Research Assistants", "type": "used_for"},
+      {"head": "retrico", "tail": "Customer Support", "type": "used_for"},
+      {"head": "retrico", "tail": "Drug Discovery", "type": "used_for"}
+    ],
+    "text": "retrico enables multiple use cases through its Graph RAG approach. It powers question answering over enterprise knowledge bases, due diligence workflows in financial services, compliance automation for regulatory documents, research assistants for scientific literature, knowledge-grounded customer support bots, and drug discovery pipelines that link biomedical entities.",
+    "metadata": {"source": "seed_data", "topic": "retrico_use_cases"}
+  },
+  {
+    "entities": [
+      {"text": "GLiNER", "label": "technology"},
+      {"text": "retrico", "label": "technology"},
+      {"text": "GLinker", "label": "technology"},
+      {"text": "GLiClass", "label": "technology"},
+      {"text": "Python", "label": "technology"},
+      {"text": "PyTorch", "label": "technology"},
+      {"text": "Transformers", "label": "technology", "properties": {"by": "Hugging Face"}},
+      {"text": "Pydantic", "label": "technology"},
+      {"text": "sentence-transformers", "label": "technology"},
+      {"text": "FastAPI", "label": "technology"}
+    ],
+    "relations": [
+      {"head": "GLiNER", "tail": "Python", "type": "written_in"},
+      {"head": "GLiNER", "tail": "PyTorch", "type": "built_on"},
+      {"head": "GLiNER", "tail": "Transformers", "type": "built_on"},
+      {"head": "GLiClass", "tail": "PyTorch", "type": "built_on"},
+      {"head": "GLiClass", "tail": "Transformers", "type": "built_on"},
+      {"head": "GLinker", "tail": "Python", "type": "written_in"},
+      {"head": "retrico", "tail": "Python", "type": "written_in"},
+      {"head": "retrico", "tail": "Pydantic", "type": "built_on"},
+      {"head": "retrico", "tail": "sentence-transformers", "type": "built_on"},
+      {"head": "retrico", "tail": "FastAPI", "type": "built_on"}
+    ],
+    "text": "All Knowledgator tools are written in Python. GLiNER and GLiClass are built on PyTorch and the Hugging Face Transformers library. GLinker is written in Python with a modular DAG engine. retrico is built on Pydantic for data models, sentence-transformers for computing embeddings, and FastAPI for serving applications.",
+    "metadata": {"source": "seed_data", "topic": "tech_stack"}
+  },
+  {
+    "entities": [
+      {"text": "GLiNER", "label": "technology"},
+      {"text": "BERT", "label": "technology"},
+      {"text": "DeBERTa", "label": "technology"},
+      {"text": "Transformer Encoder", "label": "concept"},
+      {"text": "Token-Level Representations", "label": "concept"},
+      {"text": "Span Representations", "label": "concept"},
+      {"text": "Contrastive Learning", "label": "concept"}
+    ],
+    "relations": [
+      {"head": "GLiNER", "tail": "DeBERTa", "type": "built_on"},
+      {"head": "GLiNER", "tail": "BERT", "type": "built_on"},
+      {"head": "GLiNER", "tail": "Transformer Encoder", "type": "uses"},
+      {"head": "GLiNER", "tail": "Token-Level Representations", "type": "uses"},
+      {"head": "GLiNER", "tail": "Span Representations", "type": "uses"},
+      {"head": "GLiNER", "tail": "Contrastive Learning", "type": "uses"}
+    ],
+    "text": "GLiNER is built on top of pre-trained transformer encoders such as BERT and DeBERTa. It computes token-level representations from the encoder, then constructs span representations for candidate entity mentions. GLiNER uses contrastive learning to align span representations with label embeddings, enabling zero-shot generalization to unseen entity types.",
+    "metadata": {"source": "seed_data", "topic": "gliner_internals"}
+  },
+  {
+    "entities": [
+      {"text": "Knowledgator", "label": "organization"},
+      {"text": "GLiNER Bi-Encoder", "label": "technology"},
+      {"text": "GLiNER Multi-Task", "label": "technology"},
+      {"text": "GLiNER-relex", "label": "technology"},
+      {"text": "GLiNER Decoder", "label": "technology"},
+      {"text": "GLiNER SpanNER", "label": "technology"},
+      {"text": "GLiNER Linker", "label": "technology"},
+      {"text": "GLiClass", "label": "technology"},
+      {"text": "GLiClass Decoder", "label": "technology"},
+      {"text": "GLinker", "label": "technology"},
+      {"text": "retrico", "label": "technology"},
+      {"text": "GLiNER", "label": "technology"}
+    ],
+    "relations": [
+      {"head": "Knowledgator", "tail": "GLiNER", "type": "contributed_to"},
+      {"head": "Knowledgator", "tail": "GLiNER Bi-Encoder", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLiNER Multi-Task", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLiNER-relex", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLiNER Decoder", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLiNER SpanNER", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLiNER Linker", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLiClass", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLiClass Decoder", "type": "created"},
+      {"head": "Knowledgator", "tail": "GLinker", "type": "created"},
+      {"head": "Knowledgator", "tail": "retrico", "type": "created"}
+    ],
+    "text": "Knowledgator's full model portfolio includes: GLiNER Bi-Encoder and GLiNER Multi-Task for named entity recognition, GLiNER-relex for relation extraction, GLiNER Decoder for decoder-based extraction, GLiNER SpanNER for efficient span-based NER, GLiNER Linker for entity disambiguation, GLiClass and GLiClass Decoder for zero-shot text classification, GLinker as an entity linking framework, and retrico for end-to-end Graph RAG. Knowledgator is also a key contributor to the original GLiNER model.",
+    "metadata": {"source": "seed_data", "topic": "knowledgator_portfolio"}
+  }
+]
