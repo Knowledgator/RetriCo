@@ -17,17 +17,11 @@
 ## Installation
 
 ```bash
-pip install retrico
-```
-
-Optional extras:
-
-```bash
-pip install openai          # LLM-based extraction (any OpenAI-compatible API)
-pip install glinker         # Entity linking
-pip install falkordb        # FalkorDB graph store
-pip install pykeen          # KG embedding training
-pip install 'retrico[pdf]'  # PDF text + table extraction
+pip install retrico                # Core (GLiNER NER/relex + Neo4j)
+pip install retrico[llm]           # + LLM-based extraction (OpenAI-compatible API)
+pip install retrico[linking]       # + Entity linking (GLinker)
+pip install retrico[falkordb]      # + FalkorDB graph store
+pip install retrico[pdf]           # + PDF text & table extraction
 ```
 
 Requires Python 3.10+.
@@ -66,7 +60,7 @@ result = retrico.build_graph(
 
 ```python
 result = retrico.query_graph(
-    query="Where was Einstein born?",
+    query="Where was Albert Einstein born?",
     entity_labels=["person", "location"],
     api_key="sk-...",       # any OpenAI-compatible key; omit to skip LLM reasoning
     model="gpt-4o-mini",
@@ -89,6 +83,10 @@ result = retrico.extract(
 for text_entities in result.entities:
     for e in text_entities:
         print(f"  [{e.label}] {e.text}")
+
+for text_relations in result.relations:
+    for r in text_relations:
+        print(f"  {r.head_text} --[{r.relation_type}]--> {r.tail_text}")
 ```
 
 ## Why RetriCo?
@@ -100,8 +98,8 @@ RetriCo takes a different approach: **declarative, modular pipelines** where eac
 ```python
 builder = retrico.RetriCoBuilder(name="my_pipeline")
 builder.chunker(method="sentence")
-builder.ner_gliner(labels=["person", "org", "location"])        # or builder.ner_llm(...)
-builder.relex_gliner(entity_labels=[...], relation_labels=[...]) # or builder.relex_llm(...)
+builder.ner_gliner(model="knowledgator/gliner-multitask-large-v0.5", labels=["person", "org", "location"])        # or builder.ner_llm(...)
+builder.relex_gliner(model="knowledgator/gliner-relex-large-v0.5", entity_labels=[...], relation_labels=[...]) # or builder.relex_llm(...)
 builder.graph_writer()
 executor = builder.build()
 result = executor.run(texts=["Einstein worked at the Swiss Patent Office in Bern."])
