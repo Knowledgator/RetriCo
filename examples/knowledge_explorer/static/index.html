@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Knowledge Explorer</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Knowledge Explorer</h1>
+            <p class="subtitle">Build and search a knowledge graph from text</p>
+        </header>
+
+        <!-- Tab navigation -->
+        <nav class="tabs">
+            <button class="tab active" data-tab="text">Add Text</button>
+            <button class="tab" data-tab="search">Search</button>
+            <button class="tab" data-tab="explore">Explore</button>
+        </nav>
+
+        <!-- Text tab -->
+        <section id="tab-text" class="tab-content active">
+            <div class="card">
+                <h2>Text Input</h2>
+                <p>Paste or type text to add to the knowledge graph.</p>
+                <textarea id="text-input" rows="8"
+                    placeholder="Enter text here... e.g., 'GLiNER is a generalist model for named entity recognition created by Knowledgator.'"></textarea>
+                <button id="btn-ingest-text" class="btn btn-primary">Add to Knowledge Graph</button>
+                <div id="text-result" class="result hidden"></div>
+            </div>
+        </section>
+
+        <!-- Search tab -->
+        <section id="tab-search" class="tab-content">
+            <div class="card">
+                <h2>Search Knowledge Graph</h2>
+                <p>Choose a search strategy and optionally enable LLM reasoning.</p>
+                <div class="search-options">
+                    <div class="search-modes">
+                        <button class="mode-btn active" data-mode="fused" title="Entity + Semantic + Path (RRF fused)">Fused</button>
+                        <button class="mode-btn" data-mode="entity" title="Entity lookup + k-hop subgraph">Entity</button>
+                        <button class="mode-btn" data-mode="semantic" title="Vector similarity over entity embeddings">Semantic</button>
+                        <button class="mode-btn" data-mode="path" title="Shortest paths between entities">Path</button>
+                        <button class="mode-btn" data-mode="graph" title="Fuzzy text search on the graph">Graph</button>
+                    </div>
+                    <label class="toggle-label" id="llm-toggle-wrapper">
+                        <input type="checkbox" id="llm-toggle" />
+                        <span class="toggle-switch"></span>
+                        <span>LLM Answer</span>
+                    </label>
+                </div>
+                <div class="search-bar">
+                    <input type="text" id="search-input" placeholder="" />
+                    <button id="btn-search" class="btn btn-primary">Search</button>
+                </div>
+                <div id="search-mode-hint" class="mode-hint"></div>
+                <div id="search-result" class="result hidden">
+                    <div id="search-answer" class="answer hidden"></div>
+                    <div id="search-graph-container" class="graph-section hidden">
+                        <div class="result-card">
+                            <h4>Knowledge Graph</h4>
+                            <div id="search-graph" class="graph-canvas"></div>
+                        </div>
+                    </div>
+                    <div id="search-entities" class="entities hidden"></div>
+                    <div id="search-relations" class="relations hidden"></div>
+                    <div id="search-chunks" class="chunks hidden"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Explore tab -->
+        <section id="tab-explore" class="tab-content">
+            <div class="card">
+                <h2>Explore Knowledge Graph</h2>
+                <p>Interactive visualization of the full knowledge graph. Click a node to focus.</p>
+                <div class="explore-toolbar">
+                    <div class="explore-search-bar">
+                        <input type="text" id="explore-search-input" placeholder="Find entity..." />
+                        <button id="btn-explore-search" class="btn btn-primary">Find</button>
+                    </div>
+                    <button id="btn-refresh-graph" class="btn btn-secondary">Load All</button>
+                    <span id="graph-stats" class="graph-stats"></span>
+                </div>
+                <div id="explore-graph" class="graph-canvas graph-canvas-large"></div>
+                <div id="node-detail" class="node-detail hidden">
+                    <h4 id="node-detail-title"></h4>
+                    <p id="node-detail-type" class="node-detail-type"></p>
+                    <p id="node-detail-mentions"></p>
+                    <div id="node-detail-relations"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Ingested documents sidebar -->
+        <aside class="sidebar">
+            <h3>Ingested Sources</h3>
+            <ul id="doc-list"><li class="empty">No documents yet</li></ul>
+        </aside>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

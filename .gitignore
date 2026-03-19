@@ -8,6 +8,12 @@ __pycache__/
 
 # Configs
 .retrico.yaml
+retrico.db.settings
+
+# Data
+*.db
+*.sqlite3
+*.csv
 
 # Distribution / packaging
 .Python

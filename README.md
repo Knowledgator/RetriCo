@@ -129,6 +129,8 @@ executor = retrico.ProcessorFactory.create_pipeline("pipeline.yaml")
 - **Knowledge discovery** — Infer new relationships from existing knowledge, especially in biology and medicine
 - **Better search** — Combine structured graph queries with semantic vector search
 
+See the [`examples/`](examples/) folder for real-world applications powered by retrico, including an interactive Knowledge Explorer web app with graph visualization and multi-strategy search.
+
 ## Builder API
 
 ### Build Pipeline
