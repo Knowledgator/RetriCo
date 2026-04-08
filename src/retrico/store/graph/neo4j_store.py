@@ -54,9 +54,23 @@ class Neo4jGraphStore(BaseGraphStore):
             self._driver = None
 
     def _run(self, query: str, parameters: dict = None) -> list:
+        # Issue #7 fix: Remove null bytes from string parameters
+        params = self._sanitize_params(parameters or {})
         with self.driver.session(database=self.database) as session:
-            result = session.run(query, parameters or {})
+            result = session.run(query, params)
             return [record.data() for record in result]
+
+    @staticmethod
+    def _sanitize_params(params: dict) -> dict:
+        """Remove null bytes from string parameters (issue #7 fix)."""
+        sanitized = {}
+        for key, value in params.items():
+            if isinstance(value, str):
+                # Remove null bytes which break Cypher queries
+                sanitized[key] = value.replace('\x00', '')
+            else:
+                sanitized[key] = value
+        return sanitized
 
     # -- Raw Cypher ----------------------------------------------------------
 
