@@ -52,11 +52,27 @@ class FalkorDBGraphStore(BaseGraphStore):
     def _run(self, query: str, parameters: dict = None) -> list:
         self._ensure_connection()
         params = parameters or {}
+        # Issue #7 fix: Remove null bytes from string parameters
+        # Null bytes (\x00) in text cause FalkorDB Cypher errors:
+        # "Invalid input at end of input: expected '=' ... errCtx: CYPHER id"
+        params = self._sanitize_params(params)
         kwargs = {}
         if self.query_timeout > 0:
             kwargs["timeout"] = self.query_timeout
         result = self._graph.query(query, params, **kwargs)
         return result.result_set
+
+    @staticmethod
+    def _sanitize_params(params: dict) -> dict:
+        """Remove null bytes from string parameters (issue #7 fix)."""
+        sanitized = {}
+        for key, value in params.items():
+            if isinstance(value, str):
+                # Remove null bytes which break FalkorDB Cypher queries
+                sanitized[key] = value.replace('\x00', '')
+            else:
+                sanitized[key] = value
+        return sanitized
 
     def close(self):
         # FalkorDB Python client uses Redis connection pooling;
