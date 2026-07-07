@@ -2,7 +2,6 @@
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-import json
 import re
 import logging
 
@@ -108,16 +107,22 @@ class LLMReasoner(BaseReasoner):
     def _parse_response(
         self, raw: str, query: str, subgraph: Subgraph
     ) -> QueryResult:
+        from ..extraction.json_parser import try_parse_llm_json
+
         text = raw.strip()
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?\s*\n?", "", text)
             text = re.sub(r"\n?```\s*$", "", text)
             text = text.strip()
 
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
+        parsed, status = try_parse_llm_json(text)
+        if status == "failed":
             logger.warning("Failed to parse LLM reasoning response as JSON")
+            return QueryResult(query=query, subgraph=subgraph, answer=None)
+        if status == "repaired":
+            logger.info("LLM reasoning response required token-level JSON repair")
+        if not isinstance(parsed, dict):
+            logger.warning("Repaired LLM reasoning response is not a JSON object")
             return QueryResult(query=query, subgraph=subgraph, answer=None)
 
         # Build inferred relations

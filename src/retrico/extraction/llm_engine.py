@@ -359,7 +359,8 @@ class LLMExtractionEngine:
 
         Uses json_object mode only (no structured output) and query-specific prompts.
         """
-        import json
+        from .utils import _unwrap_payload
+        from .json_parser import try_parse_llm_json
         self._ensure_client()
 
         labels_instruction, label_constraint = build_labels_instruction(self.labels)
@@ -384,14 +385,15 @@ class LLMExtractionEngine:
 
         text = strip_markdown_fences(raw)
 
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
+        parsed, status = try_parse_llm_json(text)
+        if status == "failed":
             logger.warning("Failed to parse LLM query parser response as JSON")
             return []
+        if status == "repaired":
+            logger.info("LLM query parser response required token-level JSON repair")
 
-        if isinstance(parsed, dict) and "entities" in parsed:
-            parsed = parsed["entities"]
+        if not (isinstance(parsed, list) and all(isinstance(x, dict) for x in parsed)):
+            parsed = _unwrap_payload(parsed, "entities")
         if not isinstance(parsed, list):
             return []
 

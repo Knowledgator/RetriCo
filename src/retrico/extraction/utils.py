@@ -1,11 +1,11 @@
 """Shared parsing and conversion utilities for extraction engines."""
 
 from typing import Any, Dict, List, Tuple
-import json
 import re
 import logging
 
 from ..models.entity import EntityMention
+from .json_parser import try_parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -20,51 +20,94 @@ def strip_markdown_fences(text: str) -> str:
     return text
 
 
+def _unwrap_payload(parsed: Any, wrapper_key: str) -> List[Dict[str, Any]]:
+    """
+    Normalize a repaired parse result into a list of dicts.
+
+    The dirty parser has no concept of "ignore everything before/after the
+    real JSON payload" — if the model emitted preamble text with no
+    markdown fence around it ("Sure, here's the JSON: {...}"), parse_dirty
+    collects every top-level value it can find, giving back a mixed list
+    like ["Sure", "here's", "the", "JSON", {...}]. Passing that straight
+    through would hand callers a list containing plain strings, which then
+    crash on ent.get(...) downstream. Filter to dict-only, and unwrap the
+    wrapper dict ({"entities": [...]}) if that's the only dict present.
+    """
+    if isinstance(parsed, dict):
+        return parsed.get(wrapper_key, []) if wrapper_key in parsed else []
+    if isinstance(parsed, list):
+        dict_items = [x for x in parsed if isinstance(x, dict)]
+        if len(dict_items) == 1 and wrapper_key in dict_items[0]:
+            return dict_items[0][wrapper_key]
+        # already a flat list of entity/relation dicts (the common case)
+        return dict_items
+    return []
+
+
 def parse_entities_json(raw: str) -> List[Dict[str, Any]]:
     """Parse LLM response into a list of entity dicts.
 
     Handles plain JSON arrays, {"entities": [...]} wrappers, and markdown fences.
+    Falls back to token-level repair (dirty_json.try_parse_llm_json) on
+    malformed JSON — truncated generations, unclosed brackets, repetition
+    loops — instead of discarding the whole response on the first syntax
+    error. Fences must be stripped *before* repair, or the fence markers
+    themselves get tokenized as stray values (see dirty_json module docs).
     """
     text = strip_markdown_fences(raw)
 
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse LLM NER response as JSON")
+    parsed, status = try_parse_llm_json(text)
+    if status == "failed":
+        logger.warning("Failed to parse LLM NER response as JSON (unrecoverable)")
         return []
+    if status == "repaired":
+        logger.info("LLM NER response required token-level JSON repair")
 
-    if isinstance(parsed, list):
+    if isinstance(parsed, list) and all(isinstance(x, dict) for x in parsed):
         return parsed
-    if isinstance(parsed, dict) and "entities" in parsed:
-        return parsed["entities"]
-    return []
+    return _unwrap_payload(parsed, "entities")
 
 
 def parse_relations_json(raw: str) -> List[Dict[str, Any]]:
-    """Parse with-entities mode response: [...] or {"relations": [...]}."""
+    """Parse with-entities mode response: [...] or {"relations": [...]}.
+
+    Same repair fallback as parse_entities_json — see its docstring.
+    """
     text = strip_markdown_fences(raw)
 
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse LLM relex response as JSON")
+    parsed, status = try_parse_llm_json(text)
+    if status == "failed":
+        logger.warning("Failed to parse LLM relex response as JSON (unrecoverable)")
         return []
+    if status == "repaired":
+        logger.info("LLM relex response required token-level JSON repair")
 
-    if isinstance(parsed, list):
+    if isinstance(parsed, list) and all(isinstance(x, dict) for x in parsed):
         return parsed
-    if isinstance(parsed, dict) and "relations" in parsed:
-        return parsed["relations"]
-    return []
+    return _unwrap_payload(parsed, "relations")
 
 
 def parse_standalone_json(raw: str) -> Tuple[List, List]:
-    """Parse standalone mode response: {"entities": [...], "relations": [...]}."""
+    """Parse standalone mode response: {"entities": [...], "relations": [...]}.
+
+    Same repair fallback as parse_entities_json — see its docstring.
+    """
     text = strip_markdown_fences(raw)
 
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse LLM relex standalone response as JSON")
+    parsed, status = try_parse_llm_json(text)
+    if status == "failed":
+        logger.warning("Failed to parse LLM relex standalone response as JSON (unrecoverable)")
+        return [], []
+    if status == "repaired":
+        logger.info("LLM relex standalone response required token-level JSON repair")
+
+    if isinstance(parsed, list):
+        # mixed preamble junk — find the one dict that actually looks like
+        # the {"entities": ..., "relations": ...} payload
+        dict_items = [x for x in parsed if isinstance(x, dict)]
+        for d in dict_items:
+            if "entities" in d or "relations" in d:
+                return d.get("entities", []), d.get("relations", [])
         return [], []
 
     if isinstance(parsed, dict):
