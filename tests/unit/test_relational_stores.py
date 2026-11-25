@@ -81,6 +81,50 @@ class TestSqliteRelationalStore:
         assert results == []
         store.close()
 
+    def _make_search_store(self):
+        store = self._make_store()
+        store.write_records("chunks", [
+            {"id": "c1", "text": "Aspirin is used to treat pain."},
+            {"id": "c2", "text": "Ibuprofen reduces fever."},
+            {"id": "c3", "text": "Don't skip pain-relief meds."},
+        ])
+        return store
+
+    @pytest.mark.parametrize("query,expected", [
+        ("What treats pain", {"c1", "c3"}),
+        ("What treats pain?", {"c1", "c3"}),
+        ("pain?", {"c1", "c3"}),
+        ("pain, fever", {"c1", "c2", "c3"}),
+        ("don't", {"c3"}),
+        ("pain-relief", {"c3"}),
+        ("(pain", {"c1", "c3"}),
+        ('say "fever', {"c2"}),
+        ("fever OR", {"c2"}),
+        ("NOT fever", {"c2"}),
+        ("fever NEAR aspirin", {"c1", "c2"}),
+    ])
+    def test_search_plain_text_with_punctuation(self, query, expected):
+        """Punctuation and FTS5 keywords in queries are treated as plain text."""
+        store = self._make_search_store()
+        ids = {r["id"] for r in store.search("chunks", query, top_k=10)}
+        assert ids == expected
+        store.close()
+
+    @pytest.mark.parametrize("query", ["", "   ", "?", "?!,"])
+    def test_search_no_terms_returns_empty(self, query):
+        store = self._make_search_store()
+        assert store.search("chunks", query) == []
+        store.close()
+
+    def test_search_propagates_non_missing_table_errors(self):
+        import sqlite3
+        store = self._make_search_store()
+        with patch.object(
+            store, "_to_or_query", return_value="pain OR OR",
+        ), pytest.raises(sqlite3.OperationalError):
+            store.search("chunks", "anything")
+        store.close()
+
     def test_write_empty_records(self):
         store = self._make_store()
         store.write_records("docs", [])  # Should not raise

@@ -127,19 +127,24 @@ class SqliteRelationalStore(BaseRelationalStore):
 
     @staticmethod
     def _to_or_query(query: str) -> str:
-        """Convert a plain query into FTS5 OR expression.
+        """Convert a plain-text query into an FTS5 OR expression.
 
         FTS5 defaults to implicit AND — all terms must appear in the same row.
         For keyword retrieval we want rows matching *any* term, ranked by
         relevance (rows matching more terms rank higher).
+
+        Each whitespace-separated token is quoted as an FTS5 string, so
+        punctuation (``?``, ``,``, ``'``, ``(``...) and FTS5 keywords
+        (``OR``, ``NOT``, ``NEAR``) are treated as plain text rather than
+        query syntax. The FTS5 tokenizer then splits each quoted token the
+        same way it split the indexed text (e.g. ``"pain?"`` matches
+        ``pain`` and ``"pain-relief"`` matches the phrase ``pain relief``).
+
+        Returns an empty string when the query has no tokens.
         """
-        # If the query already contains explicit FTS5 operators, leave it as-is
-        if any(op in query for op in (" OR ", " AND ", " NOT ", '"', "*", "NEAR")):
-            return query
-        tokens = query.split()
-        if len(tokens) <= 1:
-            return query
-        return " OR ".join(tokens)
+        return " OR ".join(
+            '"' + token.replace('"', '""') + '"' for token in query.split()
+        )
 
     def search(
         self, table: str, query: str, top_k: int = 10,
@@ -147,6 +152,8 @@ class SqliteRelationalStore(BaseRelationalStore):
         self._ensure_connection()
         fts_name = f"{table}_fts"
         fts_query = self._to_or_query(query)
+        if not fts_query:
+            return []
         try:
             cur = self._conn.execute(
                 f'SELECT t.*, "{fts_name}".rank '
@@ -156,8 +163,13 @@ class SqliteRelationalStore(BaseRelationalStore):
                 f"ORDER BY rank LIMIT ?",
                 (fts_query, top_k),
             )
-        except sqlite3.OperationalError:
-            return []
+        except sqlite3.OperationalError as e:
+            # Nothing has been written to this table yet — no matches.
+            # Any other error (e.g. a malformed MATCH expression) is a real
+            # failure and must not be reported as an empty result.
+            if "no such table" in str(e):
+                return []
+            raise
         results = []
         for row in cur:
             d = self._deserialize_row(row)
