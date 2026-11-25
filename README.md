@@ -166,6 +166,32 @@ executor = builder.build()
 result = executor.run(query="Where was Einstein born?")
 ```
 
+### Chunk Reranking
+
+Add a `chunk_reranker` node to reorder retrieved chunks by relevance to the query before they reach the reasoner. Switching backends only changes `method` (install with `pip install "retrico[rerank]"`):
+
+```python
+builder.chunk_retriever()
+builder.chunk_reranker(method="cross_encoder", model_name="cross-encoder/ms-marco-MiniLM-L-6-v2", top_k=5)
+# or
+builder.chunk_reranker(method="gliclass", model_name="knowledgator/gliclass-v4-edge", top_k=5,
+                       prompt="Does the passage answer the query?")
+builder.reasoner(api_key="sk-...")
+```
+
+Each kept chunk gets `chunk.metadata["rerank_score"]`. Use `score_threshold=` to drop low-scoring chunks. Score scales differ by backend: MS MARCO cross-encoders output raw logits, so pass `activation="sigmoid"` to map them to [0, 1] like GLiClass. The same options are available in `query_graph(..., reranker="gliclass", reranker_kwargs={"top_k": 5})` and on the CLI (`retrico query ... --reranker gliclass --rerank-top-k 5`).
+
+Custom backends plug in via `retrico.register_reranker`:
+
+```python
+class MyReranker(retrico.BaseReranker):
+    def __init__(self, *, model_name="my-model"): ...
+    def score(self, query, passages): return [...]  # one float per passage
+
+retrico.register_reranker("mine", MyReranker)
+builder.chunk_reranker(method="mine")
+```
+
 ### Ingest Structured Data
 
 ```python
