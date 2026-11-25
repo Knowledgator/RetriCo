@@ -359,3 +359,43 @@ class TestNeo4jMutations:
         import ast
         merged = ast.literal_eval(props_call[0][1]["properties"])
         assert merged == {"x": 1, "y": 2}  # target wins
+
+
+class TestNeo4jFulltextQuery:
+    """Plain-text queries must never be parsed as Lucene syntax."""
+
+    @pytest.mark.parametrize("query,expected", [
+        ("pain", '"pain"'),
+        ("What treats pain?", '"What" OR "treats" OR "pain?"'),
+        ("pain, fever", '"pain," OR "fever"'),
+        ("pain-relief", '"pain-relief"'),
+        ("fever OR", '"fever" OR "OR"'),
+        ("NOT fever", '"NOT" OR "fever"'),
+        ("text:pain", '"text:pain"'),
+        ('say "fever', '"say" OR "\\"fever"'),
+        ("a\\b", '"a\\\\b"'),
+        ("", ""),
+        ("   ", ""),
+    ])
+    def test_to_or_phrase_query(self, query, expected):
+        from retrico.store.graph.neo4j_store import Neo4jGraphStore
+        assert Neo4jGraphStore._to_or_phrase_query(query) == expected
+
+    def test_field_prefix(self):
+        from retrico.store.graph.neo4j_store import Neo4jGraphStore
+        assert Neo4jGraphStore._to_or_phrase_query(
+            "pain fever", field_prefix="data.text:",
+        ) == 'data.text:"pain" OR data.text:"fever"'
+
+    def test_fulltext_search_sends_quoted_query(self, mock_neo4j_store):
+        mock_neo4j_store._run = MagicMock(return_value=[])
+        mock_neo4j_store.fulltext_search_chunks("What treats pain?", top_k=3)
+        params = mock_neo4j_store._run.call_args[0][1]
+        assert params["query"] == '"What" OR "treats" OR "pain?"'
+        assert params["top_k"] == 3
+
+    @pytest.mark.parametrize("query", ["", "   "])
+    def test_fulltext_search_empty_query_skips_db(self, mock_neo4j_store, query):
+        mock_neo4j_store._run = MagicMock(return_value=[])
+        assert mock_neo4j_store.fulltext_search_chunks(query) == []
+        mock_neo4j_store._run.assert_not_called()

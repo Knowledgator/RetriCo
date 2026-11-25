@@ -15,6 +15,10 @@ class PostgresRelationalStore(BaseRelationalStore):
     Requires the ``psycopg`` package (``pip install psycopg[binary]``).
     """
 
+    # ``simple`` lowercases and splits on punctuation without stemming or
+    # stopword removal, matching SQLite FTS5's default tokenizer.
+    TS_CONFIG = "simple"
+
     def __init__(
         self,
         host: str = "localhost",
@@ -52,15 +56,18 @@ class PostgresRelationalStore(BaseRelationalStore):
 
         non_id = [c for c in columns if c != "id"]
         col_defs = ", ".join(f'"{c}" TEXT' for c in non_id)
-        # Create table with tsvector column for FTS
+        # Create table with tsvector column for FTS. The text search config
+        # must be explicit (generated columns require an immutable
+        # expression) and must match the one used in ``search``.
         self._conn.execute(
             f'CREATE TABLE IF NOT EXISTS "{table}" ('
             f'"id" TEXT PRIMARY KEY, {col_defs}, '
-            f'"tsv" tsvector GENERATED ALWAYS AS ('
+            f'"tsv" tsvector GENERATED ALWAYS AS (to_tsvector('
+            f"'{self.TS_CONFIG}', "
             + " || ' ' || ".join(
                 f"coalesce(\"{c}\", '')" for c in non_id
             )
-            + ") STORED)"
+            + ")) STORED)"
         )
         # GIN index on tsvector column
         idx_name = f"{table}_tsv_idx"
@@ -139,22 +146,31 @@ class PostgresRelationalStore(BaseRelationalStore):
         self, table: str, query: str, top_k: int = 10,
     ) -> List[Dict[str, Any]]:
         self._ensure_connection()
-        # Convert query words to tsquery with | (OR) between words
-        # so rows matching *any* term are returned, ranked by relevance
-        words = query.strip().split()
-        if not words:
+        import psycopg
+
+        # One phraseto_tsquery() per whitespace token, OR-ed together with
+        # the tsquery ``||`` operator, so rows matching *any* term are
+        # returned, ranked by relevance. phraseto_tsquery() treats its input
+        # as plain text (punctuation and operators like ``!``, ``&``, ``:*``
+        # are never parsed as syntax) and keeps multi-word tokens such as
+        # ``pain-relief`` as phrases.
+        tokens = query.split()
+        if not tokens:
             return []
-        ts_query = " | ".join(words)
+        ts_query = " || ".join(
+            f"phraseto_tsquery('{self.TS_CONFIG}', %s)" for _ in tokens
+        )
 
         try:
             cur = self._conn.execute(
-                f'SELECT *, ts_rank("tsv", to_tsquery(%s)) AS rank '
-                f'FROM "{table}" '
-                f'WHERE "tsv" @@ to_tsquery(%s) '
+                f'SELECT t.*, ts_rank(t."tsv", q.query) AS rank '
+                f'FROM "{table}" t, (SELECT {ts_query} AS query) q '
+                f'WHERE t."tsv" @@ q.query '
                 f"ORDER BY rank DESC LIMIT %s",
-                (ts_query, ts_query, top_k),
+                (*tokens, top_k),
             )
-        except Exception:
+        except psycopg.errors.UndefinedTable:
+            # Nothing has been written to this table yet — no matches.
             return []
         cols = [desc[0] for desc in cur.description]
         results = []

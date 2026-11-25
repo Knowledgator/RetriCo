@@ -76,6 +76,26 @@ class TestMemgraphOverrides:
         queries = [c[0][0] for c in mock_session.run.call_args_list]
         assert any("Community" in q for q in queries)
 
+    def test_fulltext_search_uses_params_and_field_prefix(self, mock_memgraph_store):
+        store, mock_session = mock_memgraph_store
+        store.fulltext_search_chunks("What treats pain?", top_k=3)
+        query, params = mock_session.run.call_args[0]
+        # Current Memgraph signature: search(index, query[, config MAP]);
+        # the query text is passed as a parameter, never inlined.
+        assert "text_search.search($index_name, $query)" in query
+        assert "ORDER BY score DESC" in query
+        assert params == {
+            "index_name": "chunk_text_idx",
+            "query": 'data.text:"What" OR data.text:"treats" OR data.text:"pain?"',
+            "top_k": 3,
+        }
+
+    @pytest.mark.parametrize("query", ["", "   "])
+    def test_fulltext_search_empty_query_skips_db(self, mock_memgraph_store, query):
+        store, mock_session = mock_memgraph_store
+        assert store.fulltext_search_chunks(query) == []
+        mock_session.run.assert_not_called()
+
     def test_setup_indexes_tolerates_errors(self, mock_memgraph_store):
         store, mock_session = mock_memgraph_store
         mock_session.run.side_effect = Exception("Index already exists")

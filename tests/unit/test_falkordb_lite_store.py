@@ -161,7 +161,7 @@ class TestFalkorDBLiteInheritedMethods:
     def test_setup_indexes(self, mock_falkordb_lite_store):
         store, mock_graph = mock_falkordb_lite_store
         store.setup_indexes()
-        assert mock_graph.query.call_count == 7
+        assert mock_graph.query.call_count == 8
 
 
 class TestFalkorDBLiteConfig:

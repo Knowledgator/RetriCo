@@ -190,8 +190,14 @@ class TestFalkorDBGraphStore:
     def test_setup_indexes(self, mock_falkordb_store):
         store, mock_graph = mock_falkordb_store
         store.setup_indexes()
-        # Should create 7 indexes (5 original + Community + FTS)
-        assert mock_graph.query.call_count == 7
+        # 5 original + Community + FTS (current syntax and legacy procedure)
+        assert mock_graph.query.call_count == 8
+
+    def test_setup_indexes_creates_fulltext_index(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        store.setup_indexes()
+        queries = [c[0][0] for c in mock_graph.query.call_args_list]
+        assert "CREATE FULLTEXT INDEX FOR (c:Chunk) ON (c.text)" in queries
 
     def test_setup_indexes_includes_community(self, mock_falkordb_store):
         store, mock_graph = mock_falkordb_store
@@ -550,3 +556,38 @@ class TestFalkorDBIsBaseGraphStore:
         from retrico.store.graph.base import BaseGraphStore
         from retrico.store.graph.neo4j_store import Neo4jGraphStore
         assert issubclass(Neo4jGraphStore, BaseGraphStore)
+
+
+class TestFalkorDBFulltextQuery:
+    """Plain-text queries must never be parsed as RediSearch syntax."""
+
+    @pytest.mark.parametrize("query,expected", [
+        ("pain", "pain"),
+        ("What treats pain?", "What|treats|pain"),
+        ("pain, fever", "pain|fever"),
+        ("pain-relief", '"pain relief"'),
+        ("don't", '"don t"'),
+        ("(pain", "pain"),
+        ('say "fever', "say|fever"),
+        ("pain|fever", '"pain fever"'),
+        ("@text:{pain}", '"text pain"'),
+        ("-fever ~pain*", "fever|pain"),
+        ("?", ""),
+        ("", ""),
+    ])
+    def test_to_or_query(self, query, expected):
+        from retrico.store.graph.falkordb_store import FalkorDBGraphStore
+        assert FalkorDBGraphStore._to_or_query(query) == expected
+
+    def test_fulltext_search_sends_built_query(self, mock_falkordb_store):
+        store, mock_graph = mock_falkordb_store
+        store.fulltext_search_chunks("What treats pain?", top_k=3)
+        query, params = mock_graph.query.call_args[0][:2]
+        assert "ORDER BY score DESC" in query
+        assert params == {"query": "What|treats|pain", "top_k": 3}
+
+    @pytest.mark.parametrize("query", ["", "   ", "?!"])
+    def test_fulltext_search_no_words_skips_db(self, mock_falkordb_store, query):
+        store, mock_graph = mock_falkordb_store
+        assert store.fulltext_search_chunks(query) == []
+        mock_graph.query.assert_not_called()

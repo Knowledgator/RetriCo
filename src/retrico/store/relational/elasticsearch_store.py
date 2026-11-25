@@ -66,7 +66,11 @@ class ElasticsearchRelationalStore(BaseRelationalStore):
         self, table: str, query: str, top_k: int = 10,
     ) -> List[Dict[str, Any]]:
         self._ensure_client()
+        from elasticsearch import NotFoundError
+
         index = self._index_name(table)
+        # multi_match runs the query through the field analyzer as plain
+        # text, so punctuation needs no escaping here.
         try:
             resp = self._client.search(
                 index=index,
@@ -79,7 +83,8 @@ class ElasticsearchRelationalStore(BaseRelationalStore):
                 },
                 size=top_k,
             )
-        except Exception:
+        except NotFoundError:
+            # Nothing has been written to this index yet — no matches.
             return []
         results = []
         for hit in resp.get("hits", {}).get("hits", []):

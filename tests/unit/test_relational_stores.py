@@ -81,6 +81,50 @@ class TestSqliteRelationalStore:
         assert results == []
         store.close()
 
+    def _make_search_store(self):
+        store = self._make_store()
+        store.write_records("chunks", [
+            {"id": "c1", "text": "Aspirin is used to treat pain."},
+            {"id": "c2", "text": "Ibuprofen reduces fever."},
+            {"id": "c3", "text": "Don't skip pain-relief meds."},
+        ])
+        return store
+
+    @pytest.mark.parametrize("query,expected", [
+        ("What treats pain", {"c1", "c3"}),
+        ("What treats pain?", {"c1", "c3"}),
+        ("pain?", {"c1", "c3"}),
+        ("pain, fever", {"c1", "c2", "c3"}),
+        ("don't", {"c3"}),
+        ("pain-relief", {"c3"}),
+        ("(pain", {"c1", "c3"}),
+        ('say "fever', {"c2"}),
+        ("fever OR", {"c2"}),
+        ("NOT fever", {"c2"}),
+        ("fever NEAR aspirin", {"c1", "c2"}),
+    ])
+    def test_search_plain_text_with_punctuation(self, query, expected):
+        """Punctuation and FTS5 keywords in queries are treated as plain text."""
+        store = self._make_search_store()
+        ids = {r["id"] for r in store.search("chunks", query, top_k=10)}
+        assert ids == expected
+        store.close()
+
+    @pytest.mark.parametrize("query", ["", "   ", "?", "?!,"])
+    def test_search_no_terms_returns_empty(self, query):
+        store = self._make_search_store()
+        assert store.search("chunks", query) == []
+        store.close()
+
+    def test_search_propagates_non_missing_table_errors(self):
+        import sqlite3
+        store = self._make_search_store()
+        with patch.object(
+            store, "_to_or_query", return_value="pain OR OR",
+        ), pytest.raises(sqlite3.OperationalError):
+            store.search("chunks", "anything")
+        store.close()
+
     def test_write_empty_records(self):
         store = self._make_store()
         store.write_records("docs", [])  # Should not raise
@@ -270,6 +314,68 @@ class TestPostgresRelationalStore:
         finally:
             del sys.modules["psycopg"]
 
+    @pytest.fixture
+    def pg_store(self):
+        """Store with a mocked psycopg that has real exception classes."""
+        import sys
+
+        class UndefinedTable(Exception):
+            pass
+
+        mock_psycopg = MagicMock()
+        mock_psycopg.errors.UndefinedTable = UndefinedTable
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.description = [("id",), ("rank",)]
+        mock_conn.execute.return_value.__iter__.return_value = iter([])
+        mock_psycopg.connect.return_value = mock_conn
+        sys.modules["psycopg"] = mock_psycopg
+        try:
+            yield self._make_store(), mock_conn, UndefinedTable
+        finally:
+            del sys.modules["psycopg"]
+
+    def test_tsv_column_uses_to_tsvector(self, pg_store):
+        store, mock_conn, _ = pg_store
+        store.write_records("docs", [{"id": "d1", "text": "hello"}])
+        create_sql = mock_conn.execute.call_args_list[0][0][0]
+        assert "GENERATED ALWAYS AS (to_tsvector('simple', " in create_sql
+
+    @pytest.mark.parametrize("query,tokens", [
+        ("What treats pain?", ["What", "treats", "pain?"]),
+        ("pain, fever", ["pain,", "fever"]),
+        ("!fever & (pain:*", ["!fever", "&", "(pain:*"]),
+        ("don't", ["don't"]),
+    ])
+    def test_search_passes_tokens_as_plain_text_params(
+        self, pg_store, query, tokens,
+    ):
+        """Each token goes through phraseto_tsquery as a bound parameter,
+        so tsquery operators in the query are never parsed as syntax."""
+        store, mock_conn, _ = pg_store
+        store.search("chunks", query, top_k=7)
+        sql, params = mock_conn.execute.call_args[0]
+        assert "to_tsquery(" not in sql.replace("phraseto_tsquery(", "")
+        assert sql.count("phraseto_tsquery('simple', %s)") == len(tokens)
+        assert " || " in sql or len(tokens) == 1
+        assert list(params) == tokens + [7]
+
+    @pytest.mark.parametrize("query", ["", "   "])
+    def test_search_empty_query_skips_db(self, pg_store, query):
+        store, mock_conn, _ = pg_store
+        assert store.search("chunks", query) == []
+        mock_conn.execute.assert_not_called()
+
+    def test_search_missing_table_returns_empty(self, pg_store):
+        store, mock_conn, UndefinedTable = pg_store
+        mock_conn.execute.side_effect = UndefinedTable("no such table")
+        assert store.search("nope", "pain") == []
+
+    def test_search_propagates_other_errors(self, pg_store):
+        store, mock_conn, _ = pg_store
+        mock_conn.execute.side_effect = RuntimeError("connection lost")
+        with pytest.raises(RuntimeError):
+            store.search("chunks", "pain")
+
 
 # ---------------------------------------------------------------------------
 # Elasticsearch store — mocked elasticsearch client
@@ -373,6 +479,42 @@ class TestElasticsearchRelationalStore:
             assert results[0]["id"] == "d1"
         finally:
             del sys.modules["elasticsearch"]
+
+    @pytest.fixture
+    def es_store(self):
+        """Store with a mocked elasticsearch that has a real NotFoundError."""
+        import sys
+
+        class NotFoundError(Exception):
+            pass
+
+        mock_es_module = MagicMock()
+        mock_es_module.NotFoundError = NotFoundError
+        mock_client = MagicMock()
+        mock_es_module.Elasticsearch.return_value = mock_client
+        sys.modules["elasticsearch"] = mock_es_module
+        try:
+            yield self._make_store(), mock_client, NotFoundError
+        finally:
+            del sys.modules["elasticsearch"]
+
+    def test_search_sends_query_as_plain_text(self, es_store):
+        store, mock_client, _ = es_store
+        mock_client.search.return_value = {"hits": {"hits": []}}
+        store.search("docs", "What treats pain?", top_k=5)
+        sent = mock_client.search.call_args.kwargs["query"]
+        assert sent["multi_match"]["query"] == "What treats pain?"
+
+    def test_search_missing_index_returns_empty(self, es_store):
+        store, mock_client, NotFoundError = es_store
+        mock_client.search.side_effect = NotFoundError("index_not_found")
+        assert store.search("nope", "pain") == []
+
+    def test_search_propagates_other_errors(self, es_store):
+        store, mock_client, _ = es_store
+        mock_client.search.side_effect = ConnectionError("cluster down")
+        with pytest.raises(ConnectionError):
+            store.search("docs", "pain")
 
     def test_delete_records(self):
         import sys
