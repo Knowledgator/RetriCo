@@ -549,13 +549,29 @@ def ingest(file, json_output, verbose, **store_kwargs):
 @click.option("--api-key", default=None, envvar="LLM_API_KEY", help="LLM API key (or set LLM_API_KEY env var).")
 @click.option("--llm-model", default=None, help="LLM model name.")
 @click.option("--max-hops", default=None, type=int, help="Subgraph expansion depth.")
+@click.option("--reranker", type=click.Choice(["cross_encoder", "gliclass"]), default=None, help="Rerank retrieved chunks with this backend.")
+@click.option("--reranker-model", default=None, help="Reranker model name (backend default if omitted).")
+@click.option("--rerank-top-k", default=None, type=int, help="Chunks to keep after reranking (default: all).")
 @click.option("--verbose", is_flag=True, help="Verbose output.")
 @click.option("--interactive", is_flag=True, help="Force interactive wizard.")
 @_store_options
 def query(query_text, config_file, entity_labels, strategy, method, api_key,
-          llm_model, max_hops, verbose, interactive, **store_kwargs):
+          llm_model, max_hops, reranker, reranker_model, rerank_top_k,
+          verbose, interactive, **store_kwargs):
     """Query the knowledge graph."""
     import retrico
+
+    def _apply_reranker(kw: Dict[str, Any]) -> None:
+        if not reranker:
+            return
+        kw["reranker"] = reranker
+        rk: Dict[str, Any] = {}
+        if reranker_model:
+            rk["model_name"] = reranker_model
+        if rerank_top_k is not None:
+            rk["top_k"] = rerank_top_k
+        if rk:
+            kw["reranker_kwargs"] = rk
 
     store_kw = _resolve_store_kwargs(**store_kwargs)
 
@@ -592,6 +608,7 @@ def query(query_text, config_file, entity_labels, strategy, method, api_key,
                 query_kwargs["retrieval_strategy"] = strategies[0]
             else:
                 query_kwargs["retrieval_strategy"] = strategies
+        _apply_reranker(query_kwargs)
 
         result = retrico.query_graph(**query_kwargs)
         _print_query_result_obj(result)
@@ -651,6 +668,7 @@ def query(query_text, config_file, entity_labels, strategy, method, api_key,
         query_kwargs["model"] = _llm_model_name
     if max_hops is not None:
         query_kwargs["max_hops"] = max_hops
+    _apply_reranker(query_kwargs)
 
     result = retrico.query_graph(**query_kwargs)
     _print_query_result_obj(result)
@@ -661,9 +679,10 @@ def _print_query_result(ctx, query_text: str):
     if ctx.has("reasoner_result"):
         result = ctx.get("reasoner_result")["result"]
         _print_query_result_obj(result)
-    elif ctx.has("chunk_result"):
+    elif ctx.has("rerank_result") or ctx.has("chunk_result"):
         from retrico.models import QueryResult
-        subgraph = ctx.get("chunk_result")["subgraph"]
+        key = "rerank_result" if ctx.has("rerank_result") else "chunk_result"
+        subgraph = ctx.get(key)["subgraph"]
         result = QueryResult(query=query_text, subgraph=subgraph)
         _print_query_result_obj(result)
     else:
