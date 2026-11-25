@@ -3,6 +3,7 @@
 from typing import Any, Dict, List, Optional
 import ast
 import logging
+import re
 import uuid
 
 from .base import BaseGraphStore
@@ -11,6 +12,8 @@ from ...models.entity import Entity, EntityMention
 from ...models.relation import Relation
 
 logger = logging.getLogger(__name__)
+
+_WORD_RE = re.compile(r"\w+")
 
 
 class FalkorDBGraphStore(BaseGraphStore):
@@ -97,6 +100,9 @@ class FalkorDBGraphStore(BaseGraphStore):
             "CREATE INDEX FOR (c:Chunk) ON (c.document_id)",
             "CREATE INDEX FOR (d:Document) ON (d.id)",
             "CREATE INDEX FOR (co:Community) ON (co.id)",
+            # Current FalkorDB syntax; older servers only support the
+            # procedure below. Whichever is unsupported fails and is skipped.
+            "CREATE FULLTEXT INDEX FOR (c:Chunk) ON (c.text)",
             "CALL db.idx.fulltext.createNodeIndex('Chunk', 'text')",
         ]
         for q in index_queries:
@@ -393,10 +399,35 @@ class FalkorDBGraphStore(BaseGraphStore):
         )
         return [_node_to_dict(row[0]) for row in rows]
 
+    @staticmethod
+    def _to_or_query(query: str) -> str:
+        """Convert a plain-text query into a RediSearch OR expression.
+
+        RediSearch treats punctuation as query syntax even inside quotes, so
+        each whitespace-separated token is reduced to its word characters.
+        This drops only separators, never words: RediSearch splits indexed
+        text on the same punctuation. A token holding several words (e.g.
+        ``pain-relief`` or ``don't``) becomes a quoted phrase so the words
+        must stay adjacent; tokens are joined with ``|`` (OR).
+
+        Returns an empty string when the query has no words.
+        """
+        parts = []
+        for token in query.split():
+            words = _WORD_RE.findall(token)
+            if len(words) == 1:
+                parts.append(words[0])
+            elif words:
+                parts.append('"' + " ".join(words) + '"')
+        return "|".join(parts)
+
     def fulltext_search_chunks(self, query: str, top_k: int = 10, index_name: str = "chunk_text_idx"):
+        query = self._to_or_query(query)
+        if not query:
+            return []
         rows = self._run(
-            "CALL db.idx.fulltext.queryNodes('Chunk', $query) YIELD node "
-            "RETURN node LIMIT $top_k",
+            "CALL db.idx.fulltext.queryNodes('Chunk', $query) YIELD node, score "
+            "RETURN node ORDER BY score DESC LIMIT $top_k",
             {"query": query, "top_k": top_k},
         )
         return [_node_to_dict(row[0]) for row in rows]

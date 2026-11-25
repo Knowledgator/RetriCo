@@ -387,7 +387,30 @@ class Neo4jGraphStore(BaseGraphStore):
         )
         return [r["c"] for r in records]
 
+    @staticmethod
+    def _to_or_phrase_query(query: str, field_prefix: str = "") -> str:
+        """Convert a plain-text query into an OR of quoted phrases.
+
+        Works for Lucene (Neo4j) and Tantivy (Memgraph) query syntax. Each
+        whitespace-separated token is quoted as a phrase (escaping ``\\`` and
+        ``"``), so punctuation (``?``, ``(``, ``:``, ``-``...) and keywords
+        (``AND``, ``OR``, ``NOT``) are treated as plain text. The index
+        analyzer then splits each phrase the same way it split the indexed
+        text (e.g. ``"pain?"`` matches ``pain`` and ``"pain-relief"`` matches
+        the phrase ``pain relief``).
+
+        Returns an empty string when the query has no tokens.
+        """
+        return " OR ".join(
+            field_prefix
+            + '"' + token.replace("\\", "\\\\").replace('"', '\\"') + '"'
+            for token in query.split()
+        )
+
     def fulltext_search_chunks(self, query: str, top_k: int = 10, index_name: str = "chunk_text_idx"):
+        query = self._to_or_phrase_query(query)
+        if not query:
+            return []
         records = self._run(
             "CALL db.index.fulltext.queryNodes($index_name, $query) "
             "YIELD node, score "

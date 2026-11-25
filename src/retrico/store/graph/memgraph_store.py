@@ -68,15 +68,18 @@ class MemgraphGraphStore(Neo4jGraphStore):
     # -- Community detection (MAGE) ------------------------------------------
 
     def fulltext_search_chunks(self, query: str, top_k: int = 10, index_name: str = "chunk_text_idx"):
-        # Memgraph text search uses text_search.search with the index name
-        escaped = query.replace("\\", "\\\\").replace("'", "\\'")
+        # Memgraph text search (Tantivy) requires the property to be named
+        # with a ``data.`` prefix; chunks are matched on their ``text``.
+        query = self._to_or_phrase_query(query, field_prefix="data.text:")
+        if not query:
+            return []
         records = self._run(
-            f"""
-            CALL text_search.search('{index_name}', '{escaped}', 'ALL')
-            YIELD node
-            RETURN node LIMIT $top_k
+            """
+            CALL text_search.search($index_name, $query)
+            YIELD node, score
+            RETURN node ORDER BY score DESC LIMIT $top_k
             """,
-            {"top_k": top_k},
+            {"index_name": index_name, "query": query, "top_k": top_k},
         )
         return [r["node"] for r in records]
 
