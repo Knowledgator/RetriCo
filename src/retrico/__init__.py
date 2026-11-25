@@ -33,6 +33,10 @@ from .store import (
 )
 from .llm import BaseLLMClient, OpenAIClient
 from .extraction import GLiNEREngine, LLMExtractionEngine, EntityLinkerEngine, ExtractionResult
+from .modeling.rerankers import (
+    BaseReranker, CrossEncoderReranker, GLiClassReranker,
+    create_reranker, register_reranker, list_rerankers,
+)
 
 from typing import Dict, List, Any, Optional, Union
 import logging
@@ -185,6 +189,13 @@ __all__ = [
     # LLM
     "BaseLLMClient",
     "OpenAIClient",
+    # Rerankers
+    "BaseReranker",
+    "CrossEncoderReranker",
+    "GLiClassReranker",
+    "create_reranker",
+    "register_reranker",
+    "list_rerankers",
 ]
 
 
@@ -543,6 +554,8 @@ def query_graph(
     fusion_weights: List[float] = None,
     fusion_min_sources: int = 2,
     store_config: BaseStoreConfig = None,
+    reranker: str = None,
+    reranker_kwargs: Dict[str, Any] = None,
 ) -> QueryResult:
     """Query a knowledge graph in one call.
 
@@ -573,6 +586,10 @@ def query_graph(
         fusion_min_sources: Min sources for "intersection" fusion.
         store_config: A BaseStoreConfig object (Neo4jConfig, FalkorDBConfig, etc.).
             If provided, overrides individual store params.
+        reranker: Chunk reranker backend ("cross_encoder", "gliclass", or a
+            name registered with ``register_reranker``). None disables reranking.
+        reranker_kwargs: Extra kwargs for the reranker (e.g. model_name,
+            top_k, score_threshold, device, prompt).
 
     Returns:
         QueryResult with subgraph, answer, and metadata.
@@ -711,6 +728,9 @@ def query_graph(
             chunk_kw["chunk_entity_source"] = retriever_kwargs["chunk_entity_source"]
         fused.chunk_retriever(**chunk_kw)
 
+        if reranker is not None:
+            fused.chunk_reranker(method=reranker, **(reranker_kwargs or {}))
+
         if api_key is not None:
             fused.reasoner(api_key=api_key, model=model)
 
@@ -727,6 +747,9 @@ def query_graph(
             chunk_kw["chunk_entity_source"] = retriever_kwargs["chunk_entity_source"]
         builder.chunk_retriever(**chunk_kw)
 
+        if reranker is not None:
+            builder.chunk_reranker(method=reranker, **(reranker_kwargs or {}))
+
         if api_key is not None:
             builder.reasoner(api_key=api_key, model=model)
 
@@ -737,6 +760,9 @@ def query_graph(
     # Extract QueryResult from the appropriate output
     if api_key is not None and ctx.has("reasoner_result"):
         return ctx.get("reasoner_result")["result"]
+    elif ctx.has("rerank_result"):
+        subgraph = ctx.get("rerank_result")["subgraph"]
+        return QueryResult(query=query, subgraph=subgraph)
     elif ctx.has("chunk_result"):
         subgraph = ctx.get("chunk_result")["subgraph"]
         return QueryResult(query=query, subgraph=subgraph)

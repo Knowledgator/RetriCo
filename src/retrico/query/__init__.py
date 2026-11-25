@@ -10,3 +10,4 @@ from . import tool_retriever as _tool_retriever
 from . import path_retriever as _path_retriever
 from . import keyword_retriever as _keyword_retriever
 from . import fusion as _fusion
+from . import chunk_reranker as _chunk_reranker

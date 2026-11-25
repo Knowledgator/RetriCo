@@ -382,7 +382,103 @@ class _EmbedderMixin:
         }
         return self
 
-class RetriCoBuilder(_BuilderBase, 
+class _ChunkTailMixin:
+    """Adds chunk_reranker() and the shared chunk → rerank → reason DAG tail.
+
+    Hosts must define ``_chunk_config``, ``_reranker_config`` and
+    ``_reasoner_config``.
+    """
+
+    _chunk_config: Optional[Dict[str, Any]]
+    _reranker_config: Optional[Dict[str, Any]]
+    _reasoner_config: Optional[Dict[str, Any]]
+
+    def chunk_reranker(
+        self,
+        method: str = "cross_encoder",
+        model_name: str = None,
+        top_k: int = 0,
+        score_threshold: float = None,
+        device: str = None,
+        batch_size: int = None,
+        max_length: int = None,
+        **kwargs,
+    ):
+        """Rerank retrieved chunks against the query.
+
+        Args:
+            method: Reranker backend — "cross_encoder", "gliclass", or a name
+                registered with ``retrico.register_reranker``.
+            model_name: Backend model; the backend default is used if omitted
+                ("cross-encoder/ms-marco-MiniLM-L-6-v2" for cross_encoder,
+                "knowledgator/gliclass-v4-edge" for gliclass).
+            top_k: Max chunks to keep after reranking (0 = keep all).
+            score_threshold: Drop chunks scoring below this value. The score
+                scale depends on the backend.
+            device, batch_size, max_length: Forwarded to the backend.
+            **kwargs: Backend-specific options, e.g. ``prompt`` (gliclass) or
+                ``activation="sigmoid"`` (cross_encoder).
+        """
+        config: Dict[str, Any] = {"method": method, "top_k": top_k}
+        optional = {
+            "model_name": model_name,
+            "score_threshold": score_threshold,
+            "device": device,
+            "batch_size": batch_size,
+            "max_length": max_length,
+        }
+        config.update({k: v for k, v in optional.items() if v is not None})
+        config.update(kwargs)
+        self._reranker_config = config
+        return self
+
+    def _append_chunk_tail(
+        self,
+        nodes: List[Dict[str, Any]],
+        chunk_requires: List[str],
+        chunk_inputs: Dict[str, Any],
+    ) -> None:
+        """Append chunk_retriever, optional chunk_reranker and optional reasoner."""
+        nodes.append({
+            "id": "chunk_retriever",
+            "processor": "chunk_retriever",
+            "requires": list(chunk_requires),
+            "inputs": chunk_inputs,
+            "output": {"key": "chunk_result"},
+            "config": self._chunk_config,
+        })
+
+        last_id, last_key = "chunk_retriever", "chunk_result"
+
+        if self._reranker_config is not None:
+            nodes.append({
+                "id": "chunk_reranker",
+                "processor": "chunk_reranker",
+                "requires": ["chunk_retriever"],
+                "inputs": {
+                    "query": {"source": "$input", "fields": "query"},
+                    "subgraph": {"source": "chunk_result", "fields": "subgraph"},
+                },
+                "output": {"key": "rerank_result"},
+                "config": self._reranker_config,
+            })
+            last_id, last_key = "chunk_reranker", "rerank_result"
+
+        if self._reasoner_config is not None:
+            nodes.append({
+                "id": "reasoner",
+                "processor": "reasoner",
+                "requires": [last_id],
+                "inputs": {
+                    "query": {"source": "$input", "fields": "query"},
+                    "subgraph": {"source": last_key, "fields": "subgraph"},
+                },
+                "output": {"key": "reasoner_result"},
+                "config": self._reasoner_config,
+            })
+
+
+class RetriCoBuilder(_BuilderBase,
                          _LinkerMixin, 
                          _GraphWriterMixin, 
                          _EmbedderMixin):
@@ -874,7 +970,7 @@ class RetriCoIngest(_BuilderBase, _GraphWriterMixin, _EmbedderMixin):
         return self._build_result(nodes)
 
 
-class RetriCoSearch(_BuilderBase, _LinkerMixin):
+class RetriCoSearch(_BuilderBase, _LinkerMixin, _ChunkTailMixin):
     """Declarative builder for query pipeline configs.
 
     Usage::
@@ -898,6 +994,7 @@ class RetriCoSearch(_BuilderBase, _LinkerMixin):
         self._retriever_nodes: List[Dict[str, Any]] = []  # [{"type": str, "config": dict}]
         self._fusion_config: Optional[Dict[str, Any]] = None
         self._chunk_config: Optional[Dict[str, Any]] = None
+        self._reranker_config: Optional[Dict[str, Any]] = None
         self._reasoner_config: Optional[Dict[str, Any]] = None
         self._kg_scorer_config: Optional[Dict[str, Any]] = None
 
@@ -1325,27 +1422,7 @@ class RetriCoSearch(_BuilderBase, _LinkerMixin):
             if self._chunk_config.get("chunk_entity_source") not in ("all", "both", None):
                 chunk_inputs["scored_triples"] = {"source": "kg_scorer_result", "fields": "scored_triples"}
 
-            nodes.append({
-                "id": "chunk_retriever",
-                "processor": "chunk_retriever",
-                "requires": ["kg_scorer"],
-                "inputs": chunk_inputs,
-                "output": {"key": "chunk_result"},
-                "config": self._chunk_config,
-            })
-
-            if self._reasoner_config is not None:
-                nodes.append({
-                    "id": "reasoner",
-                    "processor": "reasoner",
-                    "requires": ["chunk_retriever"],
-                    "inputs": {
-                        "query": {"source": "$input", "fields": "query"},
-                        "subgraph": {"source": "chunk_result", "fields": "subgraph"},
-                    },
-                    "output": {"key": "reasoner_result"},
-                    "config": self._reasoner_config,
-                })
+            self._append_chunk_tail(nodes, ["kg_scorer"], chunk_inputs)
 
             return self._build_result(nodes)
 
@@ -1472,29 +1549,11 @@ class RetriCoSearch(_BuilderBase, _LinkerMixin):
             subgraph_source = "fusion_result"
             chunk_requires = ["fusion"]
 
-        nodes.append({
-            "id": "chunk_retriever",
-            "processor": "chunk_retriever",
-            "requires": chunk_requires,
-            "inputs": {
-                "subgraph": {"source": subgraph_source, "fields": "subgraph"},
-            },
-            "output": {"key": "chunk_result"},
-            "config": self._chunk_config,
-        })
-
-        if self._reasoner_config is not None:
-            nodes.append({
-                "id": "reasoner",
-                "processor": "reasoner",
-                "requires": ["chunk_retriever"],
-                "inputs": {
-                    "query": {"source": "$input", "fields": "query"},
-                    "subgraph": {"source": "chunk_result", "fields": "subgraph"},
-                },
-                "output": {"key": "reasoner_result"},
-                "config": self._reasoner_config,
-            })
+        self._append_chunk_tail(
+            nodes,
+            chunk_requires,
+            {"subgraph": {"source": subgraph_source, "fields": "subgraph"}},
+        )
 
         if self._kg_scorer_config is not None:
             scorer_requires = chunk_requires[:1]  # depends on first retriever or fusion
@@ -1520,7 +1579,7 @@ class RetriCoSearch(_BuilderBase, _LinkerMixin):
         return self._build_result(nodes)
 
 
-class RetriCoFusedSearch(_BuilderBase, _LinkerMixin):
+class RetriCoFusedSearch(_BuilderBase, _LinkerMixin, _ChunkTailMixin):
     """Wrapper that combines multiple ``RetriCoSearch`` instances into a fused pipeline.
 
     Each sub-builder defines one retrieval strategy.  ``RetriCoFusedSearch``
@@ -1572,6 +1631,7 @@ class RetriCoFusedSearch(_BuilderBase, _LinkerMixin):
         self._linker_config: Optional[Dict[str, Any]] = None
         self._has_linker: bool = False
         self._chunk_config: Optional[Dict[str, Any]] = None
+        self._reranker_config: Optional[Dict[str, Any]] = None
         self._reasoner_config: Optional[Dict[str, Any]] = None
         self._kg_scorer_config: Optional[Dict[str, Any]] = None
 
@@ -1822,31 +1882,12 @@ class RetriCoFusedSearch(_BuilderBase, _LinkerMixin):
             "config": self._fusion_config,
         })
 
-        # Chunk retriever
-        nodes.append({
-            "id": "chunk_retriever",
-            "processor": "chunk_retriever",
-            "requires": ["fusion"],
-            "inputs": {
-                "subgraph": {"source": "fusion_result", "fields": "subgraph"},
-            },
-            "output": {"key": "chunk_result"},
-            "config": self._chunk_config,
-        })
-
-        # Reasoner
-        if self._reasoner_config is not None:
-            nodes.append({
-                "id": "reasoner",
-                "processor": "reasoner",
-                "requires": ["chunk_retriever"],
-                "inputs": {
-                    "query": {"source": "$input", "fields": "query"},
-                    "subgraph": {"source": "chunk_result", "fields": "subgraph"},
-                },
-                "output": {"key": "reasoner_result"},
-                "config": self._reasoner_config,
-            })
+        # Chunk retriever → [chunk reranker] → [reasoner]
+        self._append_chunk_tail(
+            nodes,
+            ["fusion"],
+            {"subgraph": {"source": "fusion_result", "fields": "subgraph"}},
+        )
 
         return self._build_result(nodes)
 
